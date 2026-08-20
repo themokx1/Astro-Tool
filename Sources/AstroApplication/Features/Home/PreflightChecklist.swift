@@ -63,6 +63,16 @@ public struct PreflightChecklist: Equatable, Sendable {
             /// and the local time its `visibleWindow` starts at -- both
             /// `nil` exactly when `status == .notApplicable`.
             case altitudeWindow(targetDisplayName: String?, clearsAtLocal: String?)
+            /// Wave 0 seam (V3 pre-stack program, `docs/superpowers/specs/
+            /// 2026-08-20-v3-prestack-program.md` section 5.2, Kalibrációs
+            /// automata): "flat calibration needed tonight" -- `missingCount`
+            /// will be `CalibAnalyzer`'s own flat-specific gap count once 5.2
+            /// wires this into `build(...)` below. Never produced by
+            /// `build(...)` yet; this case exists only so that feature's own
+            /// commit can add it without touching this shared, closed enum
+            /// (and its exhaustive switches here and in
+            /// `HomeView.preflightItemText`) again.
+            case flatNeeded(missingCount: Int)
         }
 
         public let kind: Kind
@@ -79,6 +89,7 @@ public struct PreflightChecklist: Equatable, Sendable {
             case .skyClear: "sky"
             case .moonImpact: "moon"
             case .altitudeWindow: "altitude"
+            case .flatNeeded: "flatNeeded"
             }
         }
     }

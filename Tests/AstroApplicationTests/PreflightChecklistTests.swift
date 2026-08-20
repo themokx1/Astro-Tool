@@ -167,4 +167,30 @@ struct PreflightChecklistTests {
         let firstNonAttention = statuses.firstIndex { $0 != .attention } ?? statuses.count
         #expect(statuses.prefix(firstNonAttention).allSatisfy { $0 == .attention })
     }
+
+    // MARK: - Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs automata)
+
+    @Test("The .flatNeeded stub case exists with a stable id, but build(...) never produces it yet")
+    func flatNeededSeamCaseExistsButIsNeverProduced() {
+        let item = PreflightChecklist.Item(kind: .flatNeeded(missingCount: 3), status: .attention)
+        #expect(item.id == "flatNeeded")
+        if case let .flatNeeded(missingCount) = item.kind {
+            #expect(missingCount == 3)
+        } else {
+            Issue.record("Expected a .flatNeeded item")
+        }
+
+        // `build(...)` itself has no code path that constructs `.flatNeeded`
+        // in Wave 0 -- confirmed here by exercising every input it takes,
+        // not by inspecting its source.
+        let checklist = PreflightChecklist.build(
+            calibrationMissingCount: 5,
+            isCloudyTonight: true,
+            topRecommendation: .init(
+                displayName: "M 42", visibleWindow: "20:00–23:00",
+                verdict: .moonInterferes(separationDeg: 10, illuminationPercent: 20)
+            )
+        )
+        #expect(!checklist.items.contains { if case .flatNeeded = $0.kind { true } else { false } })
+    }
 }

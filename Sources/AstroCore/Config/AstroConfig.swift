@@ -112,6 +112,14 @@ public struct CalibRule: Codable, Equatable, Sendable {
     /// `SET-TEMP` header never contributes to this check at all). Default
     /// 1.0°C.
     public var coolerToleranceC: Double
+    /// Wave 0 seam (V3 pre-stack program, `docs/superpowers/specs/
+    /// 2026-08-20-v3-prestack-program.md` section 5.2, Kalibrációs automata):
+    /// off by default -- until that feature lands, nothing reads this field
+    /// at all. It exists now so 5.2's own `CalibrationMasterBuildCommand` can
+    /// gate its Siril-backed master build on this flag (in addition to
+    /// `LibraryAccessMode.mutationEnabled`) without a second config.json
+    /// migration.
+    public var autoMasterBuildEnabled: Bool
 
     public init(
         tempToleranceC: Double = 1.0,
@@ -125,7 +133,8 @@ public struct CalibRule: Codable, Equatable, Sendable {
         exposureToleranceFraction: Double = 0.02,
         flatMaxAgeDays: Int = 30,
         rotatorToleranceDeg: Double = 2.0,
-        coolerToleranceC: Double = 1.0
+        coolerToleranceC: Double = 1.0,
+        autoMasterBuildEnabled: Bool = false
     ) {
         self.tempToleranceC = tempToleranceC
         self.exposureToleranceS = exposureToleranceS
@@ -139,6 +148,7 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.flatMaxAgeDays = flatMaxAgeDays
         self.rotatorToleranceDeg = rotatorToleranceDeg
         self.coolerToleranceC = coolerToleranceC
+        self.autoMasterBuildEnabled = autoMasterBuildEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -146,6 +156,7 @@ public struct CalibRule: Codable, Equatable, Sendable {
         case matchGain, matchOffset, matchBinning, matchCamera
         case gainTolerance, exposureToleranceFraction
         case flatMaxAgeDays, rotatorToleranceDeg, coolerToleranceC
+        case autoMasterBuildEnabled
     }
 
     public init(from decoder: any Decoder) throws {
@@ -163,6 +174,7 @@ public struct CalibRule: Codable, Equatable, Sendable {
         self.flatMaxAgeDays = try container.decodeIfPresent(Int.self, forKey: .flatMaxAgeDays) ?? defaults.flatMaxAgeDays
         self.rotatorToleranceDeg = try container.decodeIfPresent(Double.self, forKey: .rotatorToleranceDeg) ?? defaults.rotatorToleranceDeg
         self.coolerToleranceC = try container.decodeIfPresent(Double.self, forKey: .coolerToleranceC) ?? defaults.coolerToleranceC
+        self.autoMasterBuildEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoMasterBuildEnabled) ?? defaults.autoMasterBuildEnabled
     }
 }
 
@@ -330,6 +342,34 @@ public struct WeatherRule: Codable, Equatable, Sendable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = WeatherRule()
+        self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
+    }
+}
+
+/// Wave 0 seam (V3 pre-stack program, `docs/superpowers/specs/
+/// 2026-08-20-v3-prestack-program.md` section 5.5, Derült-trigger): the
+/// future opt-in "tell me when it clears tonight" notification switch,
+/// following `WeatherRule`'s own pattern exactly -- a single `enabled` flag,
+/// off by default, because enabling it is what will let that feature request
+/// `UNUserNotificationCenter` permission and read `WeatherService`, so
+/// silence-by-default matters here the same way it does for `WeatherRule`.
+/// Deliberately empty beyond `enabled` for now -- 5.5 adds its own
+/// check-window field (e.g. `checkHourLocal`, per the wave plan) in its own
+/// commit, not here.
+public struct NotificationRule: Codable, Equatable, Sendable {
+    public var enabled: Bool
+
+    public init(enabled: Bool = false) {
+        self.enabled = enabled
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = NotificationRule()
         self.enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? defaults.enabled
     }
 }
@@ -605,6 +645,10 @@ public struct AstroConfig: Codable, Equatable, Sendable {
     public var sites: [SiteProfile]
     public var expose: ExposeRule
     public var weather: WeatherRule
+    /// Wave 0 seam (V3 pre-stack program, section 5.5, Derült-trigger): see
+    /// `NotificationRule`'s own doc comment. Off by default, read by nothing
+    /// until 5.5 lands.
+    public var notification: NotificationRule
     public var plan: PlanRule
     public var integrationReference: IntegrationReferenceRule
     /// User-defined camera + optic combinations for manual Discovery FOV
@@ -659,6 +703,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         sites: [SiteProfile] = [],
         expose: ExposeRule = ExposeRule(),
         weather: WeatherRule = WeatherRule(),
+        notification: NotificationRule = NotificationRule(),
         plan: PlanRule = PlanRule(),
         integrationReference: IntegrationReferenceRule = IntegrationReferenceRule(),
         imagingSetups: [ImagingSetupProfile] = [],
@@ -680,6 +725,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.sites = sites
         self.expose = expose
         self.weather = weather
+        self.notification = notification
         self.plan = plan
         self.integrationReference = integrationReference
         self.imagingSetups = imagingSetups
@@ -688,7 +734,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case rootPath, excludedDirNames, excludedPaths, residuePatterns, sessionResiduePatterns, residueDirNames, toolOutputDirNames
-        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, plan, integrationReference, imagingSetups, astrobin
+        case intentional, wideField, calib, rating, stats, site, sites, expose, weather, notification, plan, integrationReference, imagingSetups, astrobin
     }
 
     public init(from decoder: any Decoder) throws {
@@ -723,6 +769,7 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         }
         self.expose = try container.decodeIfPresent(ExposeRule.self, forKey: .expose) ?? defaults.expose
         self.weather = try container.decodeIfPresent(WeatherRule.self, forKey: .weather) ?? defaults.weather
+        self.notification = try container.decodeIfPresent(NotificationRule.self, forKey: .notification) ?? defaults.notification
         self.plan = try container.decodeIfPresent(PlanRule.self, forKey: .plan) ?? defaults.plan
         self.integrationReference = try container.decodeIfPresent(IntegrationReferenceRule.self, forKey: .integrationReference) ?? defaults.integrationReference
         self.imagingSetups = try container.decodeIfPresent([ImagingSetupProfile].self, forKey: .imagingSetups) ?? defaults.imagingSetups

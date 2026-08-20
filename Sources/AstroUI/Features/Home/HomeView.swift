@@ -36,6 +36,11 @@ public struct HomeView: View {
     /// per-date "Cloud" column already renders this exact min-max forecast
     /// against.
     private let openNightsCalendar: () -> Void
+    /// Wave 0 seam (V3 pre-stack program, `HomeCardProviding`'s own doc
+    /// comment): empty until section 5.1 (Ingest-figyelő) or 5.6 (Élő
+    /// éjszaka-mód) registers a provider of its own -- an empty array
+    /// renders nothing, so this parameter alone is zero behavior change.
+    private let extraCardProviders: [any HomeCardProviding]
     @AppStorage("v2.general.showGuidance") private var showGuidance = true
     /// Pre-flight Checklist (ideation #1): `nil` means "no manual override
     /// yet" -- the card then falls back to its own honest default
@@ -66,7 +71,8 @@ public struct HomeView: View {
         openProjectID: @escaping (UUID) -> Void = { _ in },
         openSensorProfiles: @escaping () -> Void = {},
         openCalibration: @escaping () -> Void = {},
-        openNightsCalendar: @escaping () -> Void = {}
+        openNightsCalendar: @escaping () -> Void = {},
+        extraCardProviders: [any HomeCardProviding] = []
     ) {
         _store = Bindable(store)
         self.rootURL = rootURL
@@ -77,6 +83,7 @@ public struct HomeView: View {
         self.openSensorProfiles = openSensorProfiles
         self.openCalibration = openCalibration
         self.openNightsCalendar = openNightsCalendar
+        self.extraCardProviders = extraCardProviders
     }
 
     public var body: some View {
@@ -122,6 +129,16 @@ public struct HomeView: View {
     private var libraryOverview: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
             preflightChecklistCard
+            // Wave 0 seam (V3 pre-stack program): renders whatever 5.1
+            // (Ingest-figyelő)/5.6 (Élő éjszaka-mód) registers through
+            // `extraCardProviders`, in their own registration order. Empty
+            // today, so this contributes nothing yet -- see
+            // `HomeCardProviding`'s own doc comment.
+            ForEach(Array(extraCardProviders.enumerated()), id: \.offset) { _, provider in
+                if let card = provider.card(store: store) {
+                    card
+                }
+            }
             HStack(spacing: AstroTokens.Spacing.standard) {
                 MetricCard(title: "Projects", value: "\(store.snapshot.projectCount)", detail: "In \(store.snapshot.libraryName ?? "library")", systemImage: "scope")
                 // W6-E item 3: "Indexed observing sessions" read as though
@@ -321,6 +338,17 @@ public struct HomeView: View {
                 Text("\(targetDisplayName) clears 30° at \(clearsAtLocal)")
             } else {
                 Text("No tonight recommendation yet")
+            }
+        // Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs
+        // automata): placeholder copy only -- `PreflightChecklist.build`
+        // never produces `.flatNeeded` yet, so this branch never renders in
+        // Wave 0. It exists purely so this exhaustive switch stays green
+        // once `.flatNeeded` exists as a case at all.
+        case let .flatNeeded(missingCount):
+            if missingCount > 0 {
+                Text("\(missingCount) flat calibration items still need attention")
+            } else {
+                Text("Flat calibration is current")
             }
         }
     }

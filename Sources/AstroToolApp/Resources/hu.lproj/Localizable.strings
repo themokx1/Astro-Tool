@@ -2429,3 +2429,11 @@
 "Pattern, e.g. starless*" = "Minta, pl. starless*";
 "Restore Defaults" = "Alaphelyzetbe állítás";
 "These patterns only count as processing residue inside the sessions area -- the same names (e.g. starless, result_...) are kept stack variants under stacks/processed." = "Ezek a minták csak a sessions területen számítanak feldolgozási maradéknak -- ugyanezek a nevek (pl. starless, result_...) a stacks/processed alatt megtartott stack-változatok.";
+/* Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs automata):
+   PreflightChecklist.Item.Kind.flatNeeded's placeholder copy
+   (HomeView.preflightItemText). Never actually shown yet -- build(...)
+   never produces this case in Wave 0 -- added now so
+   LocalizationCoverageTests stays green and 5.2's own commit doesn't have
+   to touch hu.lproj for text that already exists. */
+"%lld flat calibration items still need attention" = "%lld flat kalibrációs tétel még figyelmet igényel";
+"Flat calibration is current" = "A flat kalibráció naprakész";

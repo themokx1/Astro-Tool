@@ -36,6 +36,7 @@ import Testing
     #expect(config.calib.flatMaxAgeDays == 30)
     #expect(config.calib.rotatorToleranceDeg == 2.0)
     #expect(config.calib.coolerToleranceC == 1.0)
+    #expect(config.calib.autoMasterBuildEnabled == false)
 
     #expect(config.rating.workers == 4)
     #expect(config.rating.outlierZScore == 2.0)
@@ -50,6 +51,7 @@ import Testing
     #expect(config.site.longitudeDeg == nil)
 
     #expect(config.weather.enabled == false)
+    #expect(config.notification.enabled == false)
 
     #expect(config.integrationReference == IntegrationReferenceRule())
 }
@@ -275,6 +277,94 @@ import Testing
     #expect(config.rootPath == "/Volumes/images/OldConfig")
 }
 
+// MARK: - Wave 0 seam (V3 pre-stack program, section 5.5, Derült-trigger)
+
+@Test func defaultNotificationRuleIsDisabled() {
+    let rule = NotificationRule()
+    #expect(rule.enabled == false)
+}
+
+@Test func defaultConfigHasDisabledNotificationRule() {
+    #expect(AstroConfig().notification == NotificationRule())
+}
+
+@Test func decodingPartialNotificationRuleFillsMissingKeyWithDefault() throws {
+    let json = """
+    { "notification": { "enabled": true } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.notification.enabled == true)
+}
+
+@Test func decodingConfigWithoutNotificationKeyStillDecodes() throws {
+    // Wave 0 lands this key for the first time -- every pre-existing
+    // config.json has no "notification" key at all and must still decode
+    // cleanly, defaulting to disabled (never silently opting a pre-existing
+    // config INTO a system notification permission prompt it never asked
+    // for -- the same rule `WeatherRule`'s own equivalent test enforces).
+    let json = """
+    { "rootPath": "/Volumes/images/OldConfig", "site": { "latitudeDeg": 47.5, "longitudeDeg": 19.0 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.notification == NotificationRule())
+    #expect(config.notification.enabled == false)
+    #expect(config.rootPath == "/Volumes/images/OldConfig")
+}
+
+@Test func notificationRuleRoundTripsThroughEncodeDecode() throws {
+    var config = AstroConfig()
+    config.notification.enabled = true
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(decoded == config)
+    #expect(decoded.notification.enabled == true)
+}
+
+// MARK: - Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs automata)
+
+@Test func defaultCalibRuleHasAutoMasterBuildDisabled() {
+    #expect(CalibRule().autoMasterBuildEnabled == false)
+}
+
+@Test func decodingPartialCalibRuleWithAutoMasterBuildFillsOtherKeysWithDefaults() throws {
+    let json = """
+    { "calib": { "autoMasterBuildEnabled": true } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.calib.autoMasterBuildEnabled == true)
+    #expect(config.calib.flatMaxAgeDays == 30)
+    #expect(config.calib.tempToleranceC == 1.0)
+}
+
+@Test func decodingCalibRuleWithoutAutoMasterBuildKeyStillDecodes() throws {
+    let json = """
+    { "calib": { "flatMaxAgeDays": 45 } }
+    """
+    let data = Data(json.utf8)
+    let config = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(config.calib.autoMasterBuildEnabled == false)
+}
+
+@Test func calibRuleAutoMasterBuildRoundTripsThroughEncodeDecode() throws {
+    var config = AstroConfig()
+    config.calib.autoMasterBuildEnabled = true
+
+    let data = try JSONEncoder().encode(config)
+    let decoded = try JSONDecoder().decode(AstroConfig.self, from: data)
+
+    #expect(decoded == config)
+    #expect(decoded.calib.autoMasterBuildEnabled == true)
+}
+
 @Test func decodingPartialSiteRuleFillsMissingKeyWithDefault() throws {
     let json = """
     { "site": { "latitudeDeg": 47.5 } }
@@ -379,6 +469,7 @@ import Testing
     #expect(rule.flatMaxAgeDays == 30)
     #expect(rule.rotatorToleranceDeg == 2.0)
     #expect(rule.coolerToleranceC == 1.0)
+    #expect(rule.autoMasterBuildEnabled == false)
 }
 
 @Test func decodingPartialCalibRuleFillsMissingKeysWithDefaults() throws {
@@ -392,6 +483,7 @@ import Testing
     #expect(config.calib.rotatorToleranceDeg == 2.0)
     #expect(config.calib.tempToleranceC == 1.0)
     #expect(config.calib.coolerToleranceC == 1.0)
+    #expect(config.calib.autoMasterBuildEnabled == false)
 }
 
 @Test func defaultRatingRuleHasExpectedValues() {
@@ -439,6 +531,7 @@ import Testing
     #expect(config.stats == StatsRule())
     #expect(config.site == SiteRule())
     #expect(config.weather == WeatherRule())
+    #expect(config.notification == NotificationRule())
     #expect(config.astrobin == AstroBinRule())
 
     #expect(config.rating.workers == 8)

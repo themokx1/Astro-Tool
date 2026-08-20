@@ -37,6 +37,23 @@ public enum OperationKind: Hashable, Sendable {
     /// library is open), so unlike every other case here it carries no
     /// associated value.
     case catalogFetch
+    /// Wave 0 seam (V3 pre-stack program, `docs/superpowers/specs/
+    /// 2026-08-20-v3-prestack-program.md` section 5.2, Kalibrációs automata):
+    /// the forthcoming Siril-backed master-frame build for one dark/flat/bias
+    /// gap combo (`combo` names it the same way `CalibAnalyzer.CalibCombo`'s
+    /// own description does) -- registers under `OperationHost` the same way
+    /// `.rate`/`.sensorMeasurement` do for their own Siril-backed
+    /// long-running work. Nothing constructs this case yet; this stub only
+    /// opens the seam so 5.2's own commit never has to touch this closed
+    /// enum's other cases again.
+    case buildMaster(combo: String)
+    /// Wave 0 seam (V3 pre-stack program, section 5.6, Élő éjszaka-mód): the
+    /// in-process file-system watch for an active live-imaging session.
+    /// Carries no associated value, unlike every per-library/per-series case
+    /// above -- exactly one live watch can run app-wide at a time, so there
+    /// is nothing to key it by. Nothing constructs this case yet; see
+    /// `.buildMaster`'s own doc comment for why this is a stub.
+    case liveNightWatch
 }
 
 public enum CancellationPolicy: Hashable, Sendable {

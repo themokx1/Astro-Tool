@@ -14,6 +14,13 @@ struct OperationCenterTests {
             .export(project: "P"),
             .convert(session: "N"),
             .sensorMeasurement(library: "D"),
+            // Wave 0 seam (V3 pre-stack program): `.buildMaster`/
+            // `.liveNightWatch` are stub cases nothing constructs for real
+            // yet (sections 5.2/5.6) -- this pins that they exist, stay
+            // Hashable, and stay distinct from every case above and from
+            // each other.
+            .buildMaster(combo: "dark-120s--20C"),
+            .liveNightWatch,
         ]
 
         #expect(Set(kinds).count == kinds.count)

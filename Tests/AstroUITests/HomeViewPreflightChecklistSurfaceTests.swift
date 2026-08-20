@@ -86,4 +86,29 @@ struct HomeViewPreflightChecklistSurfaceTests {
         #expect(source.contains("\"v2.home.preflight-checklist\""))
         #expect(source.contains("\"v2.home.preflight-checklist-toggle\""))
     }
+
+    // MARK: - Wave 0 seam (V3 pre-stack program, section 5.2, Kalibrációs automata)
+
+    @Test("The .flatNeeded stub case has its own rendering branch and hu.lproj translations, even though nothing produces it yet")
+    func flatNeededSeamHasARenderingBranchAndTranslations() throws {
+        let source = try contents("Sources/AstroUI/Features/Home/HomeView.swift")
+        #expect(source.contains("case let .flatNeeded(missingCount):"))
+
+        let translations = try contents("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        #expect(translations.contains("\"%lld flat calibration items still need attention\" ="))
+        #expect(translations.contains("\"Flat calibration is current\" ="))
+    }
+
+    // MARK: - Wave 0 seam (V3 pre-stack program, Home-kompozíció row)
+
+    @Test("HomeView accepts extra card providers, defaulting to none, and iterates them right after the pre-flight checklist card")
+    func extraCardProvidersDefaultToEmptyAndRenderAfterPreflight() throws {
+        let source = try contents("Sources/AstroUI/Features/Home/HomeView.swift")
+        #expect(source.contains("extraCardProviders: [any HomeCardProviding] = []"))
+        #expect(source.contains(
+            "            preflightChecklistCard\n"
+                + "            // Wave 0 seam"
+        ))
+        #expect(source.contains("ForEach(Array(extraCardProviders.enumerated()), id: \\.offset) { _, provider in"))
+    }
 }
