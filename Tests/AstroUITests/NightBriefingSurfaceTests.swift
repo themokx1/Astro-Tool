@@ -110,14 +110,14 @@ struct NightBriefingSurfaceTests {
         #expect(home.contains("v2.home.open-briefing"))
     }
 
-    @Test("Home opens briefing with one atomic cross-section navigation")
-    func homeBriefingNavigationIsAtomic() throws {
+    @Test("Home lets the Planning root settle before pushing briefing")
+    func homeBriefingNavigationIsStaged() throws {
         let root = try String(
             contentsOf: repositoryRoot.appendingPathComponent(
                 "Sources/AstroUI/App/V2RootView.swift"
             ),
             encoding: .utf8
         )
-        #expect(root.contains("router.navigate(toContent: .briefing)"))
+        #expect(root.contains("router.navigate(to: .planning)\n                    Task { @MainActor in\n                        await Task.yield()\n                        router.push(.briefing)"))
     }
 }

@@ -1682,7 +1682,11 @@ private struct DetailHost: View {
                 openNightsCalendar: { router.navigate(to: .nights) },
                 openBriefing: {
                     briefingSeed = nil
-                    router.navigate(toContent: .briefing)
+                    router.navigate(to: .planning)
+                    Task { @MainActor in
+                        await Task.yield()
+                        router.push(.briefing)
+                    }
                 },
                 // V3 pre-stack program, section 5.1 (Ingest-figyelő): the
                 // ONLY file this feature needed to touch to add its banner
