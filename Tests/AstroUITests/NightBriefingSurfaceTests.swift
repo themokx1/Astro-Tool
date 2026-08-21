@@ -109,4 +109,15 @@ struct NightBriefingSurfaceTests {
         #expect(action.lowerBound < libraryBranch.lowerBound)
         #expect(home.contains("v2.home.open-briefing"))
     }
+
+    @Test("Home opens briefing with one atomic cross-section navigation")
+    func homeBriefingNavigationIsAtomic() throws {
+        let root = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/App/V2RootView.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(root.contains("router.navigate(toContent: .briefing)"))
+    }
 }

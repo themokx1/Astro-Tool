@@ -260,6 +260,12 @@ struct AppRouterTests {
         #expect(AppRoute(deepLink: url) == .content(.briefing))
         #expect(ContentRoute.briefing.primarySection == .planning)
         #expect(ContentRoute.briefing.selection == nil)
+
+        let router = AppRouter()
+        router.navigate(toContent: .briefing)
+        #expect(router.primarySection == .planning)
+        #expect(router.contentRoute == .briefing)
+        #expect(router.currentSectionPath == [.briefing])
     }
 
     // MARK: Wave 4 Task 1 -- router stack
