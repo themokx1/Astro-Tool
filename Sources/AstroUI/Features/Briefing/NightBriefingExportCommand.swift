@@ -70,7 +70,7 @@ public struct NightBriefingExportCommand {
         }
         var urls: [URL] = []
         for (index, data) in pngPages.enumerated() {
-            let url = pngDirectory.appendingPathComponent(String(format: "page-%02d.png", index + 1))
+            let url = pngDirectory.appendingPathComponent("page-\(index + 1).png")
             try data.write(to: url, options: .withoutOverwriting)
             urls.append(url)
         }

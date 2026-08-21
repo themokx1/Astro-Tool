@@ -1556,6 +1556,7 @@ private struct DetailHost: View {
         case .night(let rawID):
             nightLabel(for: rawID) ?? "Night"
         case .planning: "Planning"
+        case .briefing: "Éjszakai briefing"
         case .savedTargets: "Saved Targets"
         case .library: "Library"
         case .health: "Health"
@@ -1670,6 +1671,7 @@ private struct DetailHost: View {
                 // link -- the Nights calendar section, where `NightsView`'s
                 // own "Cloud" column renders this exact forecast per date.
                 openNightsCalendar: { router.navigate(to: .nights) },
+                openBriefing: { router.navigate(to: .planning); router.push(.briefing) },
                 // V3 pre-stack program, section 5.1 (Ingest-figyelő): the
                 // ONLY file this feature needed to touch to add its banner
                 // -- see `HomeCardProviding`'s own doc comment for why this
@@ -1840,8 +1842,11 @@ private struct DetailHost: View {
                 rootURL: onboardingStore.selectedRoot,
                 createProject: createPlannedProject,
                 openSavedTargets: { router.push(.savedTargets) },
+                openBriefing: { router.push(.briefing) },
                 chooseLibrary: chooseLibrary
             )
+        case .briefing:
+            NightBriefingView(rootURL: onboardingStore.selectedRoot ?? libraryRootFallback)
         case .savedTargets:
             SavedTargetsView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
         case .library:

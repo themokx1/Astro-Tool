@@ -25,6 +25,7 @@ public struct PlanningView: View {
     let rootURL: URL?
     let createProject: (String) -> Void
     let openSavedTargets: () -> Void
+    let openBriefing: () -> Void
     /// Wave W6-A section B: the no-library placeholder below used to be a
     /// dead end -- no button at all -- unlike `ArchiveView`/`HealthView`'s
     /// own "no library" states, which both already thread a `chooseLibrary`
@@ -41,11 +42,13 @@ public struct PlanningView: View {
         rootURL: URL?,
         createProject: @escaping (String) -> Void,
         openSavedTargets: @escaping () -> Void = {},
+        openBriefing: @escaping () -> Void = {},
         chooseLibrary: @escaping () -> Void = {}
     ) {
         self.rootURL = rootURL
         self.createProject = createProject
         self.openSavedTargets = openSavedTargets
+        self.openBriefing = openBriefing
         self.chooseLibrary = chooseLibrary
     }
 
@@ -122,6 +125,9 @@ public struct PlanningView: View {
                 }
                 .accessibilityIdentifier("v2.planning.setup")
                 Spacer()
+                Button("Éjszakai briefing", systemImage: "doc.text.image", action: openBriefing)
+                    .buttonStyle(.borderedProminent)
+                    .help("Készíts részletes, telefonon vagy papíron magaddal vihető tervet.")
                 if let fov = store.fieldOfView {
                     Text("\(fov.widthDeg, format: .number.precision(.fractionLength(1)))° × \(fov.heightDeg, format: .number.precision(.fractionLength(1)))°")
                         .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
