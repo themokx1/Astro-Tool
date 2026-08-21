@@ -15,7 +15,11 @@ let package = Package(
     targets: [
         .target(name: "AstroCore", linkerSettings: [.linkedLibrary("sqlite3")]),
         .target(name: "AstroApplication", dependencies: ["AstroCore"]),
-        .target(name: "AstroUI", dependencies: ["AstroApplication"]),
+        .target(
+            name: "AstroUI",
+            dependencies: ["AstroApplication"],
+            linkerSettings: [.linkedFramework("WebKit"), .linkedFramework("PDFKit")]
+        ),
         .executableTarget(name: "astrotool", dependencies: ["AstroCore"]),
         .executableTarget(
             name: "AstroToolApp",

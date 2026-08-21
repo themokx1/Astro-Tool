@@ -35,9 +35,10 @@ public struct NightBriefingHTMLRenderer: Sendable {
         @page { size: A4 portrait; margin: 14mm 14mm 16mm; }
         :root { color-scheme: light; } * { box-sizing: border-box; }
         body { margin: 0; color: #172033; background: #fff; font-size: 11pt; font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif; line-height: 1.45; }
+        body > section { padding: 36px; width: 100%; }
         h1 { font-size: 30pt; line-height: 1.08; margin: 8mm 0 4mm; } h2 { font-size: 21pt; margin: 0 0 5mm; } h3 { font-size: 13pt; margin: 4mm 0 2mm; }
         p { margin: 0 0 3mm; } .eyebrow { color: #315f9e; text-transform: uppercase; letter-spacing: .09em; font-size: 9pt; font-weight: 700; }
-        .page-break { page-break-before: always; } .cover { min-height: 245mm; display: flex; flex-direction: column; } .cover footer { margin-top: auto; color: #596579; }
+        .page-break { page-break-before: always; } .cover { display: flex; flex-direction: column; } .cover footer { margin-top: auto; color: #596579; }
         .status { display: inline-block; padding: 2mm 4mm; border-radius: 99px; background: #e6eefb; font-weight: 700; }
         .facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 3mm; margin: 5mm 0; } .facts div { border: 1px solid #cbd5e1; padding: 3mm; border-radius: 3mm; }
         .facts span { display: block; color: #596579; font-size: 9pt; margin-bottom: 1mm; } table { width: 100%; border-collapse: collapse; margin-top: 4mm; }
