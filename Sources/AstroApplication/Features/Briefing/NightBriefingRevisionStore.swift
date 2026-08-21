@@ -1,0 +1,74 @@
+import Foundation
+
+public enum NightBriefingRevisionStoreError: Error, Equatable, Sendable {
+    case revisionAlreadyExists(URL)
+}
+
+public actor NightBriefingRevisionStore {
+    private let directory: URL
+    private let fileManager: FileManager
+    private let encoder: JSONEncoder
+    private let decoder: JSONDecoder
+
+    public init(directory: URL, fileManager: FileManager = .default) {
+        self.directory = directory.standardizedFileURL
+        self.fileManager = fileManager
+        encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+    }
+
+    public func save(_ draft: NightBriefingDraft) throws -> NightBriefingDraft {
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let healthy = try decodedRevisions(id: draft.id)
+        let nextRevision = (healthy.map(\.revision).max() ?? 0) + 1
+        var saved = draft
+        saved.revision = nextRevision
+        let url = revisionURL(id: draft.id, revision: nextRevision)
+        guard !fileManager.fileExists(atPath: url.path) else {
+            throw NightBriefingRevisionStoreError.revisionAlreadyExists(url)
+        }
+        do {
+            try encoder.encode(saved).write(to: url, options: .withoutOverwriting)
+        } catch CocoaError.fileWriteFileExists {
+            throw NightBriefingRevisionStoreError.revisionAlreadyExists(url)
+        }
+        return saved
+    }
+
+    public func latest(id: UUID) throws -> NightBriefingDraft? {
+        try decodedRevisions(id: id).max { $0.revision < $1.revision }
+    }
+
+    public func latestRevisions() throws -> [NightBriefingDraft] {
+        guard fileManager.fileExists(atPath: directory.path) else { return [] }
+        let urls = try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        let drafts = urls.compactMap(decode)
+        return Dictionary(grouping: drafts, by: \.id)
+            .values
+            .compactMap { $0.max { $0.revision < $1.revision } }
+            .sorted { ($0.savedAt, $0.id.uuidString) > ($1.savedAt, $1.id.uuidString) }
+    }
+
+    private func decodedRevisions(id: UUID) throws -> [NightBriefingDraft] {
+        guard fileManager.fileExists(atPath: directory.path) else { return [] }
+        let prefix = id.uuidString.lowercased() + "-r"
+        return try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .filter { $0.lastPathComponent.lowercased().hasPrefix(prefix) }
+            .compactMap(decode)
+    }
+
+    private func decode(_ url: URL) -> NightBriefingDraft? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? decoder.decode(NightBriefingDraft.self, from: data)
+    }
+
+    private func revisionURL(id: UUID, revision: Int) -> URL {
+        directory.appendingPathComponent(
+            String(format: "%@-r%06d.json", id.uuidString.lowercased(), revision),
+            isDirectory: false
+        )
+    }
+}
