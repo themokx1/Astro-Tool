@@ -120,4 +120,12 @@ struct NightBriefingSurfaceTests {
         )
         #expect(root.contains("router.navigate(to: .planning)\n                    Task { @MainActor in\n                        await Task.yield()\n                        router.push(.briefing)"))
     }
+
+    @Test("Export actions stay above the tall PDF preview")
+    func exportActionsStayVisible() throws {
+        let source = try source
+        let export = try #require(source.range(of: "v2.briefing.export.pdf-png"))
+        let preview = try #require(source.range(of: "BriefingPDFPreview(data: data)"))
+        #expect(export.lowerBound < preview.lowerBound)
+    }
 }

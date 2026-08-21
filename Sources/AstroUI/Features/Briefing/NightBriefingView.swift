@@ -488,6 +488,17 @@ public struct NightBriefingView: View {
                 }
                 .astroRaisedSurface()
             } else {
+                HStack {
+                    Button("PDF mentése…") { export(.pdf) }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v2.briefing.export.pdf")
+                    Button("PDF + telefonos képek…") { export(.pdfAndPNG) }
+                        .accessibilityIdentifier("v2.briefing.export.pdf-png")
+                    Button("Csak képek…") { export(.pngOnly) }
+                        .accessibilityIdentifier("v2.briefing.export.png")
+                }
+                Label("Az export csak új PDF-et és – ha kéred – új PNG-oldalakat hoz létre. Nem töröl, nem mozgat és nem ír felül semmit.", systemImage: "shield.lefthalf.filled")
+                    .font(.callout).foregroundStyle(AstroTokens.Color.ok)
                 Group {
                     if let data = store.previewPDF {
                         BriefingPDFPreview(data: data)
@@ -512,17 +523,6 @@ public struct NightBriefingView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 }
-                HStack {
-                    Button("PDF mentése…") { export(.pdf) }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("v2.briefing.export.pdf")
-                    Button("PDF + telefonos képek…") { export(.pdfAndPNG) }
-                        .accessibilityIdentifier("v2.briefing.export.pdf-png")
-                    Button("Csak képek…") { export(.pngOnly) }
-                        .accessibilityIdentifier("v2.briefing.export.png")
-                }
-                Label("Az export csak új PDF-et és – ha kéred – új PNG-oldalakat hoz létre. Nem töröl, nem mozgat és nem ír felül semmit.", systemImage: "shield.lefthalf.filled")
-                    .font(.callout).foregroundStyle(AstroTokens.Color.ok)
             }
         }
         .task(id: store.currentStep) {
