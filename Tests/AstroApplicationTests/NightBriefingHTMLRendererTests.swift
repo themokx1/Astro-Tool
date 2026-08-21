@@ -63,6 +63,54 @@ struct NightBriefingHTMLRendererTests {
         #expect(!first.contains("to bottom, transparent"))
     }
 
+    @Test("Planned times use the user's local time zone rather than UTC")
+    func rendersLocalTimes() {
+        let budapest = NightBriefingHTMLRenderer(
+            timeZone: TimeZone(identifier: "Europe/Budapest")!
+        ).render(document(language: .hu))
+        let utc = NightBriefingHTMLRenderer(
+            timeZone: TimeZone(secondsFromGMT: 0)!
+        ).render(document(language: .hu))
+
+        #expect(budapest.contains("22:13"))
+        #expect(utc.contains("20:13"))
+        #expect(!budapest.contains("20:13"))
+    }
+
+    @Test("Known planning facts are printed and missing facts are not invented")
+    func rendersCanonicalPlanningFacts() {
+        let base = document(language: .en)
+        let context = NightBriefingContext(
+            calibrationGaps: ["L flat"],
+            sky: .known(.init(
+                darknessStart: base.draft.arrival!,
+                darknessEnd: base.draft.departure!,
+                maxAltitudeDeg: 62,
+                minimumAltitudeDeg: 30,
+                moonSeparationDeg: 84,
+                altitudePoints: [.init(time: base.draft.arrival!, altitudeDeg: 44)]
+            )),
+            equipment: .known(.init(cameraName: "ASI 2600MC", focalLengthMM: 250, fNumber: 4.9)),
+            projectProgress: .missing(reason: "No project goal is available")
+        )
+        let enriched = NightBriefingDocument(
+            draft: base.draft,
+            readiness: base.readiness,
+            issues: base.issues,
+            contingencies: base.contingencies,
+            context: context
+        )
+
+        let html = NightBriefingHTMLRenderer(timeZone: TimeZone(secondsFromGMT: 0)!).render(enriched)
+
+        #expect(html.contains("Sky and timing"))
+        #expect(html.contains("Maximum altitude"))
+        #expect(html.contains("62°"))
+        #expect(html.contains("ASI 2600MC"))
+        #expect(html.contains("L flat"))
+        #expect(html.contains("No project goal is available"))
+    }
+
     private func document(language: BriefingDocumentLanguage) -> NightBriefingDocument {
         let start = Date(timeIntervalSince1970: 1_786_738_400)
         var draft = NightBriefingDraft(

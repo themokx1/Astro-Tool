@@ -2651,6 +2651,7 @@
 "B terv" = "B terv";
 "Befejezés" = "Befejezés";
 "Briefing készítése" = "Briefing készítése";
+"Add to Night Briefing" = "Hozzáadás az éjszakai briefinghez";
 "Csak ebből a még nem exportált tervből veszi ki; fotót nem töröl." = "Csak ebből a még nem exportált tervből veszi ki; fotót nem töröl.";
 "Csak képek…" = "Csak képek…";
 "Célpont hozzáadása" = "Célpont hozzáadása";
@@ -2659,6 +2660,7 @@
 "Eltávolítás a tervből" = "Eltávolítás a tervből";
 "Előbb adj hozzá célpontot" = "Előbb adj hozzá célpontot";
 "Előnézet elkészítése" = "Előnézet elkészítése";
+"Előnézet újrapróbálása" = "Előnézet újrapróbálása";
 "Expozíció (mp)" = "Expozíció (mp)";
 "Felszerelés rövid neve" = "Felszerelés rövid neve";
 "Fő célpont" = "Fő célpont";
@@ -2676,12 +2678,16 @@
 "PDF mentése…" = "PDF mentése…";
 "Rakd össze a teljes tervet, majd vidd magaddal PDF-ben vagy telefonos képeken." = "Rakd össze a teljes tervet, majd vidd magaddal PDF-ben vagy telefonos képeken.";
 "Saját megjegyzés az éjszakához" = "Saját megjegyzés az éjszakához";
+"Saját checklist-elem" = "Saját checklist-elem";
+"Hozzáadás" = "Hozzáadás";
 "Szerepe" = "Szerepe";
 "Szűrő" = "Szűrő";
 "Tartalék" = "Tartalék";
 "Tervezett összidő: %@ óra" = "Tervezett összidő: %@ óra";
 "Tovább" = "Tovább";
 "Vidd magaddal az egész éjszaka tervét" = "Vidd magaddal az egész éjszaka tervét";
+"Válaszd ki alább az estét; később bármikor átírhatod." = "Válaszd ki alább az estét; később bármikor átírhatod.";
+"Melyik estére készülsz?" = "Melyik estére készülsz?";
 "Vissza" = "Vissza";
 "Változat mentése" = "Változat mentése";
 "Várható tápidő órában" = "Várható tápidő órában";

@@ -18,12 +18,13 @@ public struct NightBriefingComposer: Sendable {
         if composed.checklist.isEmpty {
             composed.checklist = checklistTemplate.sections(language: composed.language)
         }
-        let report = validator.validate(composed)
+        let report = validator.validate(composed, context: context)
         return NightBriefingDocument(
             draft: composed,
             readiness: report.readiness,
             issues: report.issues,
-            contingencies: contingencyBuilder.build(draft: composed, context: context)
+            contingencies: contingencyBuilder.build(draft: composed, context: context),
+            context: context
         )
     }
 }

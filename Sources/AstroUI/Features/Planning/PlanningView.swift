@@ -25,7 +25,7 @@ public struct PlanningView: View {
     let rootURL: URL?
     let createProject: (String) -> Void
     let openSavedTargets: () -> Void
-    let openBriefing: () -> Void
+    let openBriefing: (NightBriefingSeed) -> Void
     /// Wave W6-A section B: the no-library placeholder below used to be a
     /// dead end -- no button at all -- unlike `ArchiveView`/`HealthView`'s
     /// own "no library" states, which both already thread a `chooseLibrary`
@@ -42,7 +42,7 @@ public struct PlanningView: View {
         rootURL: URL?,
         createProject: @escaping (String) -> Void,
         openSavedTargets: @escaping () -> Void = {},
-        openBriefing: @escaping () -> Void = {},
+        openBriefing: @escaping (NightBriefingSeed) -> Void = { _ in },
         chooseLibrary: @escaping () -> Void = {}
     ) {
         self.rootURL = rootURL
@@ -125,9 +125,12 @@ public struct PlanningView: View {
                 }
                 .accessibilityIdentifier("v2.planning.setup")
                 Spacer()
-                Button("Éjszakai briefing", systemImage: "doc.text.image", action: openBriefing)
+                Button("Éjszakai briefing", systemImage: "doc.text.image") {
+                    openSelectedBriefing()
+                }
                     .buttonStyle(.borderedProminent)
                     .help("Készíts részletes, telefonon vagy papíron magaddal vihető tervet.")
+                    .accessibilityIdentifier("v2.planning.open-briefing")
                 if let fov = store.fieldOfView {
                     Text("\(fov.widthDeg, format: .number.precision(.fractionLength(1)))° × \(fov.heightDeg, format: .number.precision(.fractionLength(1)))°")
                         .font(.callout.monospacedDigit()).foregroundStyle(.secondary)
@@ -564,6 +567,9 @@ public struct PlanningView: View {
                         .contextMenu(forSelectionType: String.self) { targetIDs in
                             if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
                                 Button("Plan Selected") { createProject(row.target.designation) }
+                                Button("Add to Night Briefing", systemImage: "doc.text.image") {
+                                    openBriefingFor(row)
+                                }
                             }
                         } primaryAction: { targetIDs in
                             if let row = store.filteredRecommendations.first(where: { targetIDs.contains($0.id) }) {
@@ -576,6 +582,22 @@ public struct PlanningView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("v2.planning.recommendations")
+    }
+
+    private func openSelectedBriefing() {
+        guard let row = selectedRow else {
+            openBriefing(store.makeBriefingSeed(for: nil))
+            return
+        }
+        openBriefingFor(row)
+    }
+
+    private func openBriefingFor(_ row: PlanningRecommendation) {
+        store.selectTarget(row.target)
+        Task {
+            await store.pendingSkyPathRefresh?.value
+            openBriefing(store.makeBriefingSeed(for: row))
+        }
     }
 
     /// Task 3: the selected row's altitude across the planned night --

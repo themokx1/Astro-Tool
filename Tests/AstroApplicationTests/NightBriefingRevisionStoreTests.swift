@@ -38,8 +38,8 @@ struct NightBriefingRevisionStoreTests {
         #expect(latest == [saved])
     }
 
-    @Test("An occupied next filename is never overwritten")
-    func refusesOccupiedRevisionName() async throws {
+    @Test("A corrupt occupied filename is preserved and the next revision is used")
+    func skipsOccupiedRevisionNameWithoutOverwriting() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let draft = fixture.draft(notes: "Nem írható felül")
@@ -49,10 +49,31 @@ struct NightBriefingRevisionStoreTests {
         try sentinel.write(to: occupied, options: .withoutOverwriting)
         let store = NightBriefingRevisionStore(directory: fixture.directory)
 
-        await #expect(throws: NightBriefingRevisionStoreError.self) {
-            try await store.save(draft)
-        }
+        let saved = try await store.save(draft)
+        #expect(saved.revision == 2)
         #expect(try Data(contentsOf: occupied) == sentinel)
+    }
+
+    @Test("A corrupt revision after a healthy one cannot block later saves")
+    func savesAfterCorruptLatestRevision() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = NightBriefingRevisionStore(directory: fixture.directory)
+        let draft = fixture.draft(notes: "Első")
+        let first = try await store.save(draft)
+        let corrupt = fixture.directory.appendingPathComponent(
+            "\(draft.id.uuidString.lowercased())-r000002.json"
+        )
+        let corruptBytes = Data("broken revision".utf8)
+        try corruptBytes.write(to: corrupt, options: .withoutOverwriting)
+
+        var changed = first
+        changed.notes = "Harmadik"
+        let third = try await store.save(changed)
+
+        #expect(third.revision == 3)
+        #expect(try Data(contentsOf: corrupt) == corruptBytes)
+        #expect(try await store.latest(id: draft.id)?.notes == "Harmadik")
     }
 
     private struct Fixture {

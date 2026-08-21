@@ -1,7 +1,11 @@
 import Foundation
 
 public struct NightBriefingHTMLRenderer: Sendable {
-    public init() {}
+    private let timeZone: TimeZone
+
+    public init(timeZone: TimeZone = .current) {
+        self.timeZone = timeZone
+    }
 
     public func render(_ document: NightBriefingDocument) -> String {
         let draft = document.draft
@@ -29,6 +33,7 @@ public struct NightBriefingHTMLRenderer: Sendable {
             "<article class=\"contingency\"><h3>\(escape($0.title))</h3><p>\(escape($0.action))</p></article>"
         }.joined()
         let issues = document.issues.isEmpty ? "" : "<div class=\"warning\"><strong>\(copy.checkBeforeLeaving)</strong><ul>\(document.issues.map { "<li>\(escape($0.message))</li>" }.joined())</ul></div>"
+        let planningFacts = planningFacts(document.context, copy: copy, language: draft.language)
 
         return """
         <!doctype html><html lang="\(draft.language.rawValue)"><head><meta charset="utf-8"><style>
@@ -50,7 +55,7 @@ public struct NightBriefingHTMLRenderer: Sendable {
         <section class="cover"><p class="eyebrow">AstroTool 4</p><h1>\(copy.title)</h1><p>\(date(draft.nightDate, draft.language)) · \(escape(draft.site?.name ?? copy.notProvided))</p><div class="facts"><div><span>\(copy.setup)</span><strong>\(escape(draft.setup?.name ?? copy.notProvided))</strong></div><div><span>\(copy.weather)</span><strong>\(weather(draft.weather, copy))</strong></div><div><span>\(copy.arrival)</span><strong>\(optionalTime(draft.arrival, draft.language, copy))</strong></div><div><span>\(copy.departure)</span><strong>\(optionalTime(draft.departure, draft.language, copy))</strong></div></div><p><span class="status">\(copy.readiness(document.readiness))</span></p>\(issues)<footer>\(copy.preparedAtHome)</footer></section>
         <section class="page-break"><p class="eyebrow">02</p><h2>\(copy.atAGlance)</h2><h3>\(copy.timeline)</h3>\(NightBriefingSVGRenderer().timeline(targets: draft.targets))<table><thead><tr><th>\(copy.target)</th><th>\(copy.plannedWindow)</th><th>\(copy.capturePlan)</th></tr></thead><tbody>\(timelineRows)</tbody></table></section>
         \(targetPages)
-        <section class="page-break"><p class="eyebrow">\(copy.fieldReady)</p><h2>\(copy.equipmentAndCalibration)</h2><p><strong>\(copy.setup):</strong> \(escape(draft.setup?.name ?? copy.notProvided))</p><p>\(copy.calibrationReminder)</p><h2>\(copy.checklist)</h2>\(checklist)</section>
+        <section class="page-break"><p class="eyebrow">\(copy.fieldReady)</p><h2>\(copy.skyAndTiming)</h2>\(planningFacts)<h2>\(copy.equipmentAndCalibration)</h2><p><strong>\(copy.setup):</strong> \(escape(draft.setup?.name ?? copy.notProvided))</p><p>\(copy.calibrationReminder)</p><h2>\(copy.checklist)</h2>\(checklist)</section>
         <section class="page-break"><p class="eyebrow">\(copy.whenThingsChange)</p><h2>\(copy.backupPlan)</h2>\(contingencies)</section>
         <section class="page-break"><p class="eyebrow">\(copy.inTheField)</p><h2>\(copy.fieldNotes)</h2>\(draft.notes.isEmpty ? "" : "<p>\(escape(draft.notes))</p>")<div class="notes-lines"></div></section>
         </body></html>
@@ -68,11 +73,55 @@ public struct NightBriefingHTMLRenderer: Sendable {
         return parts.isEmpty ? copy.notProvided : parts.joined(separator: " · ")
     }
 
+    private func planningFacts(
+        _ context: NightBriefingContext,
+        copy: Copy,
+        language: BriefingDocumentLanguage
+    ) -> String {
+        let sky: String
+        switch context.sky {
+        case .known(let value), .stale(let value, _):
+            let moon = value.moonSeparationDeg.map { "<div><span>\(copy.moonSeparation)</span><strong>\(format($0))°</strong></div>" } ?? ""
+            let chart = NightBriefingSVGRenderer().altitudeChart(
+                points: value.altitudePoints,
+                minimumAltitudeDeg: value.minimumAltitudeDeg
+            )
+            sky = "<div class=\"facts\"><div><span>\(copy.darkness)</span><strong>\(time(value.darknessStart, language))–\(time(value.darknessEnd, language))</strong></div><div><span>\(copy.maximumAltitude)</span><strong>\(format(value.maxAltitudeDeg))°</strong></div>\(moon)</div>\(chart)"
+        case .missing(let reason):
+            sky = "<p class=\"role\">\(escape(reason))</p>"
+        }
+
+        let equipment: String
+        switch context.equipment {
+        case .known(let value), .stale(let value, _):
+            let filter = value.filterName.map { " · \(escape($0))" } ?? ""
+            equipment = "<p><strong>\(copy.equipmentFacts):</strong> \(escape(value.cameraName)) · \(format(value.focalLengthMM)) mm · f/\(format(value.fNumber))\(filter)</p>"
+        case .missing(let reason):
+            equipment = "<p><strong>\(copy.equipmentFacts):</strong> \(escape(reason))</p>"
+        }
+
+        let progress: String
+        switch context.projectProgress {
+        case .known(let value), .stale(let value, _):
+            progress = "<p><strong>\(copy.projectProgress):</strong> \(format(value.existingIntegrationSeconds / 3_600)) h / \(format(value.goalIntegrationSeconds / 3_600)) h</p>"
+        case .missing(let reason):
+            progress = "<p><strong>\(copy.projectProgress):</strong> \(escape(reason))</p>"
+        }
+        let calibration = !context.calibrationIsKnown
+            ? "<p><strong>\(copy.calibrationStatus):</strong> \(copy.calibrationNotChecked)</p>"
+            : context.calibrationGaps.isEmpty
+                ? "<p><strong>\(copy.calibrationStatus):</strong> \(copy.noKnownCalibrationGap)</p>"
+                : "<div class=\"warning\"><strong>\(copy.calibrationStatus):</strong> \(escape(context.calibrationGaps.joined(separator: ", ")))</div>"
+        return sky + equipment + progress + calibration
+    }
+
     private func weather(_ state: BriefingDataState<BriefingWeatherSummary>, _ copy: Copy) -> String {
         switch state {
-        case .known(let value): escape(value.summary)
-        case .missing(let reason): escape(reason)
-        case .stale(let value, _): "\(escape(value.summary)) · \(copy.stale)"
+        case .known(let value):
+            let freshness = value.updatedAt.map { time($0, copy.language) } ?? copy.retrievalTimeUnknown
+            return "\(escape(value.summary)) · \(escape(value.source)) · \(freshness)"
+        case .missing(let reason): return escape(reason)
+        case .stale(let value, _): return "\(escape(value.summary)) · \(escape(value.source)) · \(copy.stale)"
         }
     }
 
@@ -81,7 +130,7 @@ public struct NightBriefingHTMLRenderer: Sendable {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.locale = Locale(identifier: language == .hu ? "hu_HU" : "en_GB")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.timeZone = timeZone
         formatter.dateStyle = .long
         return escape(formatter.string(from: value))
     }
@@ -93,7 +142,7 @@ public struct NightBriefingHTMLRenderer: Sendable {
     private func time(_ value: Date, _ language: BriefingDocumentLanguage) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: language == .hu ? "hu_HU" : "en_GB")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.timeZone = timeZone
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: value)
     }
@@ -130,10 +179,20 @@ public struct NightBriefingHTMLRenderer: Sendable {
         var integration: String { language == .hu ? "integráció" : "integration" }
         var notProvided: String { language == .hu ? "Nincs megadva" : "Not provided" }
         var stale: String { language == .hu ? "elavult adat" : "stale data" }
+        var retrievalTimeUnknown: String { language == .hu ? "a lekérés ideje nem ismert" : "retrieval time unknown" }
         var checkBeforeLeaving: String { language == .hu ? "Indulás előtt ellenőrizd" : "Check before leaving" }
         var preparedAtHome: String { language == .hu ? "Otthon készült. A forecast és a terv nem helyettesíti a helyszíni ellenőrzést." : "Prepared at home. Forecast and plan do not replace field checks." }
         var fieldReady: String { language == .hu ? "Helyszínre készen" : "Field ready" }
         var equipmentAndCalibration: String { language == .hu ? "Felszerelés és kalibráció" : "Equipment and calibration" }
+        var skyAndTiming: String { language == .hu ? "Égbolt és időzítés" : "Sky and timing" }
+        var darkness: String { language == .hu ? "Csillagászati sötétség" : "Astronomical darkness" }
+        var maximumAltitude: String { language == .hu ? "Legnagyobb magasság" : "Maximum altitude" }
+        var moonSeparation: String { language == .hu ? "Holdtávolság" : "Moon separation" }
+        var equipmentFacts: String { language == .hu ? "Részletes felszerelés" : "Equipment details" }
+        var projectProgress: String { language == .hu ? "Projekt állása" : "Project progress" }
+        var calibrationStatus: String { language == .hu ? "Kalibráció" : "Calibration" }
+        var noKnownCalibrationGap: String { language == .hu ? "Nincs ismert hiány" : "No known gap" }
+        var calibrationNotChecked: String { language == .hu ? "Nincs még ellenőrizve" : "Not checked yet" }
         var calibrationReminder: String { language == .hu ? "A gain, offset, binning, hőmérséklet és szűrő egyezzen a kalibrációs képekkel." : "Match gain, offset, binning, temperature and filter to calibration frames." }
         var whenThingsChange: String { language == .hu ? "Ha változik az este" : "When the night changes" }
         var inTheField: String { language == .hu ? "A helyszínen" : "In the field" }

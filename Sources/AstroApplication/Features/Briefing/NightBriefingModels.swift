@@ -39,9 +39,9 @@ public struct BriefingSetupSummary: Codable, Equatable, Sendable {
 public struct BriefingWeatherSummary: Codable, Equatable, Sendable {
     public var summary: String
     public var source: String
-    public var updatedAt: Date
+    public var updatedAt: Date?
 
-    public init(summary: String, source: String, updatedAt: Date) {
+    public init(summary: String, source: String, updatedAt: Date? = nil) {
         self.summary = summary
         self.source = source
         self.updatedAt = updatedAt
@@ -203,17 +203,20 @@ public struct NightBriefingDocument: Codable, Equatable, Sendable {
     public let readiness: BriefingReadiness
     public let issues: [BriefingValidationIssue]
     public let contingencies: [BriefingContingency]
+    public let context: NightBriefingContext
 
     public init(
         draft: NightBriefingDraft,
         readiness: BriefingReadiness,
         issues: [BriefingValidationIssue],
-        contingencies: [BriefingContingency] = []
+        contingencies: [BriefingContingency] = [],
+        context: NightBriefingContext = .init()
     ) {
         self.draft = draft
         self.readiness = readiness
         self.issues = issues
         self.contingencies = contingencies
+        self.context = context
     }
 }
 

@@ -131,6 +131,17 @@ public struct HomeView: View {
 
     private var libraryOverview: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+            preflightChecklistCard
+            // Wave 0 seam (V3 pre-stack program): renders whatever 5.1
+            // (Ingest-figyelő)/5.6 (Élő éjszaka-mód) registers through
+            // `extraCardProviders`, in their own registration order. Empty
+            // today, so this contributes nothing yet -- see
+            // `HomeCardProviding`'s own doc comment.
+            ForEach(Array(extraCardProviders.enumerated()), id: \.offset) { _, provider in
+                if let card = provider.card(store: store) {
+                    card
+                }
+            }
             HStack(spacing: AstroTokens.Spacing.standard) {
                 Image(systemName: "doc.text.image")
                     .font(.title2)
@@ -146,17 +157,6 @@ public struct HomeView: View {
                     .accessibilityIdentifier("v2.home.open-briefing")
             }
             .astroRaisedSurface()
-            preflightChecklistCard
-            // Wave 0 seam (V3 pre-stack program): renders whatever 5.1
-            // (Ingest-figyelő)/5.6 (Élő éjszaka-mód) registers through
-            // `extraCardProviders`, in their own registration order. Empty
-            // today, so this contributes nothing yet -- see
-            // `HomeCardProviding`'s own doc comment.
-            ForEach(Array(extraCardProviders.enumerated()), id: \.offset) { _, provider in
-                if let card = provider.card(store: store) {
-                    card
-                }
-            }
             HStack(spacing: AstroTokens.Spacing.standard) {
                 MetricCard(title: "Projects", value: "\(store.snapshot.projectCount)", detail: "In \(store.snapshot.libraryName ?? "library")", systemImage: "scope")
                 // W6-E item 3: "Indexed observing sessions" read as though

@@ -8,7 +8,7 @@ struct NightBriefingValidatorTests {
 
     @Test("A complete draft is ready and exportable")
     func completeDraftIsReady() {
-        let report = NightBriefingValidator().validate(completeDraft())
+        let report = NightBriefingValidator().validate(completeDraft(), context: completeContext())
 
         #expect(report.readiness == .ready)
         #expect(!report.blocksExport)
@@ -20,7 +20,7 @@ struct NightBriefingValidatorTests {
         var draft = completeDraft()
         draft.nightDate = nil
 
-        let report = NightBriefingValidator().validate(draft)
+        let report = NightBriefingValidator().validate(draft, context: completeContext())
 
         #expect(report.readiness == .incomplete)
         #expect(report.blocksExport)
@@ -32,7 +32,7 @@ struct NightBriefingValidatorTests {
         var draft = completeDraft()
         draft.targets[0].end = draft.targets[0].start
 
-        let report = NightBriefingValidator().validate(draft)
+        let report = NightBriefingValidator().validate(draft, context: completeContext())
 
         #expect(report.blocksExport)
         #expect(report.issues.contains { $0.code == .invalidTargetWindow })
@@ -66,7 +66,7 @@ struct NightBriefingValidatorTests {
             )
         )
 
-        let report = NightBriefingValidator().validate(draft)
+        let report = NightBriefingValidator().validate(draft, context: completeContext())
 
         #expect(report.readiness == .attention)
         #expect(!report.blocksExport)
@@ -78,7 +78,7 @@ struct NightBriefingValidatorTests {
         var draft = completeDraft()
         draft.targets[0].role = .backup
 
-        let report = NightBriefingValidator().validate(draft)
+        let report = NightBriefingValidator().validate(draft, context: completeContext())
 
         #expect(report.readiness == .incomplete)
         #expect(!report.blocksExport)
@@ -101,10 +101,24 @@ struct NightBriefingValidatorTests {
                     name: "M 42",
                     role: .primary,
                     start: start,
-                    end: start.addingTimeInterval(3_600)
+                    end: start.addingTimeInterval(3_600),
+                    capturePlan: .init(exposureSeconds: 180, frameCount: 20)
                 )
             ],
             language: .hu
+        )
+    }
+
+    private func completeContext() -> NightBriefingContext {
+        .init(
+            sky: .known(.init(
+                darknessStart: start,
+                darknessEnd: start.addingTimeInterval(10_800),
+                maxAltitudeDeg: 60,
+                minimumAltitudeDeg: 30
+            )),
+            equipment: .known(.init(cameraName: "Camera", focalLengthMM: 250, fNumber: 5)),
+            projectProgress: .known(.init(existingIntegrationSeconds: 0, goalIntegrationSeconds: 36_000))
         )
     }
 }

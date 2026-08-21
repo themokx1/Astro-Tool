@@ -81,6 +81,34 @@ struct NightBriefingExportTests {
         #expect(result.pngURLs.count >= 5)
         #expect(result.pngURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
         #expect(result.pngURLs.map(\.lastPathComponent) == result.pngURLs.indices.map { "page-\($0 + 1).png" })
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: fixture.path)
+            .filter { $0.hasPrefix(".astrotool-briefing-") }
+        #expect(leftovers.isEmpty)
+    }
+
+    @Test("An existing PNG folder is never removed or changed")
+    func preservesExistingPNGFolder() async throws {
+        let fixture = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AstroToolExport-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        let output = fixture.appendingPathComponent("m42-night.pdf")
+        let pages = fixture.appendingPathComponent("m42-night.pages", isDirectory: true)
+        try FileManager.default.createDirectory(at: pages, withIntermediateDirectories: false)
+        let sentinel = pages.appendingPathComponent("my-photo.txt")
+        let sentinelBytes = Data("user content".utf8)
+        try sentinelBytes.write(to: sentinel, options: .withoutOverwriting)
+
+        await #expect(throws: NightBriefingExportError.self) {
+            try await NightBriefingExportCommand().export(
+                document: fixtureDocument(),
+                to: output,
+                format: .pdfAndPNG
+            )
+        }
+
+        #expect(!FileManager.default.fileExists(atPath: output.path))
+        #expect(try Data(contentsOf: sentinel) == sentinelBytes)
     }
 
     private func fixtureDocument() -> NightBriefingDocument {

@@ -562,6 +562,87 @@ public final class PlanningStore {
         setups.first { $0.id == selectedSetupID } ?? setups[0]
     }
 
+    public func makeBriefingSeed(for recommendation: PlanningRecommendation?) -> NightBriefingSeed {
+        let date = planningDate ?? Date()
+        let isHungarian = Locale.current.language.languageCode?.identifier == "hu"
+        let site = resolvedSite.flatMap { rule -> BriefingSiteSummary? in
+            guard let latitude = rule.latitudeDeg, let longitude = rule.longitudeDeg else { return nil }
+            let name = "\(AstroFormat.degrees(latitude)), \(AstroFormat.degrees(longitude))"
+            return BriefingSiteSummary(id: "\(latitude),\(longitude)", name: name)
+        }
+        let setup = BriefingSetupSummary(id: selectedSetup.id, name: selectedSetup.name)
+        let target: BriefingTargetBlock? = recommendation.flatMap { row in
+            guard let path = skyPath,
+                  path.target.designation == row.target.designation
+            else { return nil }
+            let usable = path.samples.filter { $0.altitudeDeg >= path.minAltitudeDeg }
+            guard let start = usable.first?.time,
+                  let end = usable.last?.time,
+                  end > start
+            else { return nil }
+            return BriefingTargetBlock(
+                name: row.target.designation,
+                role: .primary,
+                start: start,
+                end: end,
+                astronomicalStart: path.duskUTC,
+                astronomicalEnd: path.dawnUTC,
+                capturePlan: .init(filterName: selectedSetup.defaultFilterName),
+                warnings: [
+                    "Maximum altitude: \(AstroFormat.wholeDegrees(path.maxAltitudeDeg))",
+                    path.moonSeparationDeg.map { "Moon separation: \(AstroFormat.wholeDegrees($0))" },
+                ].compactMap { $0 }
+            )
+        }
+        let sky: BriefingDataState<BriefingSkySummary>
+        if let path = skyPath,
+           recommendation?.target.designation == path.target.designation {
+            sky = .known(.init(
+                darknessStart: path.duskUTC,
+                darknessEnd: path.dawnUTC,
+                maxAltitudeDeg: path.maxAltitudeDeg,
+                minimumAltitudeDeg: path.minAltitudeDeg,
+                moonSeparationDeg: path.moonSeparationDeg,
+                altitudePoints: path.samples.map { .init(time: $0.time, altitudeDeg: $0.altitudeDeg) }
+            ))
+        } else {
+            sky = .missing(reason: isHungarian ? "Nincs ellenőrzött égútadat." : "No verified sky-path data is available.")
+        }
+        let equipment: BriefingDataState<BriefingEquipmentFacts> = .known(.init(
+            cameraName: selectedSetup.cameraName,
+            focalLengthMM: focalLength,
+            fNumber: selectedSetup.fNumber,
+            filterName: selectedSetup.defaultFilterName
+        ))
+        let project: BriefingDataState<BriefingProjectProgress> = .missing(
+            reason: isHungarian ? "Nincs megadott projektcél." : "No project goal is available."
+        )
+        let weather: BriefingDataState<BriefingWeatherSummary>
+        switch cloudState {
+        case .summary(let summary):
+            let range = "\(AstroFormat.percent(summary.minPercent))–\(AstroFormat.percent(summary.maxPercent))"
+            let mean = AstroFormat.percent(summary.meanPercent)
+            let text = isHungarian
+                ? "Felhőzet \(range), átlag \(mean)"
+                : "Cloud \(range), mean \(mean)"
+            weather = .known(.init(summary: text, source: "Open-Meteo", updatedAt: nil))
+        case .beyondHorizon:
+            weather = .missing(reason: isHungarian ? "A dátum kívül esik a 7 napos előrejelzésen." : "The date is beyond the 7-day forecast horizon.")
+        case .error:
+            weather = .missing(reason: isHungarian ? "Az előrejelzés nem volt elérhető." : "The forecast was unavailable.")
+        case .hidden:
+            weather = .missing(reason: isHungarian ? "Az időjárás nincs bekapcsolva vagy nincs helyszín." : "Weather is disabled or no site is available.")
+        }
+        return NightBriefingSeed(
+            date: date,
+            site: site,
+            setup: setup,
+            target: target,
+            context: .init(sky: sky, equipment: equipment, projectProgress: project),
+            weather: weather
+        )
+    }
+
     public var fieldOfView: SetupFieldOfView? {
         selectedSetup.fieldOfView(at: focalLength)
     }

@@ -18,6 +18,7 @@ final class AstroToolLaunchTests: XCTestCase {
 
     private var fixtureContainer: URL!
     private var appSupportContainer: URL!
+    private var briefingExportURL: URL!
 
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -33,6 +34,7 @@ final class AstroToolLaunchTests: XCTestCase {
         )
         try FileManager.default.createDirectory(at: fixtureContainer, withIntermediateDirectories: false)
         try FileManager.default.createDirectory(at: appSupportContainer, withIntermediateDirectories: false)
+        briefingExportURL = appSupportContainer.appendingPathComponent("night-briefing.pdf")
     }
 
     override func tearDownWithError() throws {
@@ -219,6 +221,44 @@ final class AstroToolLaunchTests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground)
     }
 
+    @MainActor
+    func testNightBriefingCanBePreparedSavedAndExportedForTheField() throws {
+        let app = launchFixtureApp()
+        completeOnboarding(app)
+
+        enterSection("v2.sidebar.home", revealing: "v2.detail.home", in: app)
+        element("v2.home.open-briefing", in: app).click()
+        XCTAssertTrue(element("v2.briefing.start.today", in: app).waitForExistence(timeout: 8))
+        element("v2.briefing.start.today", in: app).click()
+        XCTAssertTrue(element("v2.briefing.step.1", in: app).waitForExistence(timeout: 8))
+
+        element("v2.briefing.save-revision", in: app).click()
+        element("v2.briefing.next", in: app).click()
+        XCTAssertTrue(element("v2.briefing.add-target", in: app).waitForExistence(timeout: 8))
+        element("v2.briefing.add-target", in: app).click()
+
+        for step in 3...5 {
+            element("v2.briefing.next", in: app).click()
+            XCTAssertTrue(element("v2.briefing.step.\(step)", in: app).waitForExistence(timeout: 8))
+        }
+        let export = element("v2.briefing.export.pdf-png", in: app)
+        XCTAssertTrue(export.waitForExistence(timeout: 20))
+        export.click()
+
+        let pdfExists = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in FileManager.default.fileExists(atPath: self.briefingExportURL.path) },
+            object: nil
+        )
+        wait(for: [pdfExists], timeout: 30)
+        let pages = briefingExportURL.deletingPathExtension().appendingPathExtension("pages")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: pages.appendingPathComponent("page-1.png").path))
+
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "V4 Night Briefing export"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     // MARK: - Helpers
 
     @MainActor
@@ -230,6 +270,7 @@ final class AstroToolLaunchTests: XCTestCase {
             "-NSQuitAlwaysKeepsWindows", "NO",
             "-UITestFixtureRoot", fixtureContainer.path,
             "-UITestAppSupport", appSupportContainer.path,
+            "-UITestBriefingExportPath", briefingExportURL.path,
         ]
         app.launch()
         app.activate()

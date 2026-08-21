@@ -56,25 +56,53 @@ public struct NightBriefingExportCommand {
         let pdfData = try await pdfExporter.pdfData(html: html)
         let pngPages = pngDirectory == nil ? [] : try pngExporter.pages(from: pdfData, dpi: 144)
 
+        let parent = destination.standardizedFileURL.deletingLastPathComponent()
+        let staging = parent.appendingPathComponent(
+            ".astrotool-briefing-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: false)
+        defer {
+            // This directory was created by this export invocation. Never
+            // clean a user-selected final destination, even after failure.
+            try? fileManager.removeItem(at: staging)
+        }
+
+        let stagedPDF = staging.appendingPathComponent("briefing.pdf")
+        if pdfURL != nil {
+            try pdfData.write(to: stagedPDF, options: .atomic)
+        }
+
+        let stagedPages = staging.appendingPathComponent("pages", isDirectory: true)
+        for (index, data) in pngPages.enumerated() {
+            if index == 0 {
+                try fileManager.createDirectory(at: stagedPages, withIntermediateDirectories: false)
+            }
+            let url = stagedPages.appendingPathComponent("page-\(index + 1).png")
+            try data.write(to: url, options: .atomic)
+        }
+
         if let pdfURL {
-            try pdfData.write(to: pdfURL, options: .withoutOverwriting)
+            try commit(stagedPDF, to: pdfURL)
         }
         guard let pngDirectory else {
             return BriefingExportResult(pdfURL: pdfURL, pngURLs: [])
         }
-
-        var completed = false
-        try fileManager.createDirectory(at: pngDirectory, withIntermediateDirectories: false)
-        defer {
-            if !completed { try? fileManager.removeItem(at: pngDirectory) }
+        try commit(stagedPages, to: pngDirectory)
+        let urls = pngPages.indices.map {
+            pngDirectory.appendingPathComponent("page-\($0 + 1).png")
         }
-        var urls: [URL] = []
-        for (index, data) in pngPages.enumerated() {
-            let url = pngDirectory.appendingPathComponent("page-\(index + 1).png")
-            try data.write(to: url, options: .withoutOverwriting)
-            urls.append(url)
-        }
-        completed = true
         return BriefingExportResult(pdfURL: pdfURL, pngURLs: urls)
+    }
+
+    private func commit(_ staged: URL, to final: URL) throws {
+        do {
+            try fileManager.moveItem(at: staged, to: final)
+        } catch {
+            if fileManager.fileExists(atPath: final.path) {
+                throw NightBriefingExportError.outputAlreadyExists(final)
+            }
+            throw error
+        }
     }
 }

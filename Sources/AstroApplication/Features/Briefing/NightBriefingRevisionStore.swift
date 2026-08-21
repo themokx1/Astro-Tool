@@ -22,8 +22,7 @@ public actor NightBriefingRevisionStore {
 
     public func save(_ draft: NightBriefingDraft) throws -> NightBriefingDraft {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-        let healthy = try decodedRevisions(id: draft.id)
-        let nextRevision = (healthy.map(\.revision).max() ?? 0) + 1
+        let nextRevision = (try revisionNumbers(id: draft.id).max() ?? 0) + 1
         var saved = draft
         saved.revision = nextRevision
         let url = revisionURL(id: draft.id, revision: nextRevision)
@@ -58,6 +57,21 @@ public actor NightBriefingRevisionStore {
         return try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.lastPathComponent.lowercased().hasPrefix(prefix) }
             .compactMap(decode)
+    }
+
+    private func revisionNumbers(id: UUID) throws -> [Int] {
+        guard fileManager.fileExists(atPath: directory.path) else { return [] }
+        let prefix = id.uuidString.lowercased() + "-r"
+        let suffix = ".json"
+        return try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+            .compactMap { url in
+                let name = url.lastPathComponent.lowercased()
+                guard name.hasPrefix(prefix), name.hasSuffix(suffix) else { return nil }
+                let start = name.index(name.startIndex, offsetBy: prefix.count)
+                let end = name.index(name.endIndex, offsetBy: -suffix.count)
+                guard start < end else { return nil }
+                return Int(name[start..<end])
+            }
     }
 
     private func decode(_ url: URL) -> NightBriefingDraft? {

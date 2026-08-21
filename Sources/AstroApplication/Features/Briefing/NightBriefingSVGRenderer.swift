@@ -18,6 +18,23 @@ public struct NightBriefingSVGRenderer: Sendable {
         return "<svg viewBox=\"0 0 720 \(height)\" role=\"img\" aria-label=\"Planned timeline\">\(blocks)</svg>"
     }
 
+    public func altitudeChart(points: [BriefingSkyPoint], minimumAltitudeDeg: Double) -> String {
+        guard points.count >= 2,
+              let start = points.first?.time,
+              let end = points.last?.time,
+              end > start
+        else { return "" }
+        let duration = end.timeIntervalSince(start)
+        let coordinates = points.map { point -> String in
+            let x = 20 + 680 * point.time.timeIntervalSince(start) / duration
+            let altitude = min(90, max(0, point.altitudeDeg))
+            let y = 170 - 150 * altitude / 90
+            return "\(format(x)),\(format(y))"
+        }.joined(separator: " ")
+        let thresholdY = 170 - 150 * min(90, max(0, minimumAltitudeDeg)) / 90
+        return "<svg viewBox=\"0 0 720 190\" role=\"img\" aria-label=\"Altitude path\"><line x1=\"20\" y1=\"\(format(thresholdY))\" x2=\"700\" y2=\"\(format(thresholdY))\" stroke=\"#9aa4b2\" stroke-dasharray=\"6 5\"/><polyline points=\"\(coordinates)\" fill=\"none\" stroke=\"#315f9e\" stroke-width=\"4\"/></svg>"
+    }
+
     private func format(_ value: Double) -> String { String(format: "%.1f", value) }
     private func escape(_ value: String) -> String {
         value.replacingOccurrences(of: "&", with: "&amp;")

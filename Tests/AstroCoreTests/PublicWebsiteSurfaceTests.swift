@@ -16,7 +16,7 @@ struct PublicWebsiteSurfaceTests {
 
     @Test("Every public page uses one responsive design system")
     func sharedDesignSystem() throws {
-        let pages = ["index.html", "features.html", "first-steps.html", "tutorial.html", "cli.html", "privacy.html", "support.html"]
+        let pages = ["index.html", "features.html", "first-steps.html", "night-briefing.html", "tutorial.html", "cli.html", "privacy.html", "support.html"]
         for page in pages {
             let html = try source("docs/\(page)")
             #expect(html.contains("href=\"assets/site.css\""), Comment(rawValue: page))
@@ -31,6 +31,28 @@ struct PublicWebsiteSurfaceTests {
         #expect(css.contains("prefers-reduced-motion"))
         #expect(css.contains("prefers-color-scheme"))
         #expect(css.contains("@media"))
+    }
+
+    @Test("Dedicated bilingual Night Briefing guides explain all five steps and safe offline export")
+    func dedicatedNightBriefingGuide() throws {
+        let hungarian = try source("docs/night-briefing.html")
+        for text in [
+            "Alapok", "Célpontok", "Capture-terv", "Checklist és B terv",
+            "Ellenőrzés és export", "offline", "144 DPI", "nem ír felül",
+            "nem találgat", "href=\"en/night-briefing.html\"",
+        ] {
+            #expect(hungarian.contains(text), Comment(rawValue: text))
+        }
+        let english = try source("docs/en/night-briefing.html")
+        for text in [
+            "Basics", "Targets", "Capture plan", "Checklist and backup plan",
+            "Review and export", "offline", "144 DPI", "never overwrites",
+            "does not guess", "href=\"../night-briefing.html\"",
+        ] {
+            #expect(english.contains(text), Comment(rawValue: text))
+        }
+        #expect(try source("docs/index.html").contains("href=\"night-briefing.html\""))
+        #expect(try source("docs/en/index.html").contains("href=\"night-briefing.html\""))
     }
 
     @Test("First Steps mirrors the novice onboarding and its safety promises")
@@ -61,11 +83,14 @@ struct PublicWebsiteSurfaceTests {
         #expect(englishHomepage.contains("href=\"first-steps.html\""))
     }
 
-    @Test("Homepage describes the real stable 3.0 product and Universal download")
+    @Test("Homepage describes the real stable 4.0 product and Universal download")
     func accurateHomepage() throws {
         let html = try source("docs/index.html")
-        #expect(html.contains("AstroTool 3.0"))
+        #expect(html.contains("AstroTool 4.0"))
+        #expect(html.contains("Éjszakai briefing, amit magaddal vihetsz"))
+        #expect(html.contains("href=\"night-briefing.html\""))
         #expect(html.contains("Project → Night → Capture → Frame → Result"))
+        #expect(!html.contains("AstroTool 3.0"))
         #expect(!html.contains("AstroTool 2.0"))
         #expect(html.contains("Apple Silicon és Intel"))
         #expect(html.contains("A képeid a Maceden maradnak"))

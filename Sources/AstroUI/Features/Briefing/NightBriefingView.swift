@@ -5,9 +5,21 @@ import SwiftUI
 
 public struct NightBriefingView: View {
     @State private var store: NightBriefingStore
+    @State private var customChecklistTitle = ""
+    @State private var otherNightDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
 
-    public init(rootURL: URL?) {
-        _store = State(initialValue: NightBriefingStore(libraryRoot: rootURL))
+    public init(
+        rootURL: URL?,
+        seed: NightBriefingSeed? = nil,
+        applicationSupport: URL? = nil,
+        caches: URL? = nil
+    ) {
+        _store = State(initialValue: NightBriefingStore(
+            libraryRoot: rootURL,
+            seed: seed,
+            applicationSupport: applicationSupport,
+            caches: caches
+        ))
     }
 
     public var body: some View {
@@ -37,18 +49,28 @@ public struct NightBriefingView: View {
 
                 VStack(spacing: AstroTokens.Spacing.standard) {
                     startChoice(
+                        identifier: "v2.briefing.start.today",
                         title: "A ma estét szeretném megtervezni",
                         detail: "A mai dátummal indulunk. Minden más adatot te erősítesz meg.",
                         icon: "moon.stars.fill",
                         action: store.startTonight
                     )
                     startChoice(
+                        identifier: "v2.briefing.start.other",
                         title: "Másik dátumra készülök",
-                        detail: "Válassz egy estét; később bármikor átírhatod.",
+                        detail: "Válaszd ki alább az estét; később bármikor átírhatod.",
                         icon: "calendar",
-                        action: { store.start(date: Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()) }
+                        action: { store.start(date: otherNightDate) }
                     )
+                    DatePicker(
+                        "Melyik estére készülsz?",
+                        selection: $otherNightDate,
+                        displayedComponents: .date
+                    )
+                    .datePickerStyle(.field)
+                    .accessibilityIdentifier("v2.briefing.other-date")
                     startChoice(
+                        identifier: "v2.briefing.start.continue",
                         title: "Egy korábbi briefinget folytatok",
                         detail: store.recentDrafts.isEmpty
                             ? "Még nincs mentett briefing ezen a gépen."
@@ -72,8 +94,9 @@ public struct NightBriefingView: View {
     }
 
     private func startChoice(
+        identifier: String,
         title: LocalizedStringKey,
-        detail: String,
+        detail: LocalizedStringKey,
         icon: String,
         action: @escaping () -> Void,
         disabled: Bool = false
@@ -86,7 +109,7 @@ public struct NightBriefingView: View {
                     .frame(width: 38)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(title).font(.headline).foregroundStyle(AstroTokens.Color.ink)
-                    Text(verbatim: detail).font(.callout).foregroundStyle(AstroTokens.Color.inkDim)
+                    Text(detail).font(.callout).foregroundStyle(AstroTokens.Color.inkDim)
                 }
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -95,6 +118,7 @@ public struct NightBriefingView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
         .disabled(disabled)
         .opacity(disabled ? 0.55 : 1)
         .astroRaisedSurface()
@@ -124,8 +148,9 @@ public struct NightBriefingView: View {
             Spacer()
             readinessBadge
             Button("Változat mentése") {
-                Task { try? await store.saveRevision() }
+                Task { await store.saveRevisionShowingErrors() }
             }
+            .accessibilityIdentifier("v2.briefing.save-revision")
             .disabled(store.isWorking)
             .help("Új mentést készít; korábbi változatot nem ír felül.")
         }
@@ -242,15 +267,23 @@ public struct NightBriefingView: View {
         HStack {
             if store.currentStep != .basics {
                 Button("Vissza", action: store.goBack)
+                    .accessibilityIdentifier("v2.briefing.back")
             }
             Spacer()
             if let message = store.message {
                 Text(message).font(.callout).foregroundStyle(AstroTokens.Color.ok)
             }
+            if let error = store.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.callout)
+                    .foregroundStyle(AstroTokens.Color.critical)
+                    .accessibilityIdentifier("v2.briefing.persistence-error")
+            }
             if store.currentStep != .preview {
                 Button("Tovább", action: store.goForward)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("v2.briefing.next")
             }
         }
         .padding(AstroTokens.Spacing.standard)
@@ -270,8 +303,10 @@ public struct NightBriefingView: View {
             }
             TextField("Helyszín neve", text: siteName)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("v2.briefing.site-name")
             TextField("Felszerelés rövid neve", text: setupName)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("v2.briefing.setup-name")
             TextField("Várható tápidő órában", text: powerHours)
                 .textFieldStyle(.roundedBorder)
             missingDataNotice
@@ -344,6 +379,7 @@ public struct NightBriefingView: View {
             }
             Button("Célpont hozzáadása", systemImage: "plus", action: store.addTarget)
                 .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v2.briefing.add-target")
         }
     }
 
@@ -413,6 +449,16 @@ public struct NightBriefingView: View {
                 }
                 .astroRaisedSurface()
             }
+            HStack {
+                TextField("Saját checklist-elem", text: $customChecklistTitle)
+                    .textFieldStyle(.roundedBorder)
+                Button("Hozzáadás") {
+                    store.addCustomChecklistItem(title: customChecklistTitle)
+                    customChecklistTitle = ""
+                }
+                .disabled(customChecklistTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .accessibilityIdentifier("v2.briefing.custom-checklist")
             VStack(alignment: .leading, spacing: 10) {
                 Text("B terv").font(.title3.weight(.semibold))
                 ForEach(store.document.contingencies) { item in
@@ -449,6 +495,16 @@ public struct NightBriefingView: View {
                     } else if store.isWorking {
                         ProgressView("Előnézet készítése…")
                             .frame(maxWidth: .infinity, minHeight: 240)
+                    } else if let error = store.previewError {
+                        VStack(spacing: AstroTokens.Spacing.standard) {
+                            Label(error, systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(AstroTokens.Color.critical)
+                            Button("Előnézet újrapróbálása", systemImage: "arrow.clockwise") {
+                                Task { await store.makePreview() }
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 240)
                     } else {
                         Button("Előnézet elkészítése", systemImage: "doc.richtext") {
                             Task { await store.makePreview() }
@@ -459,8 +515,11 @@ public struct NightBriefingView: View {
                 HStack {
                     Button("PDF mentése…") { export(.pdf) }
                         .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v2.briefing.export.pdf")
                     Button("PDF + telefonos képek…") { export(.pdfAndPNG) }
+                        .accessibilityIdentifier("v2.briefing.export.pdf-png")
                     Button("Csak képek…") { export(.pngOnly) }
+                        .accessibilityIdentifier("v2.briefing.export.png")
                 }
                 Label("Az export csak új PDF-et és – ha kéred – új PNG-oldalakat hoz létre. Nem töröl, nem mozgat és nem ír felül semmit.", systemImage: "shield.lefthalf.filled")
                     .font(.callout).foregroundStyle(AstroTokens.Color.ok)
@@ -472,9 +531,20 @@ public struct NightBriefingView: View {
     }
 
     private func export(_ format: BriefingExportFormat) {
+        if _isDebugAssertConfiguration(),
+           let testPath = uiTestExportPath {
+            var destination = URL(fileURLWithPath: testPath)
+            if format != .pngOnly, destination.pathExtension.lowercased() != "pdf" {
+                destination.appendPathExtension("pdf")
+            }
+            Task { try? await store.export(to: destination, format: format) }
+            return
+        }
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = format == .pngOnly ? "ejszakai-briefing-kepek" : "ejszakai-briefing.pdf"
+        panel.nameFieldStringValue = format == .pngOnly
+            ? String(localized: "night-briefing-images")
+            : String(localized: "night-briefing.pdf")
         if format != .pngOnly { panel.allowedContentTypes = [.pdf] }
         guard panel.runModal() == .OK, var destination = panel.url else { return }
         if format != .pngOnly, destination.pathExtension.lowercased() != "pdf" {
@@ -485,12 +555,20 @@ public struct NightBriefingView: View {
                 _ = try await store.export(to: destination, format: format)
             } catch {
                 let alert = NSAlert()
-                alert.messageText = "Nem sikerült biztonságosan exportálni"
-                alert.informativeText = "Válassz új fájlnevet vagy üres célmappát. Meglévő fájlt az AstroTool nem ír felül."
+                alert.messageText = String(localized: "Nem sikerült biztonságosan exportálni")
+                alert.informativeText = String(localized: "Válassz új fájlnevet vagy üres célmappát. Meglévő fájlt az AstroTool nem ír felül.")
                 alert.alertStyle = .warning
                 alert.runModal()
             }
         }
+    }
+
+    private var uiTestExportPath: String? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let index = arguments.firstIndex(of: "-UITestBriefingExportPath") else { return nil }
+        let value = arguments.index(after: index)
+        guard value < arguments.endIndex else { return nil }
+        return arguments[value]
     }
 
     private func stepHeading(_ title: LocalizedStringKey, _ detail: LocalizedStringKey) -> some View {

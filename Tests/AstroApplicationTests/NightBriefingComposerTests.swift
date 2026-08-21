@@ -65,6 +65,37 @@ struct NightBriefingComposerTests {
         #expect(!document.contingencies.map(\.action).joined().contains("M 31"))
     }
 
+    @Test("Computed sky, equipment, project, and calibration facts remain canonical")
+    func preservesCompletePlanningContext() {
+        let draft = fixtureDraft()
+        let context = NightBriefingContext(
+            calibrationGaps: ["L flat"],
+            sky: .known(.init(
+                darknessStart: draft.arrival!,
+                darknessEnd: draft.departure!,
+                maxAltitudeDeg: 63,
+                minimumAltitudeDeg: 30,
+                moonSeparationDeg: 81,
+                altitudePoints: [.init(time: draft.arrival!, altitudeDeg: 41)]
+            )),
+            equipment: .known(.init(
+                cameraName: "ASI 2600MC",
+                focalLengthMM: 250,
+                fNumber: 4.9,
+                filterName: "L-eXtreme"
+            )),
+            projectProgress: .known(.init(
+                existingIntegrationSeconds: 7_200,
+                goalIntegrationSeconds: 36_000
+            ))
+        )
+
+        let document = NightBriefingComposer().compose(draft: draft, context: context)
+
+        #expect(document.context == context)
+        #expect(document.issues.contains { $0.code == .calibrationGap })
+    }
+
     private func fixtureDraft() -> NightBriefingDraft {
         let start = Date(timeIntervalSince1970: 1_786_738_400)
         return NightBriefingDraft(

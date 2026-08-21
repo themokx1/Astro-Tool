@@ -3,14 +3,17 @@ import Testing
 
 @Suite("V4 night briefing surface")
 struct NightBriefingSurfaceTests {
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
     private var source: String {
         get throws {
-            let root = URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
             return try String(
-                contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/Briefing/NightBriefingView.swift"),
+                contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Briefing/NightBriefingView.swift"),
                 encoding: .utf8
             )
         }
@@ -39,5 +42,52 @@ struct NightBriefingSurfaceTests {
         #expect(source.contains("Nem töröl, nem mozgat és nem ír felül semmit."))
         #expect(source.contains("Meglévő fájlt az AstroTool nem ír felül."))
         #expect(source.contains("fotót nem töröl"))
+    }
+
+    @Test("The complete briefing workspace has real English localization")
+    func englishLocalization() throws {
+        let english = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroToolApp/Resources/en.lproj/Localizable.strings"
+            ),
+            encoding: .utf8
+        )
+        for translation in [
+            "I want to plan tonight",
+            "I am planning another date",
+            "Continue an earlier briefing",
+            "Basics",
+            "Targets",
+            "Capture plan",
+            "Checklist and backup plan",
+            "Review and export",
+            "Save PDF…",
+        ] {
+            #expect(english.contains(translation), Comment(rawValue: translation))
+        }
+        #expect(try source.contains("detail: LocalizedStringKey"))
+        #expect(try source.contains("Text(detail)"))
+    }
+
+    @Test("Planning hands its selected date, setup, site, target, and sky path into briefing")
+    func planningContextIsPreserved() throws {
+        let planningView = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Planning/PlanningView.swift"
+            ),
+            encoding: .utf8
+        )
+        let planningStore = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Planning/PlanningStore.swift"
+            ),
+            encoding: .utf8
+        )
+        #expect(planningView.contains("Add to Night Briefing"))
+        #expect(planningView.contains("await store.pendingSkyPathRefresh?.value"))
+        #expect(planningStore.contains("makeBriefingSeed(for recommendation:"))
+        #expect(planningStore.contains("altitudePoints: path.samples.map"))
+        #expect(planningStore.contains("equipment: equipment"))
+        #expect(planningStore.contains("weather: weather"))
     }
 }
