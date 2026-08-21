@@ -28,8 +28,7 @@ public final class NightBriefingPDFExporter: NightBriefingPDFExporting {
         webView.navigationDelegate = navigation
         try await navigation.load(html: html, in: webView)
 
-        let totalHeight = try await paginate(webView: webView, pageHeight: pageSize.height)
-        let pageCount = max(1, Int(ceil(totalHeight / pageSize.height)))
+        let pageCount = try await paginate(webView: webView, pageHeight: pageSize.height)
         let combined = PDFDocument()
         for index in 0..<pageCount {
             let pdfConfiguration = WKPDFConfiguration()
@@ -52,30 +51,30 @@ public final class NightBriefingPDFExporter: NightBriefingPDFExporting {
         return data
     }
 
-    private func paginate(webView: WKWebView, pageHeight: CGFloat) async throws -> CGFloat {
+    private func paginate(webView: WKWebView, pageHeight: CGFloat) async throws -> Int {
         let script = """
         (() => {
           const pageHeight = \(pageHeight);
           document.documentElement.style.margin = '0';
           document.body.style.margin = '0';
           const sections = Array.from(document.body.children);
-          let total = 0;
+          let totalPages = 0;
           for (const section of sections) {
             section.style.minHeight = '0px';
             section.style.height = 'auto';
             const pages = Math.max(1, Math.ceil(section.scrollHeight / pageHeight));
             section.style.height = `${pages * pageHeight}px`;
             section.style.overflow = 'hidden';
-            total += pages * pageHeight;
+            totalPages += pages;
           }
-          return total;
+          return totalPages;
         })()
         """
         let result = try await webView.evaluateJavaScript(script)
         guard let number = result as? NSNumber else {
             throw NightBriefingPDFExportError.navigationFailed
         }
-        return CGFloat(number.doubleValue)
+        return max(1, number.intValue)
     }
 }
 

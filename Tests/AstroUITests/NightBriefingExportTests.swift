@@ -16,12 +16,21 @@ struct NightBriefingExportTests {
         let pdf = try #require(PDFDocument(data: data))
 
         #expect(data.starts(with: Data("%PDF".utf8)))
-        #expect(pdf.pageCount >= 5)
+        #expect(pdf.pageCount == 8)
         #expect(pdf.string?.contains("Éjszakai briefing") == true)
         let first = try #require(pdf.page(at: 0))
         let size = first.bounds(for: .mediaBox).size
         #expect(abs(size.width - 595.28) < 3)
         #expect(abs(size.height - 841.89) < 3)
+
+        if let outputPath = ProcessInfo.processInfo.environment["ASTROTOOL_BRIEFING_QA_OUTPUT"] {
+            let output = URL(fileURLWithPath: outputPath)
+            try FileManager.default.createDirectory(
+                at: output.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: output, options: .atomic)
+        }
     }
 
     @Test("Every PDF page becomes one non-empty 144 DPI PNG")
@@ -71,7 +80,7 @@ struct NightBriefingExportTests {
         #expect(result.pdfURL == output)
         #expect(result.pngURLs.count >= 5)
         #expect(result.pngURLs.allSatisfy { FileManager.default.fileExists(atPath: $0.path) })
-        #expect(result.pngURLs.map(\.lastPathComponent) == result.pngURLs.indices.map { String(format: "page-%02d.png", $0 + 1) })
+        #expect(result.pngURLs.map(\.lastPathComponent) == result.pngURLs.indices.map { "page-\($0 + 1).png" })
     }
 
     private func fixtureDocument() -> NightBriefingDocument {

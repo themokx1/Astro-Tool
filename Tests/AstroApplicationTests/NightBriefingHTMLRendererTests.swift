@@ -59,6 +59,8 @@ struct NightBriefingHTMLRendererTests {
         #expect(first.contains("font-size: 11pt"))
         #expect(first.contains("page-break-before"))
         #expect(first.contains("<svg"))
+        #expect(first.contains("repeating-linear-gradient(to bottom, #fff 0, #fff 9mm"))
+        #expect(!first.contains("to bottom, transparent"))
     }
 
     private func document(language: BriefingDocumentLanguage) -> NightBriefingDocument {
