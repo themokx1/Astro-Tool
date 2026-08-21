@@ -149,23 +149,24 @@ struct ReleasePackagingSurfaceTests {
         #expect(metadataCheck.contains("Release metadata check passed."))
     }
 
-    @Test("Public website identifies the stable V3 product")
-    func websiteIdentifiesV3() throws {
+    @Test("Public website identifies the stable V4 product")
+    func websiteIdentifiesV4() throws {
         let homepage = try source("docs/index.html")
-        #expect(homepage.contains("AstroTool 3.0"))
-        #expect(homepage.contains("Project → Night → Capture → Frame → Result"))
-        #expect(!homepage.contains("AstroTool 2.0"))
+        #expect(homepage.contains("AstroTool 4.0"))
+        #expect(homepage.contains("Éjszakai briefing"))
+        #expect(homepage.contains("first-steps.html"))
     }
 
-    @Test("Stable V3 has matching final release notes and changelog")
-    func stableV3Documentation() throws {
-        let notes = try source("docs/releases/v3.0.0.md")
+    @Test("Stable V4 has matching final release notes and changelog")
+    func stableV4Documentation() throws {
+        let notes = try source("docs/releases/v4.0.0.md")
         let changelog = try source("CHANGELOG.md")
-        #expect(notes.contains("# AstroTool 3.0.0"))
-        #expect(notes.contains("Első lépések"))
-        #expect(notes.contains("forrásfájlok változatlanok"))
+        #expect(notes.contains("# AstroTool 4.0.0"))
+        #expect(notes.contains("Éjszakai briefing"))
+        #expect(notes.contains("PDF"))
+        #expect(notes.contains("PNG"))
         #expect(!notes.lowercased().contains("prerelease"))
         #expect(!notes.lowercased().contains("béta-korlát"))
-        #expect(changelog.contains("## [3.0.0] - 2026-08-20"))
+        #expect(changelog.contains("## [4.0.0] - 2026-08-21"))
     }
 }
