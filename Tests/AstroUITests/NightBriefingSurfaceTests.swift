@@ -91,7 +91,7 @@ struct NightBriefingSurfaceTests {
         #expect(planningStore.contains("weather: weather"))
     }
 
-    @Test("The primary briefing action stays above the longer Home preflight content")
+    @Test("The primary briefing action stays above and independent of library-only Home content")
     func briefingActionIsImmediatelyVisibleOnHome() throws {
         let home = try String(
             contentsOf: repositoryRoot.appendingPathComponent(
@@ -99,13 +99,14 @@ struct NightBriefingSurfaceTests {
             ),
             encoding: .utf8
         )
-        let overviewStart = try #require(home.range(of: "private var libraryOverview"))
-        let overviewEnd = try #require(
-            home.range(of: "private var preflightChecklistCard", range: overviewStart.upperBound..<home.endIndex)
+        let bodyStart = try #require(home.range(of: "public var body: some View"))
+        let cardDeclaration = try #require(
+            home.range(of: "private var briefingCard", range: bodyStart.upperBound..<home.endIndex)
         )
-        let overview = String(home[overviewStart.lowerBound..<overviewEnd.lowerBound])
-        let action = try #require(overview.range(of: "v2.home.open-briefing"))
-        let checklist = try #require(overview.range(of: "preflightChecklistCard"))
-        #expect(action.lowerBound < checklist.lowerBound)
+        let body = String(home[bodyStart.lowerBound..<cardDeclaration.lowerBound])
+        let action = try #require(body.range(of: "briefingCard"))
+        let libraryBranch = try #require(body.range(of: "if store.snapshot.libraryName == nil"))
+        #expect(action.lowerBound < libraryBranch.lowerBound)
+        #expect(home.contains("v2.home.open-briefing"))
     }
 }

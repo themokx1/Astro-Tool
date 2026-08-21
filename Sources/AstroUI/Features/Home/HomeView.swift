@@ -108,6 +108,7 @@ public struct HomeView: View {
                     hasLibrary: store.snapshot.libraryName != nil,
                     openNightsCalendar: openNightsCalendar
                 )
+                briefingCard
                 if store.snapshot.libraryName == nil {
                     if isLibraryLoading {
                         openingLibrary
@@ -129,23 +130,26 @@ public struct HomeView: View {
         .astroSectionMarker("v2.detail.home", label: "Home")
     }
 
+    private var briefingCard: some View {
+        HStack(spacing: AstroTokens.Spacing.standard) {
+            Image(systemName: "doc.text.image")
+                .font(.title2)
+                .foregroundStyle(AstroTokens.Color.accent)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Készülj fel a következő éjszakára").font(.headline)
+                Text("Rakd össze a teljes tervet, majd vidd magaddal PDF-ben vagy telefonos képeken.")
+                    .font(.callout).foregroundStyle(AstroTokens.Color.inkDim)
+            }
+            Spacer()
+            Button("Briefing készítése", action: openBriefing)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v2.home.open-briefing")
+        }
+        .astroRaisedSurface()
+    }
+
     private var libraryOverview: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
-            HStack(spacing: AstroTokens.Spacing.standard) {
-                Image(systemName: "doc.text.image")
-                    .font(.title2)
-                    .foregroundStyle(AstroTokens.Color.accent)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Készülj fel a következő éjszakára").font(.headline)
-                    Text("Rakd össze a teljes tervet, majd vidd magaddal PDF-ben vagy telefonos képeken.")
-                        .font(.callout).foregroundStyle(AstroTokens.Color.inkDim)
-                }
-                Spacer()
-                Button("Briefing készítése", action: openBriefing)
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("v2.home.open-briefing")
-            }
-            .astroRaisedSurface()
             preflightChecklistCard
             // Wave 0 seam (V3 pre-stack program): renders whatever 5.1
             // (Ingest-figyelő)/5.6 (Élő éjszaka-mód) registers through
