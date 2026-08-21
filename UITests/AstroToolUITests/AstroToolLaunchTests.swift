@@ -227,7 +227,13 @@ final class AstroToolLaunchTests: XCTestCase {
         completeOnboarding(app)
 
         enterSection("v2.sidebar.home", revealing: "v2.detail.home", in: app)
-        element("v2.home.open-briefing", in: app).click()
+        let openBriefing = element("v2.home.open-briefing", in: app)
+        XCTAssertTrue(
+            openBriefing.waitForExistence(timeout: 20),
+            "The briefing action must appear after the fixture library finishes opening."
+        )
+        XCTAssertTrue(openBriefing.isHittable, "The briefing action must be ready to click.")
+        openBriefing.click()
         XCTAssertTrue(element("v2.briefing.start.today", in: app).waitForExistence(timeout: 8))
         element("v2.briefing.start.today", in: app).click()
         XCTAssertTrue(element("v2.briefing.step.1", in: app).waitForExistence(timeout: 8))
