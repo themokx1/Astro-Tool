@@ -15,9 +15,10 @@ public struct AppStoragePaths: Sendable {
     public let indexDatabase: URL
     public let thumbnails: URL
     public let migration: URL
+    public let briefings: URL
 
     public var allURLs: [URL] {
-        [metadataDatabase, indexDatabase, thumbnails, migration]
+        [metadataDatabase, indexDatabase, thumbnails, migration, briefings]
     }
 
     public init(
@@ -50,7 +51,8 @@ public struct AppStoragePaths: Sendable {
         let indexDatabase = cacheLibrary.appendingPathComponent("index.sqlite")
         let thumbnails = cacheLibrary.appendingPathComponent("thumbnails", isDirectory: true)
         let migration = appLibrary.appendingPathComponent("migration", isDirectory: true)
-        let finalDestinations = [appLibrary, cacheLibrary, metadataDatabase, indexDatabase, thumbnails, migration]
+        let briefings = appLibrary.appendingPathComponent("briefings", isDirectory: true)
+        let finalDestinations = [appLibrary, cacheLibrary, metadataDatabase, indexDatabase, thumbnails, migration, briefings]
         guard !finalDestinations.contains(where: {
             Self.isContained(Self.canonicalDirectory($0), in: resolvedLibraryRoot)
         }) else {
@@ -63,6 +65,7 @@ public struct AppStoragePaths: Sendable {
         self.indexDatabase = indexDatabase
         self.thumbnails = thumbnails
         self.migration = migration
+        self.briefings = briefings
     }
 
     public static func production(

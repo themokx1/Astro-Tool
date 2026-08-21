@@ -114,6 +114,7 @@ struct AppStoragePathsTests {
 
         #expect(paths.metadataDatabase == appLibrary.appendingPathComponent("metadata.sqlite"))
         #expect(paths.migration == appLibrary.appendingPathComponent("migration", isDirectory: true))
+        #expect(paths.briefings == appLibrary.appendingPathComponent("briefings", isDirectory: true))
         #expect(paths.indexDatabase == cacheLibrary.appendingPathComponent("index.sqlite"))
         #expect(paths.thumbnails == cacheLibrary.appendingPathComponent("thumbnails", isDirectory: true))
         #expect(paths.allURLs == [
@@ -121,6 +122,7 @@ struct AppStoragePathsTests {
             paths.indexDatabase,
             paths.thumbnails,
             paths.migration,
+            paths.briefings,
         ])
     }
 

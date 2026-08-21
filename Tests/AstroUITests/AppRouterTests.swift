@@ -254,6 +254,20 @@ struct AppRouterTests {
         #expect(AppRoute(deepLink: extraComponentURL) == nil)
     }
 
+    @Test("Night briefing is a Planning child route with a stable deep link")
+    func nightBriefingRoute() throws {
+        let url = try #require(URL(string: "astrotool://planning/briefing"))
+        #expect(AppRoute(deepLink: url) == .content(.briefing))
+        #expect(ContentRoute.briefing.primarySection == .planning)
+        #expect(ContentRoute.briefing.selection == nil)
+
+        let router = AppRouter()
+        router.navigate(toContent: .briefing)
+        #expect(router.primarySection == .planning)
+        #expect(router.contentRoute == .briefing)
+        #expect(router.currentSectionPath == [.briefing])
+    }
+
     // MARK: Wave 4 Task 1 -- router stack
 
     @Test("Push appends onto the active section's own stack; contentRoute reads its top")

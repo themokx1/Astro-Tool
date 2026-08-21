@@ -52,6 +52,8 @@ public enum ContentRoute: Hashable, Codable, Sendable {
     case nights
     case night(String)
     case planning
+    /// V4: a complete, portable observing-night plan nested under Planning.
+    case briefing
     /// Wave 5 Task 4: the saved-targets list, pushed from Planning's own
     /// "Saved Targets" action (mirrors `.health`/`.calibration`'s own shape
     /// as a distinct route nested under a different section's
@@ -107,7 +109,7 @@ public enum ContentRoute: Hashable, Codable, Sendable {
         case .home: .home
         case .projects, .project, .projectSeries, .review, .resultsWorkspace: .projects
         case .nights, .night, .reviewFrame: .nights
-        case .planning, .savedTargets: .planning
+        case .planning, .briefing, .savedTargets: .planning
         case .library, .health, .calibration, .metadataFixer, .conversion, .cleanup, .sensorProfiles, .archiveTaskDetail: .library
         case .insights: .insights
         }
@@ -216,6 +218,7 @@ public enum AppRoute: Hashable, Sendable {
         // below is, so it simply falls through to `default: return nil`
         // now, exactly like any other unrecognized host.
         case ("planning", []): self = .content(.planning)
+        case ("planning", ["briefing"]): self = .content(.briefing)
         case ("planning", ["saved"]): self = .content(.savedTargets)
         case ("library", []): self = .content(.library)
         // Task 10: Health's findings now live on the Archive page itself
