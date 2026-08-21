@@ -90,4 +90,22 @@ struct NightBriefingSurfaceTests {
         #expect(planningStore.contains("equipment: equipment"))
         #expect(planningStore.contains("weather: weather"))
     }
+
+    @Test("The primary briefing action stays above the longer Home preflight content")
+    func briefingActionIsImmediatelyVisibleOnHome() throws {
+        let home = try String(
+            contentsOf: repositoryRoot.appendingPathComponent(
+                "Sources/AstroUI/Features/Home/HomeView.swift"
+            ),
+            encoding: .utf8
+        )
+        let overviewStart = try #require(home.range(of: "private var libraryOverview"))
+        let overviewEnd = try #require(
+            home.range(of: "private var preflightChecklistCard", range: overviewStart.upperBound..<home.endIndex)
+        )
+        let overview = String(home[overviewStart.lowerBound..<overviewEnd.lowerBound])
+        let action = try #require(overview.range(of: "v2.home.open-briefing"))
+        let checklist = try #require(overview.range(of: "preflightChecklistCard"))
+        #expect(action.lowerBound < checklist.lowerBound)
+    }
 }
