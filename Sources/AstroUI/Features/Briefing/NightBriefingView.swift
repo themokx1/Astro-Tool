@@ -531,8 +531,8 @@ public struct NightBriefingView: View {
     }
 
     private func export(_ format: BriefingExportFormat) {
-        if _isDebugAssertConfiguration(),
-           let testPath = uiTestExportPath {
+        #if DEBUG
+        if let testPath = uiTestExportPath {
             var destination = URL(fileURLWithPath: testPath)
             if format != .pngOnly, destination.pathExtension.lowercased() != "pdf" {
                 destination.appendPathExtension("pdf")
@@ -540,6 +540,7 @@ public struct NightBriefingView: View {
             Task { try? await store.export(to: destination, format: format) }
             return
         }
+        #endif
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = format == .pngOnly
@@ -563,6 +564,7 @@ public struct NightBriefingView: View {
         }
     }
 
+    #if DEBUG
     private var uiTestExportPath: String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: "-UITestBriefingExportPath") else { return nil }
@@ -570,6 +572,7 @@ public struct NightBriefingView: View {
         guard value < arguments.endIndex else { return nil }
         return arguments[value]
     }
+    #endif
 
     private func stepHeading(_ title: LocalizedStringKey, _ detail: LocalizedStringKey) -> some View {
         VStack(alignment: .leading, spacing: 6) {
