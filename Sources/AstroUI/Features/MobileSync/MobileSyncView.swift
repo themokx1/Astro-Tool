@@ -11,21 +11,16 @@ public struct MobileSyncView: View {
     @State private var showsImporter = false
     @State private var importSource: URL?
     @State private var importCode = ""
-    private let exporterToken: String
+    @State private var qrRetry = 0
 
     public init(
         rootURL: URL?,
         store: MobileSyncStore? = nil,
         snapshotProvider: MobileSyncStore.SnapshotProvider? = nil
     ) {
-        let token = UUID().uuidString.lowercased()
-        exporterToken = token
         _store = State(initialValue: store ?? MobileSyncStore(
             rootURL: rootURL,
-            snapshotProvider: snapshotProvider,
-            prepareDestination: { destination in
-                try MobileSyncDestinationCoordinator.removePlaceholder(at: destination, token: token)
-            }
+            snapshotProvider: snapshotProvider
         ))
     }
 
@@ -44,12 +39,12 @@ public struct MobileSyncView: View {
         .astroSectionMarker("v5.mobile-sync.open", label: "iPhone Sync")
         .fileExporter(
             isPresented: $showsExporter,
-            document: MobilePackagePlaceholderDocument(token: exporterToken),
+            document: MobilePackagePlaceholderDocument(token: store.destinationToken),
             contentType: .astroMobile,
             defaultFilename: "AstroTool-iPhone"
         ) { result in
             guard case .success(let url) = result else { return }
-            Task { await store.export(to: url) }
+            store.startExport(to: url)
         }
         .fileImporter(
             isPresented: $showsImporter,
@@ -59,6 +54,7 @@ public struct MobileSyncView: View {
             guard case .success(let urls) = result, let url = urls.first else { return }
             importSource = url
         }
+        .onDisappear { store.dismiss() }
     }
 
     private var title: some View {
@@ -125,8 +121,12 @@ public struct MobileSyncView: View {
         case .idle:
             idleContent
         case .previewing, .importing:
-            ProgressView("Preparing a safe preview…")
-                .frame(maxWidth: .infinity, minHeight: 180)
+            VStack(spacing: AstroTokens.Spacing.standard) {
+                ProgressView(store.phase == .importing ? "Opening the package safely…" : "Preparing a safe preview…")
+                Button("Cancel", role: .cancel) { store.cancel() }
+                    .accessibilityIdentifier("v5.mobile-sync.cancel")
+            }
+            .frame(maxWidth: .infinity, minHeight: 180)
         case .ready:
             readyContent
         case .exporting:
@@ -143,17 +143,31 @@ public struct MobileSyncView: View {
     private var idleContent: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
             Text("Understand what will move").astroSectionTitle()
-            Text("Projects, nights, capture summaries, briefings, checklist progress, and notes can move. Original photos and files never move.")
+            Text("Projects, nights, image-set summaries, night plans, checklist items, and notes can move. Original photos and files never move.")
                 .astroBody()
             HStack {
                 Button("Review what will move", systemImage: "eye") {
-                    Task { await store.preview() }
+                    store.startPreview()
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.defaultAction)
                 .accessibilityIdentifier("v5.mobile-sync.export")
                 Button("Preview a package…", systemImage: "arrow.down.doc") { showsImporter = true }
                     .accessibilityIdentifier("v5.mobile-sync.import")
+                if let importSource {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Package selected", systemImage: "doc.badge.arrow.down")
+                        TextField("One-time unlock code", text: $importCode)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("v5.mobile-sync.import-code")
+                        Button("Preview package", systemImage: "eye") {
+                            let code = importCode
+                            store.startIncomingPreview(from: importSource, qrPayload: code)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(importCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
             }
         }
         .astroRaisedSurface()
@@ -180,7 +194,7 @@ public struct MobileSyncView: View {
                         .accessibilityIdentifier("v5.mobile-sync.confirm-identity")
                 } else if !store.isSummaryConfirmed {
                     Button("Confirm this summary") {
-                        store.confirmSummary(store.preview?.snapshotSummary)
+                        if let token = store.preview?.confirmationToken { store.confirmSummary(token) }
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(!store.isIdentityConfirmed)
@@ -197,7 +211,7 @@ public struct MobileSyncView: View {
     private var understandBlock: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
             Text("Understand").astroSectionTitle()
-            Label("Moves: projects, nights, capture summaries, briefings, checklist progress, and notes.", systemImage: "checkmark.circle")
+            Label("Moves: projects, nights, image-set summaries, night plans, checklist items, and notes.", systemImage: "checkmark.circle")
             Label("Stays on the Mac: original photos and files.", systemImage: "lock.shield")
         }
         .astroRaisedSurface()
@@ -208,7 +222,7 @@ public struct MobileSyncView: View {
             Text("Review").astroSectionTitle()
             Text("Check the exact summary before anything is created.").astroBody().foregroundStyle(AstroTokens.Color.inkDim)
             summaryGrid(preview.snapshotSummary)
-            LabeledContent("Snapshot", value: preview.snapshot.createdAt.formatted(date: .abbreviated, time: .shortened))
+            LabeledContent("Freshness", value: preview.snapshot.createdAt.formatted(date: .abbreviated, time: .shortened))
             if preview.identity.alreadyExists {
                 Label("This Mac already has a confirmed library identity.", systemImage: "checkmark.shield")
             } else {
@@ -226,6 +240,7 @@ public struct MobileSyncView: View {
             count("Captures", summary.captureCount)
             count("Briefings", summary.briefingCount)
             count("Notes", summary.noteCount)
+            count("Checklist items", summary.checklistItemCount)
         }
     }
 
@@ -241,6 +256,8 @@ public struct MobileSyncView: View {
             ProgressView("Creating the sealed package…")
             Text("The original photos remain on the Mac while this package is prepared.")
                 .font(.callout).foregroundStyle(AstroTokens.Color.inkDim)
+            Button("Cancel", role: .cancel) { store.cancel() }
+                .accessibilityIdentifier("v5.mobile-sync.cancel")
         }
         .astroRaisedSurface()
     }
@@ -261,7 +278,8 @@ public struct MobileSyncView: View {
                     Text("Unlock on iPhone").astroSectionTitle()
                     Text("After receiving the package, scan this code in AstroTool on your iPhone. The code unlocks this package only.")
                         .astroBody()
-                    QRCodeView(value: qrCodeValue)
+                    QRCodeView(value: qrCodeValue, onRetry: { qrRetry += 1 })
+                        .id(qrRetry)
                         .frame(width: 260, height: 260)
                         .accessibilityIdentifier("v5.mobile-sync.qr")
                         .accessibilityLabel("After receiving the package, scan this code in AstroTool on your iPhone. The code unlocks this package only.")
@@ -278,6 +296,8 @@ public struct MobileSyncView: View {
             if let incoming = store.incomingPreview {
                 Text("Package preview").astroSectionTitle()
                 summaryGrid(incoming.snapshotSummary)
+                LabeledContent("Package", value: incoming.packageID.uuidString)
+                LabeledContent("Encrypted size", value: ByteCountFormatter.string(fromByteCount: incoming.encryptedByteCount, countStyle: .file))
                 LabeledContent("Incoming changes", value: incoming.incomingChanges.count.formatted())
                 Text("Applying changes will be confirmed separately. Nothing in the image library has changed.")
                     .astroBody()
@@ -297,7 +317,7 @@ public struct MobileSyncView: View {
                 .accessibilityIdentifier("v5.mobile-sync.error")
             HStack {
                 Button("Try again", systemImage: "arrow.clockwise") {
-                    Task { await store.retry() }
+                    store.startRetry()
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("v5.mobile-sync.error.retry")
@@ -311,6 +331,7 @@ public struct MobileSyncView: View {
 
 private struct QRCodeView: View {
     let value: String
+    let onRetry: () -> Void
 
     var body: some View {
         Group {
@@ -320,11 +341,15 @@ private struct QRCodeView: View {
                     .interpolation(.none)
                     .antialiased(false)
             } else {
-                Image(systemName: "qrcode")
-                    .font(.system(size: 120))
+                VStack(spacing: 8) {
+                    Label("The unlock code image could not be created.", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(AstroTokens.Color.critical)
+                        .multilineTextAlignment(.center)
+                    Button("Try again", action: onRetry)
+                }
             }
         }
-        .padding(16)
+        .padding(48)
         .background(AstroTokens.Color.qrBackground)
         .clipShape(RoundedRectangle(cornerRadius: AstroTokens.CornerRadius.panel, style: .continuous))
     }
@@ -342,7 +367,11 @@ private struct QRCodeView: View {
     }
 }
 
-private struct MobilePackagePlaceholderDocument: FileDocument {
+enum MobileSyncFileExportError: Error, Equatable {
+    case existingDestination
+}
+
+struct MobilePackagePlaceholderDocument: FileDocument {
     let token: String
     static var readableContentTypes: [UTType] { [.astroMobile] }
 
@@ -351,6 +380,12 @@ private struct MobilePackagePlaceholderDocument: FileDocument {
     init(configuration: ReadConfiguration) throws { token = "read" }
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(directoryWithFileWrappers: [MobileSyncDestinationCoordinator.placeholderName(for: token): FileWrapper(regularFileWithContents: Data())])
+        // SwiftUI may ask for a replacement wrapper after the user chooses
+        // Replace. Reject that request before it can touch an existing package;
+        // Task 3 performs the final exclusive publication itself.
+        if configuration.existingFile != nil {
+            throw MobileSyncFileExportError.existingDestination
+        }
+        return FileWrapper(directoryWithFileWrappers: [MobileSyncDestinationCoordinator.placeholderName(for: token): FileWrapper(regularFileWithContents: Data())])
     }
 }

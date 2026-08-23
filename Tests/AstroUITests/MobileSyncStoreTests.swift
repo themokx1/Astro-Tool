@@ -37,7 +37,7 @@ struct MobileSyncStoreTests {
         store.confirmIdentity(identity)
         #expect(writes.value == 1)
         #expect(!store.canExport)
-        store.confirmSummary(snapshot.summary)
+        store.confirmSummary(store.preview!.confirmationToken)
         #expect(store.canExport)
     }
 
@@ -85,7 +85,7 @@ struct MobileSyncStoreTests {
             packageExport: { _, _, _ in throw MobilePackageError.destinationExists }
         )
         await store.preview()
-        store.confirmSummary(store.preview!.snapshotSummary)
+        store.confirmSummary(store.preview!.confirmationToken)
         #expect(store.canExport)
         await store.export(to: URL(fileURLWithPath: "/tmp/existing.astroMobile"))
         #expect(store.phase == .failed)
@@ -106,7 +106,7 @@ struct MobileSyncStoreTests {
             }
         )
         await store.preview()
-        store.confirmSummary(store.preview!.snapshotSummary)
+        store.confirmSummary(store.preview!.confirmationToken)
         await store.export(to: URL(fileURLWithPath: "/tmp/new-package.astroMobile"))
         #expect(store.phase == .exported)
         #expect(store.oneTimeQRPayload != nil)
@@ -149,10 +149,79 @@ struct MobileSyncStoreTests {
         #expect(store.incomingPreview == imported)
         #expect(store.didApplyIncomingChanges == false)
     }
+
+    @Test("Summary confirmation is bound to the exact displayed snapshot token")
+    func exactSnapshotTokenRequired() async throws {
+        let id = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
+        let store = MobileSyncStore(
+            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            identityPreview: { _ in .init(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot }
+        )
+        await store.preview()
+        let token = try #require(store.preview?.confirmationToken)
+        store.confirmSummary(.init(snapshotID: UUID(), revision: token.revision, createdAt: token.createdAt, summary: token.summary, libraryID: id))
+        #expect(store.failure == .summaryMismatch)
+        #expect(!store.isSummaryConfirmed)
+    }
+
+    @Test("A cancelled export records a late published result and keeps its unlock code")
+    func cancellationDoesNotLosePublishedPackage() async throws {
+        let id = PortableLibraryID(rawValue: UUID())
+        let gate = AsyncGate()
+        let store = MobileSyncStore(
+            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            identityPreview: { _ in .init(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in .empty(libraryID: id) },
+            packageExport: { _, _, _ in
+                await gate.wait()
+                return MobileSyncExportResult(packageID: UUID(), createdAt: Date(), encryptedByteCount: 9)
+            }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+        let task = Task { await store.export(to: URL(fileURLWithPath: "/tmp/new-package.astroMobile")) }
+        await Task.yield()
+        store.cancel()
+        gate.open()
+        await task.value
+        #expect(store.phase == .exported)
+        #expect(store.oneTimeQRPayload != nil)
+    }
+
+    @Test("Destination preparation never removes an existing package")
+    func destinationNoOverwrite() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("existing.astroMobile")
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let original = Data("do not replace".utf8)
+        let sentinel = destination.appendingPathComponent("sentinel")
+        try original.write(to: sentinel)
+        try MobileSyncDestinationCoordinator.removePlaceholder(at: destination, token: UUID().uuidString)
+        #expect(try Data(contentsOf: sentinel) == original)
+    }
+
 }
 
 private final class WriteCounter: @unchecked Sendable {
     var value = 0
+}
+
+private final class AsyncGate: @unchecked Sendable {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var isOpen = false
+    func wait() async {
+        if isOpen { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+    func open() {
+        isOpen = true
+        continuation?.resume()
+        continuation = nil
+    }
 }
 
 private extension MobileLibrarySnapshot {

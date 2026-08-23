@@ -59,3 +59,30 @@ The sheet is intentionally quiet: one raised summary/review treatment, one reces
 - AirDrop remains user-initiated as required; the app creates the package and explains how to share it, but does not claim an automatic transfer.
 - Task 7 change application is deliberately absent. Incoming previews stop before any library mutation.
 - The default Settings/toolbar path uses the live metadata actor when one is open; a newly opened library still follows the existing app scan/preparation lifecycle before its typed records are available.
+
+## Review follow-up (round 1)
+
+- SwiftUI export writes now reject `WriteConfiguration.existingFile` before a Replace request can write a placeholder. The persistent destination token lives on `MobileSyncStore`, and the coordinator only removes its exact marker; Task 3 remains the exclusive publisher. A regression confirms an existing package sentinel is unchanged.
+- Import is wired from file selection through a retained task, security-scoped access lifetime, one-time-code entry, authenticated preview, package ID/size/count/change display, and no apply action.
+- Preview/import/export tasks use store-owned task handles. Preview/import cancellation invalidates stale results; export cancellation records a late published manifest and QR rather than losing the unlock code. Reset and dismiss invalidate late work and clear transient QR state.
+- Confirmations now carry and compare a nonoptional snapshot token containing snapshot ID, revision, timestamp, summary (including checklist count), and library ID. The preview also fails closed if provider identity and snapshot identity diverge.
+- Task 3 export returns its actual published `MobilePackageManifest`; the store maps its package ID, creation time, and encrypted byte count without inventing metadata. A transport regression checks the returned fields against the written manifest.
+- Live metadata revisions are deterministic and nonzero for populated metadata, and the same provider is threaded through root, Settings, and Night Briefing entry points. Freshness and checklist counts are visible in the review.
+- QR failure no longer shows a decorative symbol: it presents an error and retry, with a four-module quiet zone at the chosen scale. English/Hungarian tables cover every new key; Hungarian sync copy uses plain terms such as `képsorozat`, `megfigyelési terv`, and `ellenőrzőlista`.
+
+Follow-up verification:
+
+```text
+swift test --filter MobileSyncStoreTests              # 10 tests passed
+swift test --filter MobileSyncSurfaceTests            # 4 tests passed
+swift test --filter exportReturnsPublishedManifestMetadata # passed
+swift test --filter LocalizationCoverageTests         # 15 tests passed
+git diff --check                                      # clean
+```
+
+Final full-suite verification after the follow-up changes:
+
+```text
+swift test --no-parallel
+Test run with 3442 tests in 218 suites passed after 95.863 seconds.
+```

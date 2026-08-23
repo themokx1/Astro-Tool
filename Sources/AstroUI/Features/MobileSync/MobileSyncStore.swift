@@ -20,15 +20,34 @@ public struct MobileSyncPreview: Equatable, Sendable {
     public let identity: PortableIdentityPreview
     public let snapshot: MobileLibrarySnapshot
     public let snapshotSummary: MobileSnapshotSummary
+    public let confirmationToken: MobileSyncConfirmationToken
 
     public init(
         identity: PortableIdentityPreview,
         snapshot: MobileLibrarySnapshot,
-        snapshotSummary: MobileSnapshotSummary
+        snapshotSummary: MobileSnapshotSummary,
+        confirmationToken: MobileSyncConfirmationToken
     ) {
         self.identity = identity
         self.snapshot = snapshot
         self.snapshotSummary = snapshotSummary
+        self.confirmationToken = confirmationToken
+    }
+}
+
+public struct MobileSyncConfirmationToken: Equatable, Sendable {
+    public let snapshotID: UUID
+    public let revision: Int
+    public let createdAt: Date
+    public let summary: MobileSnapshotSummary
+    public let libraryID: PortableLibraryID
+
+    public init(snapshotID: UUID, revision: Int, createdAt: Date, summary: MobileSnapshotSummary, libraryID: PortableLibraryID) {
+        self.snapshotID = snapshotID
+        self.revision = revision
+        self.createdAt = createdAt
+        self.summary = summary
+        self.libraryID = libraryID
     }
 }
 
@@ -80,6 +99,7 @@ public final class MobileSyncStore {
     public private(set) var didApplyIncomingChanges = false
 
     public let rootURL: URL?
+    public let destinationToken: String
 
     private let identityPreview: IdentityPreview
     private let identityCommit: IdentityCommit
@@ -88,6 +108,8 @@ public final class MobileSyncStore {
     private let packageImportPreview: PackageImportPreview
     private let prepareDestination: DestinationPreparation
     @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var cancellationRequested = false
+    @ObservationIgnored private var operationTask: Task<Void, Never>?
 
     public init(
         rootURL: URL?,
@@ -96,21 +118,25 @@ public final class MobileSyncStore {
         snapshotProvider: SnapshotProvider? = nil,
         packageExport: PackageExport? = nil,
         packageImportPreview: PackageImportPreview? = nil,
-        prepareDestination: @escaping DestinationPreparation = { _ in },
+        destinationToken: String = UUID().uuidString.lowercased(),
+        prepareDestination: DestinationPreparation? = nil,
         packageService: MobilePackageService = MobilePackageService()
     ) {
         self.rootURL = rootURL
+        self.destinationToken = destinationToken
         let identityStore = PortableLibraryIdentityStore()
         self.identityPreview = identityPreview ?? { root in try identityStore.preview(root: root) }
         self.identityCommit = identityCommit ?? { root, id in try identityStore.loadOrCreate(root: root, confirmedID: id) }
         self.snapshotProvider = snapshotProvider ?? MobileSyncStore.emptySnapshot
-        self.prepareDestination = prepareDestination
+        self.prepareDestination = prepareDestination ?? { destination in
+            try MobileSyncDestinationCoordinator.removePlaceholder(at: destination, token: destinationToken)
+        }
         if let packageExport {
             self.packageExport = packageExport
         } else {
             self.packageExport = { envelope, destination, key in
-                try await packageService.export(envelope, to: destination, wrapping: key)
-                return MobileSyncExportResult(packageID: UUID(), createdAt: Date())
+                let manifest = try await packageService.export(envelope, to: destination, wrapping: key)
+                return MobileSyncExportResult(packageID: manifest.packageID, createdAt: manifest.createdAt, encryptedByteCount: manifest.encryptedByteCount)
             }
         }
         if let packageImportPreview {
@@ -128,6 +154,30 @@ public final class MobileSyncStore {
 
     public var isBusy: Bool {
         phase == .previewing || phase == .exporting || phase == .importing
+    }
+
+    public func startPreview() {
+        operationTask?.cancel()
+        operationTask = Task { [weak self] in await self?.preview() }
+    }
+
+    public func startIncomingPreview(from source: URL, qrPayload: String) {
+        operationTask?.cancel()
+        operationTask = Task { [weak self] in
+            let accessed = source.startAccessingSecurityScopedResource()
+            defer { if accessed { source.stopAccessingSecurityScopedResource() } }
+            await self?.previewIncomingPackage(from: source, qrPayload: qrPayload)
+        }
+    }
+
+    public func startExport(to destination: URL) {
+        operationTask?.cancel()
+        operationTask = Task { [weak self] in await self?.export(to: destination) }
+    }
+
+    public func startRetry() {
+        operationTask?.cancel()
+        operationTask = Task { [weak self] in await self?.retry() }
     }
 
     /// Builds the safe, allowlisted snapshot from the already-open metadata
@@ -166,7 +216,7 @@ public final class MobileSyncStore {
             )
             let input = MobileSnapshotComposer.Input(
                 libraryID: id,
-                revision: 0,
+                revision: Self.metadataRevision(projects: projects, nights: nights, captures: captures, annotations: annotations, briefings: briefings),
                 projects: projects,
                 nights: nights,
                 captures: captures,
@@ -192,8 +242,13 @@ public final class MobileSyncStore {
             preview = MobileSyncPreview(
                 identity: identity,
                 snapshot: snapshot,
-                snapshotSummary: Self.summary(for: snapshot)
+                snapshotSummary: Self.summary(for: snapshot),
+                confirmationToken: MobileSyncConfirmationToken(snapshotID: snapshot.snapshotID, revision: snapshot.revision, createdAt: snapshot.createdAt, summary: Self.summary(for: snapshot), libraryID: snapshot.libraryID)
             )
+            guard snapshot.libraryID == identity.proposedID else {
+                fail(.identityMismatch, message: String(localized: "The library identity changed. Review it again, then confirm the exact identity."))
+                return
+            }
             isIdentityConfirmed = identity.alreadyExists
             isSummaryConfirmed = false
             errorMessage = nil
@@ -205,9 +260,9 @@ public final class MobileSyncStore {
         }
     }
 
-    public func confirmIdentity(_ id: PortableLibraryID? = nil) {
+    public func confirmIdentity(_ id: PortableLibraryID) {
         guard phase == .ready, let rootURL, let preview else { return }
-        let confirmedID = id ?? preview.identity.proposedID
+        let confirmedID = id
         guard confirmedID == preview.identity.proposedID else {
             fail(.identityMismatch, message: String(localized: "The library identity changed. Review it again, then confirm the exact identity."))
             return
@@ -226,9 +281,9 @@ public final class MobileSyncStore {
         }
     }
 
-    public func confirmSummary(_ summary: MobileSnapshotSummary? = nil) {
+    public func confirmSummary(_ token: MobileSyncConfirmationToken) {
         guard phase == .ready, let preview, isIdentityConfirmed else { return }
-        guard summary == nil || summary == preview.snapshotSummary else {
+        guard token == preview.confirmationToken else {
             fail(.summaryMismatch, message: String(localized: "The summary changed. Review the latest counts before sending."))
             return
         }
@@ -249,6 +304,7 @@ public final class MobileSyncStore {
         errorMessage = nil
         failure = nil
         phase = .exporting
+        cancellationRequested = false
         return true
     }
 
@@ -260,7 +316,7 @@ public final class MobileSyncStore {
         do {
             try prepareDestination(destination)
             let result = try await packageExport(envelope, destination, key)
-            guard token == generation, phase == .exporting else { return }
+            guard token == generation, (phase == .exporting || (phase == .idle && cancellationRequested)) else { return }
             packageID = result.packageID
             exportedAt = result.createdAt
             encryptedByteCount = result.encryptedByteCount
@@ -299,6 +355,13 @@ public final class MobileSyncStore {
     }
 
     public func cancel() {
+        if phase == .exporting {
+            cancellationRequested = true
+            phase = .idle
+            return
+        }
+        operationTask?.cancel()
+        operationTask = nil
         generation += 1
         phase = .idle
         preview = nil
@@ -313,13 +376,29 @@ public final class MobileSyncStore {
         isIdentityConfirmed = false
         isSummaryConfirmed = false
         didApplyIncomingChanges = false
+        cancellationRequested = false
     }
 
-    public func reset() { cancel() }
+    public func reset() { dismiss() }
 
     public func dismiss() {
+        generation += 1
+        operationTask?.cancel()
+        operationTask = nil
+        phase = .idle
+        preview = nil
+        incomingPreview = nil
+        exportedURL = nil
+        packageID = nil
+        encryptedByteCount = nil
+        exportedAt = nil
         oneTimeQRPayload = nil
-        cancel()
+        errorMessage = nil
+        failure = nil
+        isIdentityConfirmed = false
+        isSummaryConfirmed = false
+        didApplyIncomingChanges = false
+        cancellationRequested = false
     }
 
     public func retry() async {
@@ -333,6 +412,7 @@ public final class MobileSyncStore {
         errorMessage = nil
         failure = nil
         phase = next
+        cancellationRequested = false
         if next != .importing {
             preview = nil
             incomingPreview = nil
@@ -346,6 +426,7 @@ public final class MobileSyncStore {
     }
 
     private func fail(_ kind: MobileSyncFailure, message: String) {
+        operationTask = nil
         phase = .failed
         failure = kind
         errorMessage = message
@@ -364,7 +445,17 @@ public final class MobileSyncStore {
             captureCount: snapshot.captures.count,
             briefingCount: snapshot.briefings.count,
             noteCount: snapshot.notes.count
+            , checklistItemCount: snapshot.briefings.reduce(0) { total, briefing in total + briefing.checklist.reduce(0) { $0 + $1.items.count } }
         )
+    }
+
+    nonisolated private static func metadataRevision(
+        projects: [ProjectRecord], nights: [NightRecord], captures: [SeriesRecord], annotations: [ProjectAnnotationRecord], briefings: [NightBriefingDraft]
+    ) -> Int {
+        var hash: UInt64 = 1469598103934665603
+        let text = (projects.map { $0.id.uuidString } + nights.map { $0.id.uuidString } + captures.map { $0.id.uuidString } + annotations.map { $0.projectID.uuidString } + briefings.map { "\($0.id.uuidString):\($0.revision):\($0.savedAt.timeIntervalSince1970)" }).sorted().joined(separator: "|") + "|\(projects.count)|\(nights.count)|\(captures.count)|\(annotations.count)|\(briefings.count)"
+        for byte in text.utf8 { hash ^= UInt64(byte); hash &*= 1099511628211 }
+        return Int(hash & 0x7fff_ffff_ffff_ffff)
     }
 
     private static func emptySnapshot(root: URL, id: PortableLibraryID) async throws -> MobileLibrarySnapshot {

@@ -81,7 +81,7 @@ private let expectedAllowlistedKeys: Set<String> = [
     "snapshot", "changes", "acknowledgedChangeIDs", "kind", "payload", "changeID", "deviceID",
     "briefingID", "itemID", "isCompleted", "formatVersion", "packageID",
     "encryptedByteCount", "ciphertextSHA256", "keyMode", "wrappedContentKeyBase64",
-    "projectCount", "nightCount", "captureCount", "briefingCount", "noteCount"
+    "projectCount", "nightCount", "captureCount", "briefingCount", "noteCount", "checklistItemCount"
 ]
 
 private extension MobileLibrarySnapshot {

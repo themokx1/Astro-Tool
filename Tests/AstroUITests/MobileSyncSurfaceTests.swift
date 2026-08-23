@@ -26,6 +26,7 @@ struct MobileSyncSurfaceTests {
         #expect(view.contains("iPhone"))
         #expect(view.contains("fileExporter"))
         #expect(view.contains("fileImporter"))
+        #expect(view.contains("configuration.existingFile"), "Replace requests must be rejected before SwiftUI writes a placeholder")
         #expect(view.contains(".astroMobile"))
         let visibleCopy = view
             .split(separator: "\n")
@@ -46,6 +47,16 @@ struct MobileSyncSurfaceTests {
         #expect(briefing.contains("v2.briefing.export.png"))
         #expect(briefing.contains("v5.mobile-sync.open"))
         #expect(briefing.contains("Send to iPhone") || briefing.contains("Küldés iPhone-ra"))
+        #expect(briefing.contains("snapshotProvider"), "Briefing entry must receive the live metadata provider")
+    }
+
+    @Test("Root, settings, and briefing share the live metadata provider")
+    func liveProviderIsThreaded() throws {
+        let rootView = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
+        let settings = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
+        #expect(rootView.contains("mobileSnapshotProvider"))
+        #expect(settings.contains("metadataSnapshotProvider"))
+        #expect(rootView.contains("snapshotProvider: mobileSnapshotProvider"))
     }
 
     @Test("Settings uses the human-facing iPhone Sync name")

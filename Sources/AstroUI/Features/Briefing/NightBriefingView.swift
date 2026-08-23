@@ -6,6 +6,7 @@ import SwiftUI
 public struct NightBriefingView: View {
     @State private var store: NightBriefingStore
     private let rootURL: URL?
+    private let snapshotProvider: MobileSyncStore.SnapshotProvider?
     @State private var customChecklistTitle = ""
     @State private var otherNightDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
     @State private var isMobileSyncPresented = false
@@ -14,9 +15,11 @@ public struct NightBriefingView: View {
         rootURL: URL?,
         seed: NightBriefingSeed? = nil,
         applicationSupport: URL? = nil,
-        caches: URL? = nil
+        caches: URL? = nil,
+        snapshotProvider: MobileSyncStore.SnapshotProvider? = nil
     ) {
         self.rootURL = rootURL
+        self.snapshotProvider = snapshotProvider
         _store = State(initialValue: NightBriefingStore(
             libraryRoot: rootURL,
             seed: seed,
@@ -37,7 +40,7 @@ public struct NightBriefingView: View {
         .astroSectionMarker("v2.detail.briefing", label: "Éjszakai briefing")
         .task { await store.loadRecent() }
         .sheet(isPresented: $isMobileSyncPresented) {
-            MobileSyncView(rootURL: rootURL)
+            MobileSyncView(rootURL: rootURL, snapshotProvider: snapshotProvider)
                 .frame(minWidth: 720, minHeight: 620)
         }
     }

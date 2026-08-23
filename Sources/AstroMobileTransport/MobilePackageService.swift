@@ -113,7 +113,7 @@ public actor MobilePackageService {
         _ envelope: MobilePackageEnvelope,
         to destination: URL,
         wrapping: MobilePackageKeyWrapping
-    ) throws {
+    ) throws -> MobilePackageManifest {
         try Self.validateEnvelope(envelope, forExport: true)
         let packageID = UUID()
         let keyMode: MobilePackageKeyMode = wrapping is OneTimePackageKey ? .oneTimeQR : .pairedDevice
@@ -189,6 +189,7 @@ public actor MobilePackageService {
             if (error as NSError).code == EEXIST { throw MobilePackageError.destinationExists }
             throw MobilePackageError.stagingFailed
         }
+        return manifest
     }
 
     public func importPreview(
@@ -1126,14 +1127,17 @@ public actor MobilePackageService {
 
     private static func summary(for snapshot: MobileLibrarySnapshot?) -> MobileSnapshotSummary {
         guard let snapshot else {
-            return MobileSnapshotSummary(projectCount: 0, nightCount: 0, captureCount: 0, briefingCount: 0, noteCount: 0)
+            return MobileSnapshotSummary(projectCount: 0, nightCount: 0, captureCount: 0, briefingCount: 0, noteCount: 0, checklistItemCount: 0)
         }
         return MobileSnapshotSummary(
             projectCount: snapshot.projects.count,
             nightCount: snapshot.nights.count,
             captureCount: snapshot.captures.count,
             briefingCount: snapshot.briefings.count,
-            noteCount: snapshot.notes.count
+            noteCount: snapshot.notes.count,
+            checklistItemCount: snapshot.briefings.reduce(0) { total, briefing in
+                total + briefing.checklist.reduce(0) { $0 + $1.items.count }
+            }
         )
     }
 }

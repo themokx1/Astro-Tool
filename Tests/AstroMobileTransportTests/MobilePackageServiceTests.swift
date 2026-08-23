@@ -26,6 +26,24 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(try await service.commitImport(packageID: preview.packageID) == envelope)
 }
 
+@Test func exportReturnsPublishedManifestMetadata() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("manifest-result.astromobile")
+    let result = try await MobilePackageService().export(
+        MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []),
+        to: destination,
+        wrapping: DeterministicWrapper()
+    )
+    let stored = try MobileJSON.decoder.decode(
+        MobilePackageManifest.self,
+        from: Data(contentsOf: destination.appendingPathComponent("manifest.json"))
+    )
+    #expect(result.packageID == stored.packageID)
+    #expect(result.createdAt == stored.createdAt)
+    #expect(result.encryptedByteCount == stored.encryptedByteCount)
+    #expect(result.encryptedByteCount > 0)
+}
+
 @Test func composedSnapshotWithOmittedOptionalFieldsRoundTrips() async throws {
     let root = try TemporaryPackageDirectory()
     let destination = root.url.appendingPathComponent("composed.astromobile")

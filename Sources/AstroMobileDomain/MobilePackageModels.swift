@@ -22,19 +22,22 @@ public struct MobileSnapshotSummary: Codable, Equatable, Sendable {
     public let captureCount: Int
     public let briefingCount: Int
     public let noteCount: Int
+    public let checklistItemCount: Int
 
     public init(
         projectCount: Int,
         nightCount: Int,
         captureCount: Int,
         briefingCount: Int,
-        noteCount: Int
+        noteCount: Int,
+        checklistItemCount: Int = 0
     ) {
         self.projectCount = projectCount
         self.nightCount = nightCount
         self.captureCount = captureCount
         self.briefingCount = briefingCount
         self.noteCount = noteCount
+        self.checklistItemCount = checklistItemCount
     }
 }
 

@@ -501,6 +501,7 @@ private struct V2Shell: View {
                 libraryRootFallback: libraryRootFallback,
                 uiTestApplicationSupport: uiTestApplicationSupport,
                 uiTestCaches: uiTestCaches,
+                mobileSnapshotProvider: mobileSnapshotProvider,
                 chooseLibrary: presentOnboarding,
                 createPlannedProject: { designation in
                     newProjectInitialQuery = designation
@@ -1434,6 +1435,7 @@ private struct DetailHost: View {
     let libraryRootFallback: URL?
     let uiTestApplicationSupport: URL?
     let uiTestCaches: URL?
+    let mobileSnapshotProvider: MobileSyncStore.SnapshotProvider
     let chooseLibrary: () -> Void
     let createPlannedProject: (String) -> Void
     /// W3-10: opens the shared "New Session" sheet -- `nil` prefill for the
@@ -1893,7 +1895,8 @@ private struct DetailHost: View {
                 rootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
                 seed: briefingSeed,
                 applicationSupport: uiTestApplicationSupport,
-                caches: uiTestCaches
+                caches: uiTestCaches,
+                snapshotProvider: mobileSnapshotProvider
             )
         case .savedTargets:
             SavedTargetsView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
