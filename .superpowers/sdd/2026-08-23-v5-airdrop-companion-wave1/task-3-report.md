@@ -145,3 +145,29 @@ Test run with 3405 tests in 216 suites passed after 97.483 seconds.
 ```
 
 `git diff --check` is clean. Replay semantics are intentionally actor-scoped in this transport wave: duplicate staged/committed package IDs fail within one `MobilePackageService` actor, while a fresh actor can preview the same immutable source. Durable replay/idempotency storage belongs to the Task 7 importer and is explicitly deferred; no library writes were introduced here.
+
+## Security fix round 2 — reviewer remediation
+
+### Threat-model RED evidence
+
+The review identified four Important attack classes. Tests were added first and encode the expected fail-closed behavior:
+
+- A real composed snapshot with all four optional Codable fields (`goalHours`, `filterName`, `nightDate`, and `explanation`) omitted must round-trip. Nested `libraryID` unknown/forbidden keys must fail with the exact `.invalidEnvelope` case.
+- A token-dense/deep authenticated JSON payload and an export containing a string beyond the explicit phone limit must fail with `.invalidEnvelope` before staging or model allocation.
+- Symlink and hard-link package children must fail with `.malformedPackage`; an existing destination must leave no operation-private `.staging-*` directory behind.
+- Checklist IDs duplicated across sections of one briefing, a briefing referencing a missing note, and note changes with the wrong owner or a non-editable note must each fail with `.invalidEnvelope`.
+
+### Threat-model GREEN evidence
+
+The implementation now:
+
+- distinguishes required and allowed-optional JSON keys and exact-validates `libraryID` as `{rawValue}`;
+- runs a bounded lexical JSON preflight before `JSONSerialization`/`JSONDecoder`, with explicit 32-level depth, 50,000-record-derived node, 10,000-array-member, 32-object-member, 256 KiB-string, and 128-byte-number-token limits;
+- applies the same aggregate nested-record bound during export, and checks encoded plaintext, combined ciphertext, wrapped key, and manifest sizes before publication;
+- opens the package directory once and reads fixed children using `openat` with `O_NOFOLLOW`, `fstat`, regular-file and single-link checks, bounded owned `Data`, and post-read descriptor identity/size verification; mapped payload reads are no longer used;
+- cleans operation-private staging through a parent/child descriptor and stable device/inode/type identity, avoiding mutable directory-size comparisons;
+- precomputes briefing item and note maps for linear semantic-reference validation, enforces item-ID uniqueness per briefing, requires briefing note references, and checks note owner/editability for note changes.
+
+Round-2 security tests added: 5 (composed optional-field round-trip, nested schema rejection, token/oversized export limits, hard-link rejection, and semantic reference validation). The service security test set now contains 16 tests.
+
+Replay semantics remain intentionally actor-scoped: duplicate staged/committed package IDs fail within one service actor; durable replay/idempotency persistence remains Task 7 and no transport-layer library writes were added.

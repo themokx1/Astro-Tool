@@ -26,6 +26,48 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(try await service.commitImport(packageID: preview.packageID) == envelope)
 }
 
+@Test func composedSnapshotWithOmittedOptionalFieldsRoundTrips() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("composed.astromobile")
+    let projectID = UUID(), nightID = UUID(), captureID = UUID(), briefingID = UUID()
+    let noteID = "briefing-note"
+    let snapshot = MobileLibrarySnapshot(
+        schemaVersion: MobileLibrarySnapshot.currentSchemaVersion,
+        libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 3,
+        createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+        projects: [MobileProject(id: projectID, displayName: "M31", catalogID: "catalog", phase: "ready", integrationSeconds: 12, goalHours: nil)],
+        nights: [MobileNight(id: nightID, localDate: "2026-08-23", timeZoneID: "Europe/Budapest")],
+        captures: [MobileCapture(id: captureID, projectID: projectID, nightID: nightID, displayName: "L", filterName: nil, exposureSeconds: 30, integrationSeconds: 60)],
+        briefings: [MobileBriefing(id: briefingID, revision: 1, savedAt: Date(timeIntervalSince1970: 1_700_000_001), nightDate: nil, readiness: "ready", targets: [], checklist: [MobileChecklistSection(id: "section", title: "Basics", items: [MobileChecklistItem(id: "item", title: "Focus", explanation: nil, isCompleted: false, baseRevision: 0)])], noteID: noteID)],
+        notes: [MobileNote(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_700_000_002), isEditableOnPhone: true)]
+    )
+    let envelope = MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: [])
+    let service = MobilePackageService()
+    try await service.export(envelope, to: destination, wrapping: DeterministicWrapper())
+    let preview = try await service.importPreview(from: destination, wrapping: DeterministicWrapper())
+    #expect(try await service.commitImport(packageID: preview.packageID) == envelope)
+}
+
+@Test func nestedUnknownAndLibraryIDFieldsFailClosed() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("nested-unknown.astromobile")
+    let noteID = "note"
+    let snapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [], notes: [MobileNote(id: noteID, scope: .project, ownerID: "p", text: "", baseRevision: 0, updatedAt: Date(), isEditableOnPhone: true)])
+    try await MobilePackageService().export(MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    try rewriteAuthenticatedPayload(at: destination) { payload in
+        var updated = payload
+        var envelope = payload["envelope"] as! [String: Any]
+        var snapshot = envelope["snapshot"] as! [String: Any]
+        let library = snapshot["libraryID"] as! [String: Any]
+        snapshot["libraryID"] = ["rawValue": library["rawValue"]!, "forbidden": true]
+        envelope["snapshot"] = snapshot
+        updated["envelope"] = envelope
+        return updated
+    }
+    let error = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .invalidEnvelope)
+}
+
 @Test func existingDestinationIsNeverOverwritten() async throws {
     let root = try TemporaryPackageDirectory()
     let destination = root.url.appendingPathComponent("mobile.astromobile")
@@ -40,6 +82,8 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     }
     #expect(exportError as? MobilePackageError == .destinationExists)
     #expect(try Data(contentsOf: destination) == Data("sentinel".utf8))
+    let leftovers = try FileManager.default.contentsOfDirectory(atPath: root.url.path).filter { $0.contains(".mobile.astromobile.staging-") }
+    #expect(leftovers.isEmpty)
 }
 
 @Test func wrongKeyAndTamperedManifestAreRejected() async throws {
@@ -207,6 +251,57 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(collectionError as? MobilePackageError == .invalidEnvelope)
 }
 
+@Test func tokenExplosionAndOversizedExportFailWithExactErrors() async throws {
+    let root = try TemporaryPackageDirectory()
+    let tokenURL = root.url.appendingPathComponent("token.astromobile")
+    let empty = MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: [])
+    try await MobilePackageService().export(empty, to: tokenURL, wrapping: DeterministicWrapper())
+    let manifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: Data(contentsOf: tokenURL.appendingPathComponent("manifest.json")))
+    let nested = String(repeating: "[", count: MobilePackageService.maximumJSONDepth + 2) + "null" + String(repeating: "]", count: MobilePackageService.maximumJSONDepth + 2)
+    let raw = Data("{\"packageID\":\"\(manifest.packageID.uuidString)\",\"envelope\":{\"changes\":[],\"acknowledgedChangeIDs\":[],\"snapshot\":\(nested)}}".utf8)
+    try rewriteAuthenticatedPayloadRaw(at: tokenURL, plaintext: raw)
+    let tokenError = await errorFrom { _ = try await MobilePackageService().importPreview(from: tokenURL, wrapping: DeterministicWrapper()) }
+    #expect(tokenError as? MobilePackageError == .invalidEnvelope)
+
+    let oversizedNote = MobileNote(id: "n", scope: .project, ownerID: "p", text: String(repeating: "x", count: MobilePackageService.maximumStringByteCount + 1), baseRevision: 0, updatedAt: Date(), isEditableOnPhone: true)
+    let oversizedSnapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [], notes: [oversizedNote])
+    let oversizedError = await errorFrom {
+        try await MobilePackageService().export(MobilePackageEnvelope(snapshot: oversizedSnapshot, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("oversized.astromobile"), wrapping: DeterministicWrapper())
+    }
+    #expect(oversizedError as? MobilePackageError == .invalidEnvelope)
+}
+
+@Test func hardlinkedChildrenAreRejected() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("hardlink.astromobile")
+    try await MobilePackageService().export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    let original = root.url.appendingPathComponent("payload-copy.bin")
+    let payload = destination.appendingPathComponent("encrypted-payload.bin")
+    try FileManager.default.copyItem(at: payload, to: original)
+    try FileManager.default.removeItem(at: payload)
+    try FileManager.default.linkItem(at: original, to: payload)
+    let error = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .malformedPackage)
+}
+
+@Test func semanticReferencesAreValidatedExactly() async throws {
+    let root = try TemporaryPackageDirectory()
+    let note = MobileNote(id: "note", scope: .briefing, ownerID: "owner", text: "", baseRevision: 0, updatedAt: Date(), isEditableOnPhone: false)
+    let briefing = MobileBriefing(id: UUID(), revision: 0, savedAt: Date(), nightDate: nil, readiness: "ready", targets: [], checklist: [MobileChecklistSection(id: "a", title: "A", items: [MobileChecklistItem(id: "same", title: "1", explanation: nil, isCompleted: false, baseRevision: 0)]), MobileChecklistSection(id: "b", title: "B", items: [MobileChecklistItem(id: "same", title: "2", explanation: nil, isCompleted: false, baseRevision: 0)])], noteID: note.id)
+    let snapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [briefing], notes: [note])
+    let duplicateError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("duplicate.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(duplicateError as? MobilePackageError == .invalidEnvelope)
+
+    let missingRef = MobileBriefing(id: UUID(), revision: 0, savedAt: Date(), nightDate: nil, readiness: "ready", targets: [], checklist: [], noteID: "missing")
+    let missingSnapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [missingRef], notes: [])
+    let missingError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: missingSnapshot, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("missing.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(missingError as? MobilePackageError == .invalidEnvelope)
+
+    let change = MobileChange.noteRevision(NoteRevisionChange(changeID: UUID(), deviceID: UUID(), noteID: note.id, ownerID: "wrong", baseRevision: 0, text: "x", createdAt: Date()))
+    let changeError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [], notes: [note]), changes: [change], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("change.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(changeError as? MobilePackageError == .invalidEnvelope)
+}
+
 @Test func importDoesNotModifySourceAndRejectsSymlinkedChildren() async throws {
     let root = try TemporaryPackageDirectory()
     let destination = root.url.appendingPathComponent("source.astromobile")
@@ -266,6 +361,20 @@ private func rewriteAuthenticatedPayload(at package: URL, transform: ([String: A
     let transformedData = try JSONSerialization.data(withJSONObject: transformed, options: [.sortedKeys])
     let resealed = try MobilePackageCrypto.seal(transformedData, using: key, authenticating: aad)
     let combined = MobilePackageCrypto.combinedBytes(resealed)
+    try combined.write(to: payloadURL, options: .atomic)
+    var manifestObject = try JSONSerialization.jsonObject(with: manifestData) as! [String: Any]
+    manifestObject["encryptedByteCount"] = combined.count
+    manifestObject["ciphertextSHA256"] = MobilePackageCrypto.sha256Hex(combined)
+    try JSONSerialization.data(withJSONObject: manifestObject, options: [.sortedKeys]).write(to: package.appendingPathComponent("manifest.json"), options: .atomic)
+}
+
+private func rewriteAuthenticatedPayloadRaw(at package: URL, plaintext: Data) throws {
+    let manifestData = try Data(contentsOf: package.appendingPathComponent("manifest.json"))
+    let manifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: manifestData)
+    let key = SymmetricKey(data: Data(base64Encoded: manifest.wrappedContentKeyBase64!)!)
+    let payloadURL = package.appendingPathComponent("encrypted-payload.bin")
+    let aad = try MobileJSON.encoder.encode(TestManifestAADHeader(formatVersion: manifest.formatVersion, packageID: manifest.packageID, createdAt: manifest.createdAt, keyMode: manifest.keyMode))
+    let combined = MobilePackageCrypto.combinedBytes(try MobilePackageCrypto.seal(plaintext, using: key, authenticating: aad))
     try combined.write(to: payloadURL, options: .atomic)
     var manifestObject = try JSONSerialization.jsonObject(with: manifestData) as! [String: Any]
     manifestObject["encryptedByteCount"] = combined.count

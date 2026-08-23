@@ -72,6 +72,10 @@ public actor MobilePackageService {
         let createdAt = Date()
         let contentKey = SymmetricKey(size: .bits256)
         let plaintext = try MobileJSON.encoder.encode(AuthenticatedPayload(packageID: packageID, envelope: envelope))
+        guard Int64(plaintext.count) <= Self.maximumEncryptedByteCount else {
+            throw MobilePackageError.invalidEnvelope
+        }
+        try Self.preflightJSON(plaintext)
         let aad = try Self.manifestAAD(
             formatVersion: Self.currentFormatVersion,
             packageID: packageID,
@@ -80,8 +84,11 @@ public actor MobilePackageService {
         )
         let sealed = try MobilePackageCrypto.seal(plaintext, using: contentKey, authenticating: aad)
         let combined = MobilePackageCrypto.combinedBytes(sealed)
+        guard Int64(combined.count) <= Self.maximumEncryptedByteCount else {
+            throw MobilePackageError.invalidEnvelope
+        }
         let wrappedKey = try wrapping.wrap(contentKey)
-        guard !wrappedKey.isEmpty else { throw MobilePackageError.invalidKey }
+        guard !wrappedKey.isEmpty, wrappedKey.count <= 4096 else { throw MobilePackageError.invalidKey }
 
         let manifest = MobilePackageManifest(
             formatVersion: Self.currentFormatVersion,
@@ -92,6 +99,11 @@ public actor MobilePackageService {
             keyMode: keyMode,
             wrappedContentKeyBase64: wrappedKey.base64EncodedString()
         )
+
+        let manifestData = try MobileJSON.encoder.encode(manifest)
+        guard manifestData.count <= Self.maximumManifestByteCount else {
+            throw MobilePackageError.invalidManifest
+        }
 
         let fileManager = FileManager.default
         let parent = destination.deletingLastPathComponent()
@@ -108,8 +120,10 @@ public actor MobilePackageService {
             temporaryIdentity = Self.identity(of: temporary, fileManager: fileManager)
             guard temporaryIdentity != nil else { throw MobilePackageError.stagingFailed }
             try combined.write(to: temporary.appendingPathComponent(Self.encryptedPayloadFileName), options: .atomic)
-            let manifestData = try MobileJSON.encoder.encode(manifest)
             try manifestData.write(to: temporary.appendingPathComponent(Self.manifestFileName), options: .atomic)
+            guard Self.sameStableIdentity(temporaryIdentity, Self.identity(of: temporary, fileManager: fileManager)) else {
+                throw MobilePackageError.stagingFailed
+            }
             try Self.publishExclusively(from: temporary, to: destination)
         } catch let error as MobilePackageError {
             Self.removeTemporaryIfOwned(temporary, identity: temporaryIdentity, fileManager: fileManager)
@@ -140,26 +154,26 @@ public actor MobilePackageService {
             throw MobilePackageError.malformedPackage
         }
 
-        let manifestURL = source.appendingPathComponent(Self.manifestFileName)
-        guard Self.isRegularFile(manifestURL, fileManager: fileManager),
-              Self.isRegularFile(source.appendingPathComponent(Self.encryptedPayloadFileName), fileManager: fileManager) else {
-            throw MobilePackageError.malformedPackage
+        let directoryFD = source.path.withCString { path in
+            Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         }
+        guard directoryFD >= 0 else { throw MobilePackageError.malformedPackage }
+        defer { Darwin.close(directoryFD) }
+
         let manifestData: Data
-        let manifestIdentityBeforeRead = Self.identity(of: manifestURL, fileManager: fileManager)
         do {
-            guard let size = Self.fileSize(of: manifestURL, fileManager: fileManager), size <= Self.maximumManifestByteCount else {
+            guard Self.isRegular(at: directoryFD, name: Self.manifestFileName) else {
+                throw MobilePackageError.malformedPackage
+            }
+            guard let size = Self.fileSize(at: directoryFD, name: Self.manifestFileName), size <= Self.maximumManifestByteCount else {
                 throw MobilePackageError.invalidManifest
             }
-            manifestData = try Data(contentsOf: manifestURL)
+            manifestData = try Self.readRegularFile(at: directoryFD, name: Self.manifestFileName, maximumByteCount: Int64(Self.maximumManifestByteCount))
         } catch {
             if let error = error as? MobilePackageError { throw error }
             throw MobilePackageError.malformedPackage
         }
-        guard sourceIdentity == Self.identity(of: source, fileManager: fileManager) else { throw MobilePackageError.malformedPackage }
-        guard let manifestIdentityBeforeRead,
-              manifestIdentityBeforeRead.type == .typeRegular,
-              manifestIdentityBeforeRead == Self.identity(of: manifestURL, fileManager: fileManager) else { throw MobilePackageError.malformedPackage }
+        guard Self.sameStableIdentity(sourceIdentity, Self.identity(of: source, fileManager: fileManager)) else { throw MobilePackageError.malformedPackage }
         try Self.validateManifestJSON(manifestData)
         let manifest: MobilePackageManifest
         do {
@@ -172,28 +186,22 @@ public actor MobilePackageService {
             throw MobilePackageError.duplicatePackageID
         }
 
-        let payloadURL = source.appendingPathComponent(Self.encryptedPayloadFileName)
-        let payloadIdentityBeforeRead = Self.identity(of: payloadURL, fileManager: fileManager)
-        let attributes: [FileAttributeKey: Any]
         do {
-            attributes = try fileManager.attributesOfItem(atPath: payloadURL.path)
+            guard Self.isRegular(at: directoryFD, name: Self.encryptedPayloadFileName) else {
+                throw MobilePackageError.malformedPackage
+            }
+            guard let fileSize = Self.fileSize(at: directoryFD, name: Self.encryptedPayloadFileName),
+                  fileSize == manifest.encryptedByteCount,
+                  fileSize <= Self.maximumEncryptedByteCount else {
+            throw MobilePackageError.manifestHashMismatch
+            }
+        } catch let error as MobilePackageError {
+            throw error
         } catch {
-            throw MobilePackageError.malformedPackage
-        }
-        guard let fileSize = attributes[.size] as? NSNumber,
-              fileSize.int64Value == manifest.encryptedByteCount,
-              fileSize.int64Value <= Self.maximumEncryptedByteCount else {
             throw MobilePackageError.manifestHashMismatch
         }
-        let payloadData: Data
-        do {
-            payloadData = try Data(contentsOf: payloadURL, options: .mappedIfSafe)
-        } catch {
-            throw MobilePackageError.malformedPackage
-        }
-        guard sourceIdentity == Self.identity(of: source, fileManager: fileManager),
-              payloadIdentityBeforeRead?.type == .typeRegular,
-              payloadIdentityBeforeRead == Self.identity(of: payloadURL, fileManager: fileManager) else { throw MobilePackageError.malformedPackage }
+        let payloadData = try Self.readRegularFile(at: directoryFD, name: Self.encryptedPayloadFileName, maximumByteCount: Self.maximumEncryptedByteCount)
+        guard Self.sameStableIdentity(sourceIdentity, Self.identity(of: source, fileManager: fileManager)) else { throw MobilePackageError.malformedPackage }
         guard Int64(payloadData.count) == manifest.encryptedByteCount,
               MobilePackageCrypto.sha256Hex(payloadData) == manifest.ciphertextSHA256 else {
             throw MobilePackageError.manifestHashMismatch
@@ -301,6 +309,7 @@ public actor MobilePackageService {
     }
 
     private static func validateEnvelopeJSON(_ data: Data) throws {
+        try preflightJSON(data)
         let object: Any
         do { object = try JSONSerialization.jsonObject(with: data) } catch { throw MobilePackageError.invalidEnvelope }
         var nodeCount = 0
@@ -338,16 +347,18 @@ public actor MobilePackageService {
     private static func validateSnapshotObject(_ value: Any) throws {
         guard let object = value as? [String: Any] else { throw MobilePackageError.invalidEnvelope }
         try requireKeys(object, ["schemaVersion", "libraryID", "snapshotID", "revision", "createdAt", "projects", "nights", "captures", "briefings", "notes"])
+        guard let libraryID = object["libraryID"] as? [String: Any] else { throw MobilePackageError.invalidEnvelope }
+        try requireKeys(libraryID, ["rawValue"])
         guard let projects = object["projects"] as? [Any], let nights = object["nights"] as? [Any],
               let captures = object["captures"] as? [Any], let briefings = object["briefings"] as? [Any],
               let notes = object["notes"] as? [Any],
               [projects.count, nights.count, captures.count, briefings.count, notes.count].allSatisfy({ $0 <= maximumCollectionCount }) else { throw MobilePackageError.invalidEnvelope }
-        for value in projects { try requireKeys(try objectValue(value), ["id", "displayName", "catalogID", "phase", "integrationSeconds", "goalHours"]) }
+        for value in projects { try requireKeys(try objectValue(value), required: ["id", "displayName", "catalogID", "phase", "integrationSeconds"], allowedOptional: ["goalHours"]) }
         for value in nights { try requireKeys(try objectValue(value), ["id", "localDate", "timeZoneID"]) }
-        for value in captures { try requireKeys(try objectValue(value), ["id", "projectID", "nightID", "displayName", "filterName", "exposureSeconds", "integrationSeconds"]) }
+        for value in captures { try requireKeys(try objectValue(value), required: ["id", "projectID", "nightID", "displayName", "exposureSeconds", "integrationSeconds"], allowedOptional: ["filterName"]) }
         for value in briefings {
             let briefing = try objectValue(value)
-            try requireKeys(briefing, ["id", "revision", "savedAt", "nightDate", "readiness", "targets", "checklist", "noteID"])
+            try requireKeys(briefing, required: ["id", "revision", "savedAt", "readiness", "targets", "checklist", "noteID"], allowedOptional: ["nightDate"])
             guard let targets = briefing["targets"] as? [Any], let checklist = briefing["checklist"] as? [Any], targets.count <= maximumCollectionCount, checklist.count <= maximumCollectionCount else { throw MobilePackageError.invalidEnvelope }
             for target in targets {
                 let targetObject = try objectValue(target)
@@ -358,7 +369,7 @@ public actor MobilePackageService {
                 let sectionObject = try objectValue(section)
                 try requireKeys(sectionObject, ["id", "title", "items"])
                 guard let items = sectionObject["items"] as? [Any], items.count <= maximumCollectionCount else { throw MobilePackageError.invalidEnvelope }
-                for item in items { try requireKeys(try objectValue(item), ["id", "title", "explanation", "isCompleted", "baseRevision"]) }
+                for item in items { try requireKeys(try objectValue(item), required: ["id", "title", "isCompleted", "baseRevision"], allowedOptional: ["explanation"]) }
             }
         }
         for value in notes { try requireKeys(try objectValue(value), ["id", "scope", "ownerID", "text", "baseRevision", "updatedAt", "isEditableOnPhone"]) }
@@ -388,6 +399,141 @@ public actor MobilePackageService {
         }
     }
 
+    /// Lexically bounds untrusted JSON before Foundation builds an object graph.
+    /// This deliberately rejects malformed input early and caps both nesting and
+    /// token/node work for the phone importer.
+    private static func preflightJSON(_ data: Data) throws {
+        guard data.count <= Int(maximumEncryptedByteCount) else { throw MobilePackageError.invalidEnvelope }
+        var scanner = JSONPreflightScanner(bytes: Array(data))
+        try scanner.parse()
+    }
+
+    private struct JSONPreflightScanner {
+        let bytes: [UInt8]
+        var index = 0
+        var depth = 0
+        var nodeCount = 0
+
+        mutating func parse() throws {
+            skipWhitespace()
+            try parseValue()
+            skipWhitespace()
+            guard index == bytes.count else { throw MobilePackageError.invalidEnvelope }
+        }
+
+        mutating private func parseValue() throws {
+            skipWhitespace()
+            guard index < bytes.count else { throw MobilePackageError.invalidEnvelope }
+            nodeCount += 1
+            guard nodeCount <= MobilePackageService.maximumTotalNestedRecords * 8 else { throw MobilePackageError.invalidEnvelope }
+            switch bytes[index] {
+            case 0x7B: try parseObject()
+            case 0x5B: try parseArray()
+            case 0x22: try parseString()
+            case 0x74: try parseLiteral(Array("true".utf8))
+            case 0x66: try parseLiteral(Array("false".utf8))
+            case 0x6E: try parseLiteral(Array("null".utf8))
+            case 0x2D, 0x30...0x39: try parseNumber()
+            default: throw MobilePackageError.invalidEnvelope
+            }
+        }
+
+        mutating private func parseObject() throws {
+            try enterContainer()
+            index += 1
+            skipWhitespace()
+            var count = 0
+            if consume(0x7D) { leaveContainer(); return }
+            while true {
+                count += 1
+                guard count <= 32 else { throw MobilePackageError.invalidEnvelope }
+                guard index < bytes.count, bytes[index] == 0x22 else { throw MobilePackageError.invalidEnvelope }
+                try parseString()
+                skipWhitespace(); guard consume(0x3A) else { throw MobilePackageError.invalidEnvelope }
+                try parseValue()
+                skipWhitespace()
+                if consume(0x7D) { leaveContainer(); return }
+                guard consume(0x2C) else { throw MobilePackageError.invalidEnvelope }
+                skipWhitespace()
+            }
+        }
+
+        mutating private func parseArray() throws {
+            try enterContainer()
+            index += 1
+            skipWhitespace()
+            var count = 0
+            if consume(0x5D) { leaveContainer(); return }
+            while true {
+                count += 1
+                guard count <= MobilePackageService.maximumCollectionCount else { throw MobilePackageError.invalidEnvelope }
+                try parseValue()
+                skipWhitespace()
+                if consume(0x5D) { leaveContainer(); return }
+                guard consume(0x2C) else { throw MobilePackageError.invalidEnvelope }
+                skipWhitespace()
+            }
+        }
+
+        mutating private func parseString() throws {
+            guard consume(0x22) else { throw MobilePackageError.invalidEnvelope }
+            var byteCount = 0
+            while index < bytes.count {
+                let byte = bytes[index]
+                if byte == 0x22 { index += 1; guard byteCount <= MobilePackageService.maximumStringByteCount else { throw MobilePackageError.invalidEnvelope }; return }
+                if byte < 0x20 { throw MobilePackageError.invalidEnvelope }
+                if byte == 0x5C {
+                    index += 1
+                    guard index < bytes.count else { throw MobilePackageError.invalidEnvelope }
+                    switch bytes[index] {
+                    case 0x22, 0x5C, 0x2F, 0x62, 0x66, 0x6E, 0x72, 0x74: byteCount += 1; index += 1
+                    case 0x75:
+                        guard index + 4 < bytes.count else { throw MobilePackageError.invalidEnvelope }
+                        for offset in 1...4 { guard isHex(bytes[index + offset]) else { throw MobilePackageError.invalidEnvelope } }
+                        byteCount += 1; index += 5
+                    default: throw MobilePackageError.invalidEnvelope
+                    }
+                } else {
+                    byteCount += 1; index += 1
+                }
+                guard byteCount <= MobilePackageService.maximumStringByteCount else { throw MobilePackageError.invalidEnvelope }
+            }
+            throw MobilePackageError.invalidEnvelope
+        }
+
+        mutating private func parseLiteral(_ literal: [UInt8]) throws {
+            guard bytes[index..<min(bytes.count, index + literal.count)].elementsEqual(literal) else { throw MobilePackageError.invalidEnvelope }
+            index += literal.count
+        }
+
+        mutating private func parseNumber() throws {
+            let start = index
+            if consume(0x2D) {}
+            if consume(0x30) {
+                if index < bytes.count, bytes[index] >= 0x30 && bytes[index] <= 0x39 { throw MobilePackageError.invalidEnvelope }
+            } else {
+                guard consumeDigits() else { throw MobilePackageError.invalidEnvelope }
+            }
+            if consume(0x2E) { guard consumeDigits() else { throw MobilePackageError.invalidEnvelope } }
+            if index < bytes.count, bytes[index] == 0x65 || bytes[index] == 0x45 {
+                index += 1; if index < bytes.count && (bytes[index] == 0x2B || bytes[index] == 0x2D) { index += 1 }; guard consumeDigits() else { throw MobilePackageError.invalidEnvelope }
+            }
+            guard index > start, index - start <= 128 else { throw MobilePackageError.invalidEnvelope }
+        }
+
+        mutating private func consumeDigits() -> Bool {
+            let start = index
+            while index < bytes.count, bytes[index] >= 0x30, bytes[index] <= 0x39 { index += 1 }
+            return index > start
+        }
+
+        mutating private func enterContainer() throws { depth += 1; guard depth <= MobilePackageService.maximumJSONDepth else { throw MobilePackageError.invalidEnvelope } }
+        mutating private func leaveContainer() { depth -= 1 }
+        mutating private func consume(_ value: UInt8) -> Bool { guard index < bytes.count, bytes[index] == value else { return false }; index += 1; return true }
+        mutating private func skipWhitespace() { while index < bytes.count && (bytes[index] == 0x20 || bytes[index] == 0x09 || bytes[index] == 0x0A || bytes[index] == 0x0D) { index += 1 } }
+        private func isHex(_ value: UInt8) -> Bool { (value >= 0x30 && value <= 0x39) || (value >= 0x41 && value <= 0x46) || (value >= 0x61 && value <= 0x66) }
+    }
+
     private static func objectValue(_ value: Any) throws -> [String: Any] {
         guard let object = value as? [String: Any] else { throw MobilePackageError.invalidEnvelope }
         return object
@@ -395,6 +541,13 @@ public actor MobilePackageService {
 
     private static func requireKeys(_ object: [String: Any], _ keys: Set<String>) throws {
         guard Set(object.keys) == keys else { throw MobilePackageError.invalidEnvelope }
+    }
+
+    private static func requireKeys(_ object: [String: Any], required: Set<String>, allowedOptional: Set<String>) throws {
+        let keys = Set(object.keys)
+        guard required.isSubset(of: keys), keys.isSubset(of: required.union(allowedOptional)) else {
+            throw MobilePackageError.invalidEnvelope
+        }
     }
 
     private static func validateEnvelope(_ envelope: MobilePackageEnvelope) throws {
@@ -415,6 +568,7 @@ public actor MobilePackageService {
                 throw MobilePackageError.unsupportedSchemaVersion
             }
             let totalRecords = snapshot.projects.count + snapshot.nights.count + snapshot.captures.count + snapshot.briefings.count + snapshot.notes.count
+                + snapshot.briefings.reduce(0) { $0 + $1.targets.count + $1.checklist.count + $1.checklist.reduce(0) { $0 + $1.items.count } }
             guard totalRecords <= maximumTotalNestedRecords else { throw MobilePackageError.invalidEnvelope }
             try validateSnapshotDomain(snapshot)
         }
@@ -432,14 +586,16 @@ public actor MobilePackageService {
             }
         }
         if let snapshot {
-            let briefingIDs = Set(snapshot.briefings.map(\.id))
-            let noteIDs = Set(snapshot.notes.map(\.id))
+            let briefingItems: [UUID: Set<String>] = Dictionary(uniqueKeysWithValues: snapshot.briefings.map { briefing in
+                (briefing.id, Set(briefing.checklist.flatMap(\.items).map(\.id)))
+            })
+            let notesByID = Dictionary(uniqueKeysWithValues: snapshot.notes.map { ($0.id, $0) })
             for change in envelope.changes {
                 switch change {
                 case .checklistCompletion(let value):
-                    guard briefingIDs.contains(value.briefingID), snapshot.briefings.first(where: { $0.id == value.briefingID })?.checklist.contains(where: { $0.items.contains(where: { $0.id == value.itemID }) }) == true else { throw MobilePackageError.invalidEnvelope }
+                    guard briefingItems[value.briefingID]?.contains(value.itemID) == true else { throw MobilePackageError.invalidEnvelope }
                 case .noteRevision(let value):
-                    guard noteIDs.contains(value.noteID) else { throw MobilePackageError.invalidEnvelope }
+                    guard let note = notesByID[value.noteID], note.ownerID == value.ownerID, note.isEditableOnPhone else { throw MobilePackageError.invalidEnvelope }
                 }
             }
         }
@@ -471,15 +627,18 @@ public actor MobilePackageService {
             for target in briefing.targets { guard validString(target.name), validString(target.role), target.start.timeIntervalSince1970.isFinite, target.end.timeIntervalSince1970.isFinite, target.end >= target.start, target.warnings.allSatisfy(validString) else { throw MobilePackageError.invalidEnvelope } }
             let sectionIDs = Set(briefing.checklist.map(\.id))
             guard sectionIDs.count == briefing.checklist.count else { throw MobilePackageError.invalidEnvelope }
+            var briefingItemIDs = Set<String>()
             for section in briefing.checklist {
                 guard validString(section.id), validString(section.title) else { throw MobilePackageError.invalidEnvelope }
-                let itemIDs = Set(section.items.map(\.id))
-                guard itemIDs.count == section.items.count else { throw MobilePackageError.invalidEnvelope }
-                for item in section.items { guard validString(item.id), validString(item.title), item.explanation.map(validString) ?? true, item.baseRevision >= 0 else { throw MobilePackageError.invalidEnvelope } }
+                for item in section.items {
+                    guard briefingItemIDs.insert(item.id).inserted,
+                          validString(item.id), validString(item.title), item.explanation.map(validString) ?? true, item.baseRevision >= 0 else { throw MobilePackageError.invalidEnvelope }
+                }
             }
         }
         let noteIDs = Set(snapshot.notes.map(\.id))
         guard noteIDs.count == snapshot.notes.count else { throw MobilePackageError.invalidEnvelope }
+        for briefing in snapshot.briefings { guard noteIDs.contains(briefing.noteID) else { throw MobilePackageError.invalidEnvelope } }
         for note in snapshot.notes { guard validString(note.id), validString(note.ownerID), validString(note.text), note.baseRevision >= 0, note.updatedAt.timeIntervalSince1970.isFinite else { throw MobilePackageError.invalidEnvelope } }
     }
 
@@ -513,14 +672,84 @@ public actor MobilePackageService {
         identity(of: url, fileManager: fileManager)?.size
     }
 
+    private static func fileSize(at directoryFD: Int32, name: String) -> Int64? {
+        var status = stat()
+        let result = name.withCString { Darwin.fstatat(directoryFD, $0, &status, AT_SYMLINK_NOFOLLOW) }
+        guard result == 0 else { return nil }
+        let mode = status.st_mode & S_IFMT
+        guard mode == S_IFREG else { return nil }
+        return Int64(status.st_size)
+    }
+
+    private static func isRegular(at directoryFD: Int32, name: String) -> Bool {
+        var status = stat()
+        let result = name.withCString { Darwin.fstatat(directoryFD, $0, &status, AT_SYMLINK_NOFOLLOW) }
+        return result == 0 && status.st_mode & S_IFMT == S_IFREG
+    }
+
+    private static func readRegularFile(at directoryFD: Int32, name: String, maximumByteCount: Int64) throws -> Data {
+        let descriptor = name.withCString { Darwin.openat(directoryFD, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
+        guard descriptor >= 0 else { throw MobilePackageError.malformedPackage }
+        defer { Darwin.close(descriptor) }
+        var before = stat()
+        guard Darwin.fstat(descriptor, &before) == 0,
+              before.st_mode & S_IFMT == S_IFREG,
+              before.st_nlink == 1,
+              before.st_size >= 0,
+              Int64(before.st_size) <= maximumByteCount,
+              before.st_size <= Int64(Int.max) else {
+            throw MobilePackageError.malformedPackage
+        }
+        var bytes = [UInt8](repeating: 0, count: Int(before.st_size))
+        var offset = 0
+        while offset < bytes.count {
+            let remaining = bytes.count - offset
+            let count = bytes.withUnsafeMutableBytes { buffer in
+                Darwin.read(descriptor, buffer.baseAddress!.advanced(by: offset), remaining)
+            }
+            guard count > 0 else { throw MobilePackageError.malformedPackage }
+            offset += count
+        }
+        var after = stat()
+        guard Darwin.fstat(descriptor, &after) == 0,
+              after.st_dev == before.st_dev,
+              after.st_ino == before.st_ino,
+              after.st_mode & S_IFMT == S_IFREG,
+              after.st_nlink == 1,
+              after.st_size == before.st_size else {
+            throw MobilePackageError.malformedPackage
+        }
+        return Data(bytes)
+    }
+
     private static func isDirectory(_ url: URL, fileManager: FileManager) -> Bool {
         guard let identity = identity(of: url, fileManager: fileManager) else { return false }
         return identity.type == .typeDirectory
     }
 
     private static func removeTemporaryIfOwned(_ url: URL, identity expectedIdentity: FileIdentity?, fileManager: FileManager) {
-        guard let expectedIdentity, let current = Self.identity(of: url, fileManager: fileManager), current == expectedIdentity else { return }
-        try? fileManager.removeItem(at: url)
+        guard let expectedIdentity else { return }
+        let parent = url.deletingLastPathComponent()
+        let parentFD = parent.path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+        guard parentFD >= 0 else { return }
+        defer { Darwin.close(parentFD) }
+        let childFD = url.lastPathComponent.withCString { Darwin.openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+        guard childFD >= 0 else { return }
+        defer { Darwin.close(childFD) }
+        var status = stat()
+        guard Darwin.fstat(childFD, &status) == 0,
+              status.st_dev == Int32(truncatingIfNeeded: expectedIdentity.device),
+              status.st_ino == expectedIdentity.inode,
+              status.st_mode & S_IFMT == S_IFDIR else { return }
+        for child in [Self.manifestFileName, Self.encryptedPayloadFileName] {
+            _ = child.withCString { Darwin.unlinkat(childFD, $0, 0) }
+        }
+        _ = url.lastPathComponent.withCString { Darwin.unlinkat(parentFD, $0, AT_REMOVEDIR) }
+    }
+
+    private static func sameStableIdentity(_ lhs: FileIdentity?, _ rhs: FileIdentity?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return lhs.device == rhs.device && lhs.inode == rhs.inode && lhs.type == rhs.type
     }
 
     private static func publishExclusively(from temporary: URL, to destination: URL) throws {
