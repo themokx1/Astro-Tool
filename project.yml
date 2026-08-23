@@ -3,6 +3,7 @@ name: AstroTool
 options:
   deploymentTarget:
     macOS: "26.0"
+    iOS: "26.0"
   createIntermediateGroups: true
 
 packages:
@@ -50,6 +51,69 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: AstroTool
 
+  AstroToolMobile:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/AstroToolMobile
+    dependencies:
+      - package: AstroToolPackage
+        product: AstroMobileDomain
+      - package: AstroToolPackage
+        product: AstroMobileTransport
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.astrotool.mobile
+        PRODUCT_NAME: AstroToolMobile
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: AstroTool
+        CODE_SIGNING_ALLOWED: NO
+    info:
+      path: Sources/AstroToolMobile/Info.plist
+      properties:
+        NSCameraUsageDescription: "AstroTool uses the camera to scan the one-time key for a mobile package from your Mac."
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: AstroTool Mobile Package
+            CFBundleTypeRole: Viewer
+            LSItemContentTypes:
+              - io.github.themokx1.astrotool.mobile-snapshot
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: io.github.themokx1.astrotool.mobile-snapshot
+            UTTypeDescription: AstroTool Mobile Package
+            UTTypeConformsTo:
+              - com.apple.package
+              - public.content
+            UTTypeTagSpecification:
+              public.filename-extension: astromobile
+              public.mime-type: application/x-astrotool-mobile
+
+  AstroToolMobileTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/AstroToolMobileTests
+    dependencies:
+      - target: AstroToolMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.astrotool.mobile.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/AstroToolMobile.app/AstroToolMobile"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
+  AstroToolMobileUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests/AstroToolMobileUITests
+    dependencies:
+      - target: AstroToolMobile
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.astrotool.mobile.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: AstroToolMobile
+
 schemes:
   AstroTool:
     build:
@@ -59,3 +123,13 @@ schemes:
     test:
       targets:
         - AstroToolUITests
+  AstroToolMobile:
+    build:
+      targets:
+        AstroToolMobile: all
+        AstroToolMobileTests: [test]
+        AstroToolMobileUITests: [test]
+    test:
+      targets:
+        - AstroToolMobileTests
+        - AstroToolMobileUITests
