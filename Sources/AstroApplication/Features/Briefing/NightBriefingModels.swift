@@ -121,13 +121,46 @@ public struct BriefingChecklistItem: Codable, Equatable, Identifiable, Sendable 
     public var explanation: String?
     public var isVisible: Bool
     public var isBuiltIn: Bool
+    public var isCompleted: Bool
 
-    public init(id: String, title: String, explanation: String? = nil, isVisible: Bool = true, isBuiltIn: Bool = true) {
+    public init(
+        id: String,
+        title: String,
+        explanation: String? = nil,
+        isVisible: Bool = true,
+        isBuiltIn: Bool = true,
+        isCompleted: Bool = false
+    ) {
         self.id = id
         self.title = title
         self.explanation = explanation
         self.isVisible = isVisible
         self.isBuiltIn = isBuiltIn
+        self.isCompleted = isCompleted
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, explanation, isVisible, isBuiltIn, isCompleted
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        explanation = try container.decodeIfPresent(String.self, forKey: .explanation)
+        isVisible = try container.decode(Bool.self, forKey: .isVisible)
+        isBuiltIn = try container.decode(Bool.self, forKey: .isBuiltIn)
+        isCompleted = try container.decodeIfPresent(Bool.self, forKey: .isCompleted) ?? false
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(title, forKey: .title)
+        try container.encodeIfPresent(explanation, forKey: .explanation)
+        try container.encode(isVisible, forKey: .isVisible)
+        try container.encode(isBuiltIn, forKey: .isBuiltIn)
+        try container.encode(isCompleted, forKey: .isCompleted)
     }
 }
 

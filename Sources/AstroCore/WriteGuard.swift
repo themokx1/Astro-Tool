@@ -38,6 +38,39 @@ public struct WriteGuard: Sendable {
         root.appendingPathComponent(".astro_tool", isDirectory: true)
     }
 
+    /// Creates the one portable identity owned by AstroTool. The identity is
+    /// immutable: an existing equal UUID is reused, while a malformed or
+    /// different value is a hard conflict and is never replaced.
+    @discardableResult
+    public func createPortableLibraryIdentity(_ uuidString: String) throws -> URL {
+        guard let uuid = UUID(uuidString: uuidString) else {
+            throw AstroError.invalidInput("Portable library identity must be a valid UUID.")
+        }
+
+        let destination = toolDir
+            .appendingPathComponent("mobile", isDirectory: true)
+            .appendingPathComponent("library-id", isDirectory: false)
+        let fileManager = FileManager.default
+
+        if fileManager.fileExists(atPath: destination.path) {
+            guard let existingText = try? String(contentsOf: destination, encoding: .utf8),
+                  let existingUUID = UUID(uuidString: existingText.trimmingCharacters(in: .whitespacesAndNewlines))
+            else {
+                throw AstroError.invalidInput("The existing portable library identity is malformed.")
+            }
+            guard existingUUID == uuid else {
+                throw AstroError.invalidInput("The portable library identity cannot be replaced.")
+            }
+            return destination
+        }
+
+        try Self.classifyingPermissionErrors(path: destination.path) {
+            try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(uuid.uuidString.utf8).write(to: destination, options: .withoutOverwriting)
+        }
+        return destination
+    }
+
     /// The complete top-level scaffold of a new AstroTool library. The order
     /// is user-facing and stable: working areas first, shared calibration
     /// folders next, and the app-owned metadata area last.
