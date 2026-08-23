@@ -70,3 +70,26 @@ git diff --check                                       # passed
 ```
 
 The focused iOS XCTest invocation was attempted again and remains blocked by CoreSimulator: the available iOS 26.4 device is reported ineligible because the scheme's iOS 26.5 platform/runtime is not installed. No runtime result is claimed.
+
+## Fix round 3 — opaque preview lifecycle and staged-package ownership
+
+- Removed the public `allowExistingPreview` escape hatch. Authentication now returns an opaque `MobilePackagePreviewToken`; the store retries only with the token bound to the exact staged URL identity and key fingerprint. Manifest UUID alone cannot retrieve an authenticated cache, so a forged same-UUID package/key cannot reuse a prior preview.
+- `MobileLibraryStore` owns one `currentStagedPackage` and one pending authenticated preview. `receive(source:)` serially discards the prior exact owned child before staging the new one; discard, replacement, authentication failure, cancellation, validation failure, and successful import clear pending material and remove only the recorded device/inode-matching child. The app now passes only the new URL.
+- Import ordering is retryable: authentication and envelope validation happen before durable state, the durable state commit precedes service acknowledgement, and a pre-commit write failure retains the opaque authenticated token for a same-process retry. A successful durable commit remains authoritative if acknowledgement fails.
+- `state.json` is read first and is authoritative when present; legacy device/snapshot/queue/receipt mirrors are read only for a validated first migration. State validation now covers bounded collection/string sizes, finite/nonnegative numeric values, capture project/night references, briefing/note/checklist relationships, revisions, editability, queue kinds, queue references, and receipt/fingerprint semantics.
+- Parent-directory sync failure after atomic rename is exposed as a durability warning rather than a false failed import; all pre-rename failures preserve the old state. The atomic writer keeps unique temps, checked write/fsync/close, exact-byte reopen validation, rename, and post-rename cleanup semantics.
+- Scanner invalid/unavailable paths stop and dismiss the camera before showing the localized parent error. Background/cancel paths clear payload and staged bindings; post-import UI refreshes durable state even when task cancellation races the commit.
+- iOS signing remains Automatic with an empty `DEVELOPMENT_TEAM`; no iOS manual identity or project-wide no-signing setting is emitted. Existing macOS-only signing fixture settings remain unchanged for regression compatibility.
+
+Round-3 verification (fresh retained logs):
+
+```text
+xcodegen generate                                                        # passed
+xcodebuild build -target AstroToolMobile -configuration Release ...      # BUILD SUCCEEDED, arm64+x86_64, iphonesimulator26.5
+xcodebuild build -target AstroToolMobileTests -configuration Debug ...   # BUILD SUCCEEDED, arm64+x86_64, testability enabled
+xcodebuild build -target AstroToolMobileUITests -configuration Debug ... # BUILD SUCCEEDED, arm64+x86_64
+swift test --no-parallel                                                 # 3452 tests in 218 suites passed
+git diff --check                                                          # passed
+```
+
+Retained build/test logs: `/tmp/task5-round3-app.log`, `/tmp/task5-round3-unit.log`, `/tmp/task5-round3-ui.log`, `/tmp/task5-round3-mac-full-final.log`. A focused iOS test-runtime attempt remains unavailable on this host: CoreSimulator reports no matching device and iOS 26.5 is not installed. No runtime pass is claimed.

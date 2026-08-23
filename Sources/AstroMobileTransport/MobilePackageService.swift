@@ -52,6 +52,26 @@ public struct MobilePackageImportPreview: Equatable, Sendable {
     }
 }
 
+/// Opaque handle for an authenticated, retryable preview. Its identity is
+/// intentionally not the package UUID exposed by the manifest.
+public struct MobilePackagePreviewToken: Hashable, Sendable {
+    fileprivate let rawValue: UUID
+
+    fileprivate init(rawValue: UUID = UUID()) {
+        self.rawValue = rawValue
+    }
+}
+
+public struct MobilePackageAuthenticatedPreview: Sendable {
+    public let preview: MobilePackageImportPreview
+    public let token: MobilePackagePreviewToken
+
+    fileprivate init(preview: MobilePackageImportPreview, token: MobilePackagePreviewToken) {
+        self.preview = preview
+        self.token = token
+    }
+}
+
 public actor MobilePackageService {
     public static let manifestFileName = "manifest.json"
     public static let encryptedPayloadFileName = "encrypted-payload.bin"
@@ -88,6 +108,7 @@ public actor MobilePackageService {
     }
 
     private var stagedImports: [UUID: StagedImport] = [:]
+    private var packageTokens: [UUID: MobilePackagePreviewToken] = [:]
     private var consumedPackageIDs: Set<UUID> = []
     private var stagedImportBytes: Int64 = 0
     private let stagingDirectoryProvider: any MobilePackageStagingDirectoryProvider
@@ -212,9 +233,15 @@ public actor MobilePackageService {
 
     public func importPreview(
         from source: URL,
-        wrapping: MobilePackageKeyWrapping,
-        allowExistingPreview: Bool = false
+        wrapping: MobilePackageKeyWrapping
     ) throws -> MobilePackageImportPreview {
+        try authenticatePreview(from: source, wrapping: wrapping).preview
+    }
+
+    public func authenticatePreview(
+        from source: URL,
+        wrapping: MobilePackageKeyWrapping
+    ) throws -> MobilePackageAuthenticatedPreview {
         let fileManager = FileManager.default
         guard Self.isDirectory(source, fileManager: fileManager) else {
             if fileManager.fileExists(atPath: source.path) { throw MobilePackageError.malformedPackage }
@@ -256,10 +283,7 @@ public actor MobilePackageService {
         guard !consumedPackageIDs.contains(manifest.packageID) else {
             throw MobilePackageError.duplicatePackageID
         }
-        if let existing = stagedImports[manifest.packageID] {
-            guard allowExistingPreview else { throw MobilePackageError.duplicatePackageID }
-            return existing.preview
-        }
+        guard packageTokens[manifest.packageID] == nil else { throw MobilePackageError.duplicatePackageID }
 
         do {
             guard Self.isRegular(at: directoryFD, name: Self.encryptedPayloadFileName) else {
@@ -331,15 +355,24 @@ public actor MobilePackageService {
               stagedImportBytes <= Self.maximumStagedImportBytes - manifest.encryptedByteCount else {
             throw MobilePackageError.stagingFailed
         }
-        stagedImports[manifest.packageID] = StagedImport(envelope: envelope, preview: preview)
+        let token = MobilePackagePreviewToken()
+        stagedImports[token.rawValue] = StagedImport(envelope: envelope, preview: preview)
+        packageTokens[manifest.packageID] = token
         stagedImportBytes += manifest.encryptedByteCount
-        return preview
+        return MobilePackageAuthenticatedPreview(preview: preview, token: token)
     }
 
     /// Drops authenticated preview material staged only for review. The
     /// package remains eligible for a later re-preview with the same key.
     public func discardImportPreview(packageID: UUID) {
-        guard let staged = stagedImports.removeValue(forKey: packageID) else { return }
+        guard let token = packageTokens.removeValue(forKey: packageID),
+              let staged = stagedImports.removeValue(forKey: token.rawValue) else { return }
+        stagedImportBytes = max(0, stagedImportBytes - staged.preview.encryptedByteCount)
+    }
+
+    public func discardImportPreview(token: MobilePackagePreviewToken) {
+        guard let staged = stagedImports.removeValue(forKey: token.rawValue) else { return }
+        packageTokens = packageTokens.filter { $0.value != token }
         stagedImportBytes = max(0, stagedImportBytes - staged.preview.encryptedByteCount)
     }
 
@@ -347,21 +380,35 @@ public actor MobilePackageService {
     /// one-time package receipt. Consumers must validate local policy before
     /// calling `commitImport`.
     public func previewEnvelope(packageID: UUID) throws -> MobilePackageEnvelope? {
-        stagedImports[packageID]?.envelope
+        guard let token = packageTokens[packageID] else { return nil }
+        return stagedImports[token.rawValue]?.envelope
     }
 
     /// Returns the authenticated envelope without consuming the service
     /// preview. Store-level durable state must commit before acknowledgement.
     public func validatedEnvelope(packageID: UUID) throws -> MobilePackageEnvelope? {
-        stagedImports[packageID]?.envelope
+        guard let token = packageTokens[packageID] else { return nil }
+        return stagedImports[token.rawValue]?.envelope
+    }
+
+    public func validatedEnvelope(token: MobilePackagePreviewToken) throws -> MobilePackageEnvelope? {
+        stagedImports[token.rawValue]?.envelope
     }
 
     public func commitImport(packageID: UUID) throws -> MobilePackageEnvelope {
-        guard let staged = stagedImports.removeValue(forKey: packageID) else {
+        guard let token = packageTokens[packageID] else {
             throw MobilePackageError.duplicatePackageID
         }
+        return try commitImport(token: token)
+    }
+
+    public func commitImport(token: MobilePackagePreviewToken) throws -> MobilePackageEnvelope {
+        guard let staged = stagedImports.removeValue(forKey: token.rawValue) else {
+            throw MobilePackageError.duplicatePackageID
+        }
+        packageTokens = packageTokens.filter { $0.value != token }
         stagedImportBytes = max(0, stagedImportBytes - staged.preview.encryptedByteCount)
-        consumedPackageIDs.insert(packageID)
+        consumedPackageIDs.insert(staged.preview.packageID)
         return staged.envelope
     }
 

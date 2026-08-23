@@ -59,16 +59,24 @@ struct MobileRootView: View {
                 .accessibilityIdentifier("mobile-unlocking-scanner")
                 .task {
                     scanner.onPayload = { value in
+                        scanner.stop()
+                        showingScanner = false
                         do {
                             _ = try OneTimePackageKey(scanning: value)
                             keyPayload = value
-                            showingScanner = false
-                            scanner.stop()
                         } catch {
-                            message = "The scanned key is not valid. Scan the one-time key shown on your Mac."
+                            Task { @MainActor in
+                                message = "The scanned key is not valid. Scan the one-time key shown on your Mac."
+                            }
                         }
                     }
-                    do { try scanner.start() } catch { message = "Camera access is unavailable. Try again on an iPhone with camera access." }
+                    do { try scanner.start() } catch {
+                        scanner.stop()
+                        showingScanner = false
+                        Task { @MainActor in
+                            message = "Camera access is unavailable. Try again on an iPhone with camera access."
+                        }
+                    }
                 }
             }
         }
@@ -168,6 +176,7 @@ struct MobileRootView: View {
         snapshot = await store.activeSnapshot
         queuedChangeCount = await store.queuedChanges.count
         recoveryState = await store.recoveryState
+        stagedPackageURL = await store.stagedPackageURL
     }
 
     private func importPackage() {
@@ -178,17 +187,19 @@ struct MobileRootView: View {
             do {
                 try Task.checkCancellation()
                 try await store.importPackage(from: stagedPackageURL, keyPayload: payload, removeStagedSource: true)
-                try Task.checkCancellation()
+                let current = await store.stagedPackageURL
                 await MainActor.run {
-                    self.stagedPackageURL = nil
+                    self.stagedPackageURL = current
                     self.message = nil
                     self.importTask = nil
                 }
                 await refresh()
             } catch {
+                let current = await store.stagedPackageURL
+                await refresh()
                 await MainActor.run {
-                    guard !Task.isCancelled else { return }
-                    self.message = "The package could not be imported. Check the key and try again."
+                    self.stagedPackageURL = current
+                    if !Task.isCancelled { self.message = "The package could not be imported. Check the key and try again." }
                     self.importTask = nil
                 }
             }
@@ -196,10 +207,10 @@ struct MobileRootView: View {
     }
 
     private func discardStagedPackage() {
-        guard let stagedPackageURL else { return }
+        guard stagedPackageURL != nil else { return }
         importTask?.cancel()
         Task {
-            await store.discardStagedPackage(at: stagedPackageURL)
+            await store.discardCurrentStagedPackage()
             await MainActor.run {
                 self.stagedPackageURL = nil
                 self.keyPayload = ""

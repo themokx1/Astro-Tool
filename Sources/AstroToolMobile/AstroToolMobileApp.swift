@@ -35,10 +35,12 @@ struct AstroToolMobileApp: App {
         Task {
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             do {
-                let staged = try await store.replaceStagedPackage(previous: stagedPackageURL, from: url)
-                await MainActor.run { stagedPackageURL = staged }
+                _ = try await store.receive(source: url)
+                let current = await store.stagedPackageURL
+                await MainActor.run { stagedPackageURL = current }
             } catch {
-                await MainActor.run { stagedPackageURL = nil }
+                let current = await store.stagedPackageURL
+                await MainActor.run { stagedPackageURL = current }
             }
         }
     }
