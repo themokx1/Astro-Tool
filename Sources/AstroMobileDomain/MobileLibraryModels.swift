@@ -9,16 +9,67 @@ public struct PortableLibraryID: Codable, Equatable, Hashable, Sendable {
 }
 
 public enum MobileJSON {
+    private static func iso8601Formatter() -> ISO8601DateFormatter {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withDashSeparatorInDate, .withColonSeparatorInTime]
+        return formatter
+    }
+
+    private static func string(from date: Date) -> String {
+        let seconds = date.timeIntervalSince1970
+        let wholeSeconds = floor(seconds)
+        let fraction = seconds - wholeSeconds
+        let base = iso8601Formatter().string(from: Date(timeIntervalSince1970: wholeSeconds))
+        let digits = String(
+            format: "%.17f",
+            locale: Locale(identifier: "en_US_POSIX"),
+            fraction
+        ).dropFirst(2)
+        return base.replacingOccurrences(of: "Z", with: ".\(digits)Z")
+    }
+
+    private static func date(from value: String) -> Date? {
+        guard let timeSeparator = value.firstIndex(of: "T"),
+              let fractionSeparator = value[timeSeparator...].firstIndex(of: ".") else {
+            return iso8601Formatter().date(from: value)
+        }
+
+        let timezoneStart = value[fractionSeparator...].firstIndex(where: { $0 == "Z" || $0 == "+" || $0 == "-" })
+        guard let timezoneStart else { return nil }
+        let fractionStart = value.index(after: fractionSeparator)
+        let fractionDigits = String(value[fractionStart..<timezoneStart])
+        guard !fractionDigits.isEmpty, fractionDigits.allSatisfy(\.isNumber),
+              let fraction = Double("0.\(fractionDigits)") else { return nil }
+
+        var baseValue = value
+        baseValue.removeSubrange(fractionSeparator..<timezoneStart)
+        guard let baseDate = iso8601Formatter().date(from: baseValue) else { return nil }
+        return Date(timeIntervalSince1970: baseDate.timeIntervalSince1970 + fraction)
+    }
+
     public static var encoder: JSONEncoder {
         let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+        encoder.dateEncodingStrategy = .custom { date, encoder in
+            var container = encoder.singleValueContainer()
+            try container.encode(string(from: date))
+        }
         encoder.outputFormatting = [.sortedKeys]
         return encoder
     }
 
     public static var decoder: JSONDecoder {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            guard let date = date(from: value) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Expected an ISO-8601 date with an optional fractional second"
+                )
+            }
+            return date
+        }
         return decoder
     }
 }
