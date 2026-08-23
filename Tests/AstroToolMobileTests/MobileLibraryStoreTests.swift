@@ -203,6 +203,58 @@ import Testing
     }
 }
 
+@Test func importingNewSnapshotPreservesQueuedChangesForRemovedRecords() async throws {
+    let libraryID = UUID()
+    let fixture = try MobileStoreFixture(snapshotRevision: 1, libraryID: libraryID)
+    try await fixture.store.editNote(id: "night-note", text: "Keep this field note")
+    try await fixture.store.toggleChecklistItem(briefingID: fixture.briefingID, itemID: "focus", isCompleted: true)
+    let queueBefore = await fixture.store.queuedChanges
+
+    // The Mac may legitimately replace briefing records while the phone is
+    // offline. Those edits remain return-package conflict candidates, not
+    // malformed local state.
+    let incoming = try MobileStoreFixture(
+        snapshotRevision: 2,
+        libraryID: libraryID,
+        noteID: "replacement-note",
+        checklistItemID: "replacement-focus"
+    )
+    let key = OneTimePackageKey()
+    let packageURL = fixture.rootURL.appendingPathComponent("replacement.astromobile", isDirectory: true)
+    _ = try await MobilePackageService().export(
+        MobilePackageEnvelope(snapshot: incoming.snapshot, changes: [], acknowledgedChangeIDs: []),
+        to: packageURL,
+        wrapping: key
+    )
+
+    let staged = try await fixture.store.stagePackage(from: packageURL)
+    try await fixture.store.importPackage(from: staged, key: key, removeStagedSource: true)
+
+    #expect(await fixture.store.activeSnapshot?.revision == 2)
+    #expect(await fixture.store.queuedChanges == queueBefore)
+}
+
+@Test func persistedSnapshotRejectsDuplicateTargetsSectionsAndNestedExplosion() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
+    var snapshot = state["snapshot"] as! [String: Any]
+    var briefings = snapshot["briefings"] as! [[String: Any]]
+    var briefing = briefings[0]
+    let targetID = UUID().uuidString
+    briefing["targets"] = [
+        ["id": targetID, "name": "M31", "role": "primary", "start": "2026-08-23T00:00:00.00000000000000000Z", "end": "2026-08-23T01:00:00.00000000000000000Z", "warnings": []],
+        ["id": targetID, "name": "M42", "role": "secondary", "start": "2026-08-23T00:00:00.00000000000000000Z", "end": "2026-08-23T01:00:00.00000000000000000Z", "warnings": []]
+    ]
+    briefings[0] = briefing
+    snapshot["briefings"] = briefings
+    state["snapshot"] = snapshot
+    try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stateURL, options: .atomic)
+
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
 private final class MobileStoreFixture {
     let rootURL: URL
     let corruptPackageURL: URL
@@ -210,14 +262,13 @@ private final class MobileStoreFixture {
     let snapshot: MobileLibrarySnapshot
     let store: MobileLibraryStore
 
-    init(snapshotRevision: Int, libraryID: UUID? = nil) throws {
+    init(snapshotRevision: Int, libraryID: UUID? = nil, noteID: String = "night-note", checklistItemID: String = "focus") throws {
         rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("AstroToolMobileStore-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
 
         let projectID = UUID()
         let nightID = UUID()
         briefingID = UUID()
-        let noteID = "night-note"
         let snapshot = MobileLibrarySnapshot(
             schemaVersion: MobileLibrarySnapshot.currentSchemaVersion,
             libraryID: PortableLibraryID(rawValue: libraryID ?? UUID()),
@@ -234,7 +285,7 @@ private final class MobileStoreFixture {
                 nightDate: nil,
                 readiness: "ready",
                 targets: [],
-                checklist: [MobileChecklistSection(id: "basics", title: "Basics", items: [MobileChecklistItem(id: "focus", title: "Focus", explanation: nil, isCompleted: false, baseRevision: 0)])],
+                checklist: [MobileChecklistSection(id: "basics", title: "Basics", items: [MobileChecklistItem(id: checklistItemID, title: "Focus", explanation: nil, isCompleted: false, baseRevision: 0)])],
                 noteID: noteID
             )],
             notes: [MobileNote(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_700_000_002), isEditableOnPhone: true)]

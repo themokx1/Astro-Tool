@@ -55,9 +55,14 @@ public struct MobilePackageImportPreview: Equatable, Sendable {
 /// Opaque handle for an authenticated, retryable preview. Its identity is
 /// intentionally not the package UUID exposed by the manifest.
 public struct MobilePackagePreviewToken: Hashable, Sendable {
+    /// Tokens are capabilities, not package identifiers.  Binding a token to
+    /// its creating actor prevents a handle from one service instance being
+    /// replayed against another one.
+    fileprivate let serviceID: UUID
     fileprivate let rawValue: UUID
 
-    fileprivate init(rawValue: UUID = UUID()) {
+    fileprivate init(serviceID: UUID, rawValue: UUID = UUID()) {
+        self.serviceID = serviceID
         self.rawValue = rawValue
     }
 }
@@ -114,6 +119,7 @@ public actor MobilePackageService {
     private let stagingDirectoryProvider: any MobilePackageStagingDirectoryProvider
     private let testingExportStep: @Sendable (MobilePackageExportTestStep, URL) -> Void
     private let testingDirectoryDuplicate: @Sendable (Int32) -> Int32
+    private let serviceID = UUID()
 
     public init() {
         self.stagingDirectoryProvider = SystemStagingDirectoryProvider()
@@ -235,7 +241,13 @@ public actor MobilePackageService {
         from source: URL,
         wrapping: MobilePackageKeyWrapping
     ) throws -> MobilePackageImportPreview {
-        try authenticatePreview(from: source, wrapping: wrapping).preview
+        // This compatibility preview exposes only the summarized metadata and
+        // intentionally leaves no decrypted cache behind.  Code that needs
+        // authenticated contents must retain the opaque capability returned
+        // by `authenticatePreview`.
+        let authenticated = try authenticatePreview(from: source, wrapping: wrapping)
+        discardImportPreview(token: authenticated.token)
+        return authenticated.preview
     }
 
     public func authenticatePreview(
@@ -355,7 +367,7 @@ public actor MobilePackageService {
               stagedImportBytes <= Self.maximumStagedImportBytes - manifest.encryptedByteCount else {
             throw MobilePackageError.stagingFailed
         }
-        let token = MobilePackagePreviewToken()
+        let token = MobilePackagePreviewToken(serviceID: serviceID)
         stagedImports[token.rawValue] = StagedImport(envelope: envelope, preview: preview)
         packageTokens[manifest.packageID] = token
         stagedImportBytes += manifest.encryptedByteCount
@@ -364,45 +376,24 @@ public actor MobilePackageService {
 
     /// Drops authenticated preview material staged only for review. The
     /// package remains eligible for a later re-preview with the same key.
-    public func discardImportPreview(packageID: UUID) {
-        guard let token = packageTokens.removeValue(forKey: packageID),
-              let staged = stagedImports.removeValue(forKey: token.rawValue) else { return }
-        stagedImportBytes = max(0, stagedImportBytes - staged.preview.encryptedByteCount)
-    }
-
     public func discardImportPreview(token: MobilePackagePreviewToken) {
+        guard token.serviceID == serviceID else { return }
         guard let staged = stagedImports.removeValue(forKey: token.rawValue) else { return }
         packageTokens = packageTokens.filter { $0.value != token }
         stagedImportBytes = max(0, stagedImportBytes - staged.preview.encryptedByteCount)
     }
 
-    /// Returns the already-authenticated envelope without consuming its
-    /// one-time package receipt. Consumers must validate local policy before
-    /// calling `commitImport`.
-    public func previewEnvelope(packageID: UUID) throws -> MobilePackageEnvelope? {
-        guard let token = packageTokens[packageID] else { return nil }
-        return stagedImports[token.rawValue]?.envelope
-    }
-
     /// Returns the authenticated envelope without consuming the service
     /// preview. Store-level durable state must commit before acknowledgement.
-    public func validatedEnvelope(packageID: UUID) throws -> MobilePackageEnvelope? {
-        guard let token = packageTokens[packageID] else { return nil }
-        return stagedImports[token.rawValue]?.envelope
-    }
-
     public func validatedEnvelope(token: MobilePackagePreviewToken) throws -> MobilePackageEnvelope? {
-        stagedImports[token.rawValue]?.envelope
-    }
-
-    public func commitImport(packageID: UUID) throws -> MobilePackageEnvelope {
-        guard let token = packageTokens[packageID] else {
-            throw MobilePackageError.duplicatePackageID
-        }
-        return try commitImport(token: token)
+        guard token.serviceID == serviceID else { return nil }
+        return stagedImports[token.rawValue]?.envelope
     }
 
     public func commitImport(token: MobilePackagePreviewToken) throws -> MobilePackageEnvelope {
+        guard token.serviceID == serviceID else {
+            throw MobilePackageError.duplicatePackageID
+        }
         guard let staged = stagedImports.removeValue(forKey: token.rawValue) else {
             throw MobilePackageError.duplicatePackageID
         }
@@ -810,13 +801,18 @@ public actor MobilePackageService {
             guard briefing.revision >= 0, briefing.savedAt.timeIntervalSince1970.isFinite, briefing.nightDate?.timeIntervalSince1970.isFinite ?? true,
                   validString(briefing.readiness), validString(briefing.noteID) else { throw MobilePackageError.invalidEnvelope }
             let targetIDs = Set(briefing.targets.map(\.id))
-            guard targetIDs.count == briefing.targets.count else { throw MobilePackageError.invalidEnvelope }
-            for target in briefing.targets { guard validString(target.name), validString(target.role), target.start.timeIntervalSince1970.isFinite, target.end.timeIntervalSince1970.isFinite, target.end >= target.start, target.warnings.allSatisfy(validString) else { throw MobilePackageError.invalidEnvelope } }
+            guard briefing.targets.count <= maximumCollectionCount,
+                  targetIDs.count == briefing.targets.count else { throw MobilePackageError.invalidEnvelope }
+            for target in briefing.targets {
+                guard validString(target.name), validString(target.role), target.start.timeIntervalSince1970.isFinite, target.end.timeIntervalSince1970.isFinite, target.end >= target.start,
+                      target.warnings.count <= maximumCollectionCount, target.warnings.allSatisfy(validString) else { throw MobilePackageError.invalidEnvelope }
+            }
             let sectionIDs = Set(briefing.checklist.map(\.id))
-            guard sectionIDs.count == briefing.checklist.count else { throw MobilePackageError.invalidEnvelope }
+            guard briefing.checklist.count <= maximumCollectionCount,
+                  sectionIDs.count == briefing.checklist.count else { throw MobilePackageError.invalidEnvelope }
             var briefingItemIDs = Set<String>()
             for section in briefing.checklist {
-                guard validString(section.id), validString(section.title) else { throw MobilePackageError.invalidEnvelope }
+                guard validString(section.id), validString(section.title), section.items.count <= maximumCollectionCount else { throw MobilePackageError.invalidEnvelope }
                 for item in section.items {
                     guard briefingItemIDs.insert(item.id).inserted,
                           validString(item.id), validString(item.title), item.explanation.map(validString) ?? true, item.baseRevision >= 0 else { throw MobilePackageError.invalidEnvelope }

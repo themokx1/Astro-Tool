@@ -101,7 +101,7 @@ public actor MobileLibraryStore {
         self.recoveryState = initial.recoveryState
         self.consumedPackageIDs = initial.consumedPackageIDs
         self.keyFingerprints = initial.keyFingerprints
-        self.durabilityWarning = false
+        self.durabilityWarning = initial.durabilityWarning
     }
 
     init(applicationSupportURL: URL, packageService: MobilePackageService, testingBeforeStateCommit: @escaping @Sendable () throws -> Void) {
@@ -123,7 +123,7 @@ public actor MobileLibraryStore {
         self.recoveryState = initial.recoveryState
         self.consumedPackageIDs = initial.consumedPackageIDs
         self.keyFingerprints = initial.keyFingerprints
-        self.durabilityWarning = false
+        self.durabilityWarning = initial.durabilityWarning
     }
 
     /// Compatibility spelling for callers that use the shorter root label.
@@ -487,6 +487,7 @@ public actor MobileLibraryStore {
         queuedChanges = state.queue
         deviceID = state.deviceID
         recoveryState = state.recoveryState
+        durabilityWarning = state.durabilityWarning
         consumedPackageIDs = state.consumedPackageIDs
         keyFingerprints = state.keyFingerprints
     }
@@ -498,6 +499,17 @@ public actor MobileLibraryStore {
         let recoveryState: MobileLibraryStoreRecoveryState
         let consumedPackageIDs: Set<UUID>
         let keyFingerprints: [String: UUID]
+        let durabilityWarning: Bool
+
+        init(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], deviceID: UUID?, recoveryState: MobileLibraryStoreRecoveryState, consumedPackageIDs: Set<UUID>, keyFingerprints: [String: UUID], durabilityWarning: Bool = false) {
+            self.snapshot = snapshot
+            self.queue = queue
+            self.deviceID = deviceID
+            self.recoveryState = recoveryState
+            self.consumedPackageIDs = consumedPackageIDs
+            self.keyFingerprints = keyFingerprints
+            self.durabilityWarning = durabilityWarning
+        }
     }
 
     private struct PersistedState: Codable {
@@ -506,6 +518,28 @@ public actor MobileLibraryStore {
         let deviceID: UUID?
         let consumedPackageIDs: [UUID]
         let keyFingerprints: [String: UUID]
+        let durabilityWarning: Bool
+
+        init(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], deviceID: UUID?, consumedPackageIDs: [UUID], keyFingerprints: [String: UUID], durabilityWarning: Bool = false) {
+            self.snapshot = snapshot
+            self.queue = queue
+            self.deviceID = deviceID
+            self.consumedPackageIDs = consumedPackageIDs
+            self.keyFingerprints = keyFingerprints
+            self.durabilityWarning = durabilityWarning
+        }
+
+        private enum CodingKeys: String, CodingKey { case snapshot, queue, deviceID, consumedPackageIDs, keyFingerprints, durabilityWarning }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            snapshot = try values.decodeIfPresent(MobileLibrarySnapshot.self, forKey: .snapshot)
+            queue = try values.decode([MobileChange].self, forKey: .queue)
+            deviceID = try values.decodeIfPresent(UUID.self, forKey: .deviceID)
+            consumedPackageIDs = try values.decode([UUID].self, forKey: .consumedPackageIDs)
+            keyFingerprints = try values.decode([String: UUID].self, forKey: .keyFingerprints)
+            durabilityWarning = try values.decodeIfPresent(Bool.self, forKey: .durabilityWarning) ?? false
+        }
     }
 
     private struct PendingImport {
@@ -536,6 +570,7 @@ public actor MobileLibraryStore {
             }
             cleanupOwnedStagingDirectory(stagingDirectory, fileManager: fileManager)
             var deviceID: UUID? = fallbackDeviceID
+            var durabilityWarning = false
             var deviceError = false
             if fileManager.fileExists(atPath: stateURL.path) {
                 do {
@@ -544,7 +579,7 @@ public actor MobileLibraryStore {
                     // state.json is the sole authoritative contract once it
                     // exists. Legacy mirrors are never consulted, so a valid
                     // state can never be paired with silently stale files.
-                    let queueValid = (try? validateQueue(state.queue, snapshot: state.snapshot)) != nil
+                    let queueValid = (try? validateQueue(state.queue)) != nil
                     let receiptsValid = Set(state.consumedPackageIDs).count == state.consumedPackageIDs.count
                     let fingerprintsValid = (try? validateKeyFingerprints(state.keyFingerprints, boundTo: Set(state.consumedPackageIDs))) != nil
                     let recovery: MobileLibraryStoreRecoveryState
@@ -558,7 +593,7 @@ public actor MobileLibraryStore {
                     } else {
                         recovery = .ready
                     }
-                    return BootstrapState(snapshot: state.snapshot, queue: queue, deviceID: state.deviceID, recoveryState: recovery, consumedPackageIDs: receiptsValid ? Set(state.consumedPackageIDs) : [], keyFingerprints: fingerprintsValid ? state.keyFingerprints : [:])
+                    return BootstrapState(snapshot: state.snapshot, queue: queue, deviceID: state.deviceID, recoveryState: recovery, consumedPackageIDs: receiptsValid ? Set(state.consumedPackageIDs) : [], keyFingerprints: fingerprintsValid ? state.keyFingerprints : [:], durabilityWarning: state.durabilityWarning)
                 } catch {
                     return BootstrapState(snapshot: nil, queue: [], deviceID: nil, recoveryState: .invalidSnapshot, consumedPackageIDs: [], keyFingerprints: [:])
                 }
@@ -572,7 +607,7 @@ public actor MobileLibraryStore {
                 deviceID = nil
                 deviceError = true
             } else if let deviceID {
-                try durableWrite(Data(deviceID.uuidString.utf8), to: deviceURL)
+                durabilityWarning = try durableWrite(Data(deviceID.uuidString.utf8), to: deviceURL)
             }
             var snapshot: MobileLibrarySnapshot?
             var snapshotError = false
@@ -588,7 +623,7 @@ public actor MobileLibraryStore {
             if fileManager.fileExists(atPath: queueURL.path) {
                 do {
                     let decoded = try MobileJSON.decoder.decode([MobileChange].self, from: Data(contentsOf: queueURL))
-                    try validateQueue(decoded, snapshot: snapshot)
+                    try validateQueue(decoded)
                     queue = decoded
                 } catch { queueError = true }
             }
@@ -610,10 +645,10 @@ public actor MobileLibraryStore {
             let recovery: MobileLibraryStoreRecoveryState = deviceError ? .invalidDeviceID : (receiptsError ? .invalidReceipts : (snapshotError ? .invalidSnapshot : (queueError ? .invalidQueue : (snapshot == nil ? .empty : .ready))))
             let result = BootstrapState(snapshot: snapshot, queue: queue, deviceID: deviceError ? nil : deviceID, recoveryState: recovery, consumedPackageIDs: consumed, keyFingerprints: keys)
             if !fileManager.fileExists(atPath: stateURL.path), recovery == .empty || recovery == .ready,
-               let deviceID, let encoded = try? MobileJSON.encoder.encode(PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: consumed.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keys)) {
-                try durableWrite(encoded, to: stateURL)
+               let deviceID, let encoded = try? MobileJSON.encoder.encode(PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: consumed.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keys, durabilityWarning: durabilityWarning)) {
+                durabilityWarning = (try durableWrite(encoded, to: stateURL)) || durabilityWarning
             }
-            return result
+            return BootstrapState(snapshot: result.snapshot, queue: result.queue, deviceID: result.deviceID, recoveryState: result.recoveryState, consumedPackageIDs: result.consumedPackageIDs, keyFingerprints: result.keyFingerprints, durabilityWarning: durabilityWarning)
         } catch let error as MobileLibraryStoreError {
             return BootstrapState(snapshot: nil, queue: [], deviceID: fallbackDeviceID, recoveryState: error == .invalidSnapshot ? .invalidSnapshot : .invalidQueue, consumedPackageIDs: [], keyFingerprints: [:])
         } catch {
@@ -637,6 +672,11 @@ public actor MobileLibraryStore {
               snapshot.captures.count <= MobilePackageService.maximumCollectionCount,
               snapshot.briefings.count <= MobilePackageService.maximumCollectionCount,
               snapshot.notes.count <= MobilePackageService.maximumCollectionCount else { throw MobileLibraryStoreError.invalidSnapshot }
+        let nestedRecordCount = snapshot.projects.count + snapshot.nights.count + snapshot.captures.count + snapshot.briefings.count + snapshot.notes.count
+            + snapshot.briefings.reduce(0) { partial, briefing in
+                partial + briefing.targets.count + briefing.checklist.count + briefing.checklist.reduce(0) { $0 + $1.items.count }
+            }
+        guard nestedRecordCount <= MobilePackageService.maximumTotalNestedRecords else { throw MobileLibraryStoreError.invalidSnapshot }
         guard Set(snapshot.projects.map(\.id)).count == snapshot.projects.count,
               Set(snapshot.nights.map(\.id)).count == snapshot.nights.count,
               Set(snapshot.captures.map(\.id)).count == snapshot.captures.count,
@@ -662,14 +702,20 @@ public actor MobileLibraryStore {
                   briefing.nightDate.map({ $0.timeIntervalSince1970.isFinite }) ?? true,
                   validString(briefing.readiness), validString(briefing.noteID),
                   let note = noteMap[briefing.noteID], note.scope == .briefing, note.ownerID == briefing.id.uuidString else { throw MobileLibraryStoreError.invalidSnapshot }
-            guard Set(briefing.checklist.flatMap(\.items).map(\.id)).count == briefing.checklist.flatMap(\.items).count else { throw MobileLibraryStoreError.invalidSnapshot }
+            guard briefing.targets.count <= MobilePackageService.maximumCollectionCount,
+                  briefing.checklist.count <= MobilePackageService.maximumCollectionCount,
+                  Set(briefing.targets.map(\.id)).count == briefing.targets.count,
+                  Set(briefing.checklist.map(\.id)).count == briefing.checklist.count,
+                  Set(briefing.checklist.flatMap(\.items).map(\.id)).count == briefing.checklist.flatMap(\.items).count else { throw MobileLibraryStoreError.invalidSnapshot }
             for target in briefing.targets {
                 guard target.start.timeIntervalSince1970.isFinite, target.end.timeIntervalSince1970.isFinite,
                       target.end >= target.start, validString(target.name), validString(target.role),
+                      target.warnings.count <= MobilePackageService.maximumCollectionCount,
                       target.warnings.allSatisfy(validString) else { throw MobileLibraryStoreError.invalidSnapshot }
             }
             for section in briefing.checklist {
-                guard validString(section.id), validString(section.title) else { throw MobileLibraryStoreError.invalidSnapshot }
+                guard validString(section.id), validString(section.title),
+                      section.items.count <= MobilePackageService.maximumCollectionCount else { throw MobileLibraryStoreError.invalidSnapshot }
                 for item in section.items { guard validString(item.id), validString(item.title), item.explanation.map(validString) ?? true, isSafeRevision(item.baseRevision) else { throw MobileLibraryStoreError.invalidSnapshot } }
             }
         }
@@ -680,20 +726,20 @@ public actor MobileLibraryStore {
         value.utf8.count <= MobilePackageService.maximumStringByteCount
     }
 
-    private static func validateQueue(_ queue: [MobileChange], snapshot: MobileLibrarySnapshot?) throws {
+    /// Queue records may outlive the snapshot record they originally edited.
+    /// Task 7 resolves those conflicts when returning changes to the Mac; at
+    /// rest we validate only the change's own shape and bounds.
+    private static func validateQueue(_ queue: [MobileChange]) throws {
         guard queue.count <= MobilePackageService.maximumCollectionCount,
               Set(queue.map(changeID)).count == queue.count else { throw MobileLibraryStoreError.invalidQueue }
-        guard let snapshot else { guard queue.isEmpty else { throw MobileLibraryStoreError.invalidQueue }; return }
-        let notes = Dictionary(uniqueKeysWithValues: snapshot.notes.map { ($0.id, $0) })
-        let briefings = Dictionary(uniqueKeysWithValues: snapshot.briefings.map { ($0.id, $0) })
         for change in queue {
             switch change {
             case .noteRevision(let value):
                 guard validString(value.noteID), validString(value.ownerID), validString(value.text), isSafeRevision(value.baseRevision), value.createdAt.timeIntervalSince1970.isFinite,
-                      let note = notes[value.noteID], note.ownerID == value.ownerID, note.isEditableOnPhone else { throw MobileLibraryStoreError.invalidQueue }
+                      value.changeID != value.deviceID else { throw MobileLibraryStoreError.invalidQueue }
             case .checklistCompletion(let value):
                 guard validString(value.itemID), isSafeRevision(value.baseRevision), value.createdAt.timeIntervalSince1970.isFinite,
-                      let briefing = briefings[value.briefingID], briefing.checklist.flatMap(\.items).contains(where: { $0.id == value.itemID && $0.baseRevision == value.baseRevision }) else { throw MobileLibraryStoreError.invalidQueue }
+                      value.changeID != value.deviceID else { throw MobileLibraryStoreError.invalidQueue }
             }
         }
     }
@@ -730,7 +776,9 @@ public actor MobileLibraryStore {
         }
     }
 
-    private static func durableWrite(_ data: Data, to destination: URL) throws {
+    /// Returns whether the replacement committed but its parent directory
+    /// could not be synced. That is a warning, not a false rollback result.
+    private static func durableWrite(_ data: Data, to destination: URL) throws -> Bool {
         let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
         let descriptor = temporary.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR) }
         guard descriptor >= 0 else { throw MobileLibraryStoreError.persistenceFailed }
@@ -748,9 +796,10 @@ public actor MobileLibraryStore {
             guard try Data(contentsOf: temporary) == data else { throw MobileLibraryStoreError.persistenceFailed }
             guard Darwin.rename(temporary.path, destination.path) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
             let parentDescriptor = destination.deletingLastPathComponent().path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
-            guard parentDescriptor >= 0 else { return }
-            _ = Darwin.fsync(parentDescriptor)
-            _ = Darwin.close(parentDescriptor)
+            guard parentDescriptor >= 0 else { return true }
+            let syncFailed = Darwin.fsync(parentDescriptor) != 0
+            let closeFailed = Darwin.close(parentDescriptor) != 0
+            return syncFailed || closeFailed
         } catch {
             _ = Darwin.close(descriptor)
             try? FileManager.default.removeItem(at: temporary)
@@ -759,24 +808,29 @@ public actor MobileLibraryStore {
     }
 
     private func commitState(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], receipts: Set<UUID>, keyFingerprints: [String: UUID]) throws {
-        try Self.validateQueue(queue, snapshot: snapshot)
+        try Self.validateQueue(queue)
         guard let deviceID else { throw MobileLibraryStoreError.invalidDeviceID }
         try Self.validateKeyFingerprints(keyFingerprints, boundTo: receipts)
-        let state = PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: receipts.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keyFingerprints)
+        let state = PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: receipts.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keyFingerprints, durabilityWarning: durabilityWarning)
         try testingBeforeStateCommit()
-        try atomicWrite(state, to: stateURL)
+        if try atomicWrite(state, to: stateURL) {
+            // Rename already committed the new state. Keep a visible warning
+            // through the next successful state write rather than reporting a
+            // non-existent rollback.
+            durabilityWarning = true
+        }
     }
 
-    private func atomicWrite<T: Codable>(_ value: T, to destination: URL, validate: ((T) throws -> Void)? = nil) throws {
+    private func atomicWrite<T: Codable>(_ value: T, to destination: URL, validate: ((T) throws -> Void)? = nil) throws -> Bool {
         do {
             let data = try MobileJSON.encoder.encode(value)
             let decoded = try MobileJSON.decoder.decode(T.self, from: data)
             try validate?(decoded)
-            try writeRaw(data, to: destination)
+            return try writeRaw(data, to: destination)
         } catch let error as MobileLibraryStoreError { throw error } catch { throw MobileLibraryStoreError.persistenceFailed }
     }
 
-    private func writeRaw(_ data: Data, to destination: URL) throws {
+    private func writeRaw(_ data: Data, to destination: URL) throws -> Bool {
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
         let descriptor = temporary.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR) }
@@ -798,9 +852,10 @@ public actor MobileLibraryStore {
             let parentDescriptor = destination.deletingLastPathComponent().path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
             // The rename is already durable state from the store's point of
             // view. Parent sync is best-effort and reported as a warning.
-            guard parentDescriptor >= 0 else { durabilityWarning = true; return }
-            if Darwin.fsync(parentDescriptor) != 0 { durabilityWarning = true }
-            if Darwin.close(parentDescriptor) != 0 { durabilityWarning = true }
+            guard parentDescriptor >= 0 else { return true }
+            let syncFailed = Darwin.fsync(parentDescriptor) != 0
+            let closeFailed = Darwin.close(parentDescriptor) != 0
+            return syncFailed || closeFailed
         } catch {
             Darwin.close(descriptor)
             try? fileManager.removeItem(at: temporary)

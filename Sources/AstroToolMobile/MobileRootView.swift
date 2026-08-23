@@ -5,9 +5,11 @@ import AstroMobileTransport
 struct MobileRootView: View {
     let store: MobileLibraryStore
     @Binding private var stagedPackageURL: URL?
+    @Binding private var intakeMessage: String?
     @State private var snapshot: MobileLibrarySnapshot?
     @State private var queuedChangeCount = 0
     @State private var recoveryState: MobileLibraryStoreRecoveryState = .empty
+    @State private var durabilityWarning = false
     @State private var keyPayload = ""
     @State private var message: String?
     @State private var showingScanner = false
@@ -17,9 +19,10 @@ struct MobileRootView: View {
     @State private var importTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), scanner: any MobileQRScanner = CameraQRScanner(), fixtureMode: String? = nil, fixtureQRPayload: String? = nil) {
+    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), intakeMessage: Binding<String?> = .constant(nil), scanner: any MobileQRScanner = CameraQRScanner(), fixtureMode: String? = nil, fixtureQRPayload: String? = nil) {
         self.store = store
         _stagedPackageURL = stagedPackageURL
+        _intakeMessage = intakeMessage
         self.scanner = scanner
         self.fixtureMode = fixtureMode
         self.fixtureQRPayload = fixtureQRPayload
@@ -38,8 +41,19 @@ struct MobileRootView: View {
                     emptyState
                 }
             }
+            .safeAreaInset(edge: .top) {
+                if durabilityWarning {
+                    Label("The latest change was saved, but iPhone storage needs attention. Keep the app open and make a backup before the next import.", systemImage: "externaldrive.badge.exclamationmark")
+                        .font(.footnote)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(.yellow.opacity(0.2))
+                        .accessibilityIdentifier("mobile-durability-warning")
+                }
+            }
             .navigationTitle("AstroTool")
-            .task { await refresh(); if let fixtureQRPayload { keyPayload = fixtureQRPayload } }
+            .task { await refresh(); message = intakeMessage; if let fixtureQRPayload { keyPayload = fixtureQRPayload } }
+            .onChange(of: intakeMessage) { _, next in message = next }
             .onChange(of: stagedPackageURL) { _, _ in }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active {
@@ -176,6 +190,7 @@ struct MobileRootView: View {
         snapshot = await store.activeSnapshot
         queuedChangeCount = await store.queuedChanges.count
         recoveryState = await store.recoveryState
+        durabilityWarning = await store.durabilityWarning
         stagedPackageURL = await store.stagedPackageURL
     }
 

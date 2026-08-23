@@ -21,9 +21,9 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     let envelope = MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: [])
     let service = MobilePackageService()
     try await service.export(envelope, to: destination, wrapping: DeterministicWrapper())
-    let preview = try await service.importPreview(from: destination, wrapping: DeterministicWrapper())
-    #expect(preview.incomingChanges.isEmpty)
-    #expect(try await service.commitImport(packageID: preview.packageID) == envelope)
+    let authenticated = try await service.authenticatePreview(from: destination, wrapping: DeterministicWrapper())
+    #expect(authenticated.preview.incomingChanges.isEmpty)
+    #expect(try await service.commitImport(token: authenticated.token) == envelope)
 }
 
 @Test func exportReturnsPublishedManifestMetadata() async throws {
@@ -140,8 +140,8 @@ func cancellationBeforeExclusivePublicationLeavesNoDestination() async throws {
     let envelope = MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: [])
     let service = MobilePackageService()
     try await service.export(envelope, to: destination, wrapping: DeterministicWrapper())
-    let preview = try await service.importPreview(from: destination, wrapping: DeterministicWrapper())
-    #expect(try await service.commitImport(packageID: preview.packageID) == envelope)
+    let authenticated = try await service.authenticatePreview(from: destination, wrapping: DeterministicWrapper())
+    #expect(try await service.commitImport(token: authenticated.token) == envelope)
 }
 
 @Test func nestedUnknownAndLibraryIDFieldsFailClosed() async throws {
@@ -268,16 +268,33 @@ func cancellationBeforeExclusivePublicationLeavesNoDestination() async throws {
     let envelope = MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: [])
     let service = MobilePackageService()
     try await service.export(envelope, to: destination, wrapping: DeterministicWrapper())
-    let preview = try await service.importPreview(from: destination, wrapping: DeterministicWrapper())
+    let authenticated = try await service.authenticatePreview(from: destination, wrapping: DeterministicWrapper())
     let duplicatePreviewError = await errorFrom {
-        _ = try await service.importPreview(from: destination, wrapping: DeterministicWrapper())
+        _ = try await service.authenticatePreview(from: destination, wrapping: DeterministicWrapper())
     }
     #expect(duplicatePreviewError as? MobilePackageError == .duplicatePackageID)
-    _ = try await service.commitImport(packageID: preview.packageID)
+    _ = try await service.commitImport(token: authenticated.token)
     let duplicateCommitError = await errorFrom {
-        _ = try await service.commitImport(packageID: preview.packageID)
+        _ = try await service.commitImport(token: authenticated.token)
     }
     #expect(duplicateCommitError as? MobilePackageError == .duplicatePackageID)
+}
+
+@Test func previewCapabilityCannotBeUsedByAnotherServiceInstanceOrAfterCommit() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("capability.astromobile")
+    let envelope = MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: [])
+    try await MobilePackageService().export(envelope, to: destination, wrapping: DeterministicWrapper())
+    let owner = MobilePackageService()
+    let other = MobilePackageService()
+    let authenticated = try await owner.authenticatePreview(from: destination, wrapping: DeterministicWrapper())
+
+    #expect(try await other.validatedEnvelope(token: authenticated.token) == nil)
+    let wrongServiceError = await errorFrom { _ = try await other.commitImport(token: authenticated.token) }
+    #expect(wrongServiceError as? MobilePackageError == .duplicatePackageID)
+    #expect(try await owner.commitImport(token: authenticated.token) == envelope)
+    let consumedError = await errorFrom { _ = try await owner.commitImport(token: authenticated.token) }
+    #expect(consumedError as? MobilePackageError == .duplicatePackageID)
 }
 
 @Test func unknownEnvelopeFieldsAndFutureSnapshotSchemaFailClosed() async throws {
@@ -728,12 +745,12 @@ func cancellationBeforeExclusivePublicationLeavesNoDestination() async throws {
     try await MobilePackageService().export(envelope, to: destination, wrapping: DeterministicWrapper())
     let firstService = MobilePackageService()
     let secondService = MobilePackageService()
-    let first = try await firstService.importPreview(from: destination, wrapping: DeterministicWrapper())
-    let second = try await secondService.importPreview(from: destination, wrapping: DeterministicWrapper())
-    #expect(first.packageID == second.packageID)
-    _ = try await firstService.commitImport(packageID: first.packageID)
+    let first = try await firstService.authenticatePreview(from: destination, wrapping: DeterministicWrapper())
+    let second = try await secondService.authenticatePreview(from: destination, wrapping: DeterministicWrapper())
+    #expect(first.preview.packageID == second.preview.packageID)
+    _ = try await firstService.commitImport(token: first.token)
     let replayError = await errorFrom {
-        _ = try await firstService.commitImport(packageID: first.packageID)
+        _ = try await firstService.commitImport(token: first.token)
     }
     #expect(replayError as? MobilePackageError == .duplicatePackageID)
 }

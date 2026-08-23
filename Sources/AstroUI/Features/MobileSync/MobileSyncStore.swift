@@ -154,9 +154,10 @@ public final class MobileSyncStore {
                 try await packageService.importPreview(from: source, wrapping: key)
             }
         }
-        self.packageImportDiscard = packageImportDiscard ?? { packageID in
-            await packageService.discardImportPreview(packageID: packageID)
-        }
+        // `importPreview` intentionally releases its capability before
+        // returning its summary, so this Mac-side UI has no decrypted cache
+        // to discard by package ID.
+        self.packageImportDiscard = packageImportDiscard ?? { _ in }
     }
 
     public var canExport: Bool {

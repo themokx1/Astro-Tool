@@ -93,3 +93,20 @@ git diff --check                                                          # pass
 ```
 
 Retained build/test logs: `/tmp/task5-round3-app.log`, `/tmp/task5-round3-unit.log`, `/tmp/task5-round3-ui.log`, `/tmp/task5-round3-mac-full-final.log`. A focused iOS test-runtime attempt remains unavailable on this host: CoreSimulator reports no matching device and iOS 26.5 is not installed. No runtime pass is claimed.
+
+## Replacement fix — capability, queue, validation, durability, and intake
+
+- Removed the package-ID decrypted-cache operations. `MobilePackagePreviewToken` is now an opaque, service-instance-bound capability; only a token can read, commit, or discard authenticated material, and a committed token is single-use. The compatibility summary preview releases its token immediately. Mac Task 4 uses that summary-only flow and no longer tries to discard a cache by package ID.
+- Queue validation now checks typed intrinsic shape, IDs, finite timestamps, UTF-8 sizes, and revisions without requiring the next snapshot to retain the original note/checklist target. New snapshots therefore preserve queued offline edits byte-for-byte as Task 7 conflict candidates, while fresh edits continue to resolve only against the current snapshot.
+- Store and transport validation now both enforce unique briefing target/section/item IDs, bounded targets/sections/items/warnings, and the aggregate nested-record limit. Reload locks recovery rather than accepting semantic corruption.
+- Every initial-migration and normal state write uses checked file and parent-directory sync. A post-rename parent-sync problem preserves committed state, raises a visible localized durability warning, and carries that warning forward in the authoritative state document on the next successful write.
+- `--astrotool-mobile-ui-fixture imported` now builds an isolated, valid persisted mobile snapshot before the app store launches; the UI test exercises real library state plus the update surface. Document-intake failures (including unavailable security scope) now surface a localized recovery action instead of being silently swallowed.
+
+Replacement RED/GREEN evidence:
+
+```text
+xcodebuild build -target AstroToolMobileTests ...                 # BUILD SUCCEEDED (arm64 + x86_64)
+swift test --filter MobilePackageServiceTests --no-parallel       # 39 tests passed
+```
+
+The iOS runtime remains unavailable on this host, so the new iOS store/UI tests are compiled but not claimed as runtime-executed here. The retained concern is unchanged: run the focused mobile unit/UI journeys on an installed iOS 26.5 simulator or a Personal-Team device.
