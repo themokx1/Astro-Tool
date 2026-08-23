@@ -2776,6 +2776,9 @@
 "The package is being published safely. Please wait." = "A csomag biztonságos közzététele folyamatban van. Várj egy kicsit.";
 "Choose a new package name. Existing packages are never replaced." = "Válassz új csomagnevet. A meglévő csomagokat soha nem cseréljük le.";
 "Finishing the sealed package…" = "A lezárt csomag befejezése…";
+"Finishing safely" = "Biztonságos befejezés";
+"Cleaning up securely…" = "Biztonságos törlés…";
+"The package preview is being cleared before another action can start." = "A csomag előnézetét töröljük, mielőtt új művelet indulhat.";
 "That destination already exists. Choose a new name; AstroTool never overwrites it." = "Ez a célhely már létezik. Válassz új nevet; az AstroTool soha nem írja felül.";
 "This package could not be unlocked. Check the package and scan its code again." = "A csomag nem oldható fel. Ellenőrizd, majd olvasd be újra a kódját.";
 "This package is damaged or incomplete. Ask for a fresh package and try again." = "A csomag sérült vagy hiányos. Kérj új csomagot, és próbáld újra.";

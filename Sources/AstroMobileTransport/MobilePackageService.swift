@@ -121,6 +121,7 @@ public actor MobilePackageService {
         to destination: URL,
         wrapping: MobilePackageKeyWrapping
     ) throws -> MobilePackageManifest {
+        try Self.checkCancellation()
         try Self.validateEnvelope(envelope, forExport: true)
         let packageID = UUID()
         let keyMode: MobilePackageKeyMode = wrapping is OneTimePackageKey ? .oneTimeQR : .pairedDevice
@@ -159,6 +160,10 @@ public actor MobilePackageService {
         guard manifestData.count <= Self.maximumManifestByteCount else {
             throw MobilePackageError.invalidManifest
         }
+        // Return the exact representation that is persisted. Date decoding
+        // can round-trip a sub-second value differently from the in-memory
+        // Date, so the adapter and file always share one canonical manifest.
+        let persistedManifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: manifestData)
 
         let staging: PrivateStaging
         do {
@@ -170,8 +175,10 @@ public actor MobilePackageService {
             throw MobilePackageError.stagingFailed
         }
         defer { staging.finish() }
+        try Self.checkCancellation()
         testingExportStep(.beforeFirstFile, staging.url)
         try Self.writeFile(at: staging.descriptor, name: Self.encryptedPayloadFileName, data: combined)
+        try Self.checkCancellation()
         testingExportStep(.beforeSecondFile, staging.url)
         try Self.writeFile(at: staging.descriptor, name: Self.manifestFileName, data: manifestData)
         guard Self.sameStableIdentity(staging.identity, Self.identity(ofFD: staging.descriptor)) else {
@@ -196,7 +203,11 @@ public actor MobilePackageService {
             if (error as NSError).code == EEXIST { throw MobilePackageError.destinationExists }
             throw MobilePackageError.stagingFailed
         }
-        return manifest
+        return persistedManifest
+    }
+
+    private static func checkCancellation() throws {
+        guard !Task.isCancelled else { throw MobilePackageError.stagingFailed }
     }
 
     public func importPreview(
@@ -1119,6 +1130,7 @@ public actor MobilePackageService {
     ) throws {
         guard Darwin.fsync(staging.descriptor) == 0 else { throw MobilePackageError.stagingFailed }
         testingExportStep(.beforePublication, staging.url)
+        try checkCancellation()
         guard sameStableIdentity(staging.identity, identity(ofFD: staging.descriptor)),
               sameStableIdentity(staging.identity, identity(at: staging.parentDescriptor, name: staging.name)) else {
             throw MobilePackageError.stagingFailed

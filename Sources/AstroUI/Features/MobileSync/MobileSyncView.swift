@@ -59,8 +59,18 @@ public struct MobileSyncView: View {
         ) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
             importSource = url
+            importCode = ""
         }
-        .onDisappear { store.dismiss() }
+        .interactiveDismissDisabled(store.phase == .exporting || store.phase == .finishing)
+        .onChange(of: store.phase) { _, phase in
+            if phase == .importPreviewReady {
+                clearIncomingSelection()
+            }
+        }
+        .onDisappear {
+            clearIncomingSelection()
+            store.dismiss()
+        }
     }
 
     private var title: some View {
@@ -77,7 +87,7 @@ public struct MobileSyncView: View {
         HStack(alignment: .top, spacing: 0) {
             railNode(title: "Mac", detail: "Original photos", systemImage: "desktopcomputer", active: store.phase != .importPreviewReady)
             railLine
-            railNode(title: "Sealed package", detail: railMiddleDetail, systemImage: "lock.doc", active: store.phase == .exporting || store.phase == .exported)
+            railNode(title: "Sealed package", detail: railMiddleDetail, systemImage: "lock.doc", active: store.phase == .exporting || store.phase == .finishing || store.phase == .exported)
             railLine
             railNode(title: "iPhone", detail: railPhoneDetail, systemImage: "iphone", active: store.phase == .exported || store.phase == .importPreviewReady)
         }
@@ -90,6 +100,7 @@ public struct MobileSyncView: View {
         switch store.phase {
         case .exported: "Ready to share"
         case .exporting: "Being prepared"
+        case .finishing: "Finishing safely"
         default: "Only the chosen summary"
         }
     }
@@ -128,8 +139,8 @@ public struct MobileSyncView: View {
             idleContent
         case .previewing, .importing:
             VStack(spacing: AstroTokens.Spacing.standard) {
-                ProgressView(store.phase == .importing ? "Opening the package safely…" : "Preparing a safe preview…")
-                Button("Cancel", role: .cancel) { store.cancel() }
+                ProgressView(preparationProgressTitle)
+                Button("Cancel", role: .cancel) { cancelAndClear() }
                     .accessibilityIdentifier("v5.mobile-sync.cancel")
             }
             .frame(maxWidth: .infinity, minHeight: 180)
@@ -141,6 +152,8 @@ public struct MobileSyncView: View {
             exportedContent
         case .importPreviewReady:
             incomingContent
+        case .discarding:
+            discardingContent
         case .failed:
             failedContent
         }
@@ -151,7 +164,7 @@ public struct MobileSyncView: View {
             Text("Understand what will move").astroSectionTitle()
             Text("Projects, nights, image-set summaries, night plans, checklist items, and notes can move. Original photos and files never move.")
                 .astroBody()
-            HStack {
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
                 Button("Review what will move", systemImage: "eye") {
                     store.startPreview()
                 }
@@ -163,7 +176,7 @@ public struct MobileSyncView: View {
                 if let importSource {
                     VStack(alignment: .leading, spacing: 6) {
                         Label("Package selected", systemImage: "doc.badge.arrow.down")
-                        TextField("One-time unlock code", text: $importCode)
+                        SecureField("One-time unlock code", text: $importCode)
                             .textFieldStyle(.roundedBorder)
                             .accessibilityIdentifier("v5.mobile-sync.import-code")
                         Button("Preview package", systemImage: "eye") {
@@ -191,7 +204,7 @@ public struct MobileSyncView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("v5.mobile-sync.safety.promise")
             HStack {
-                Button("Cancel", role: .cancel) { store.cancel() }
+                Button("Cancel", role: .cancel) { cancelAndClear() }
                     .accessibilityIdentifier("v5.mobile-sync.cancel")
                 Spacer()
                 if let preview = store.preview, !preview.identity.alreadyExists, !store.isIdentityConfirmed {
@@ -262,11 +275,11 @@ public struct MobileSyncView: View {
 
     private var exportingContent: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
-            ProgressView(store.phase == .finishing ? "Finishing the sealed package…" : "Creating the sealed package…")
+            ProgressView(exportProgressTitle)
             Text("The original photos remain on the Mac while this package is prepared.")
                 .font(.callout).foregroundStyle(AstroTokens.Color.inkDim)
             if store.phase == .exporting {
-                Button("Cancel", role: .cancel) { store.cancel() }
+                Button("Cancel", role: .cancel) { cancelAndClear() }
                     .accessibilityIdentifier("v5.mobile-sync.cancel")
             } else {
                 Label("The package is being published safely. Please wait.", systemImage: "lock.shield")
@@ -274,6 +287,24 @@ public struct MobileSyncView: View {
             }
         }
         .astroRaisedSurface()
+    }
+
+    private var discardingContent: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            ProgressView("Cleaning up securely…")
+            Text("The package preview is being cleared before another action can start.")
+                .font(.callout)
+                .foregroundStyle(AstroTokens.Color.inkDim)
+        }
+        .astroRaisedSurface()
+    }
+
+    private var exportProgressTitle: LocalizedStringKey {
+        store.phase == .finishing ? "Finishing the sealed package…" : "Creating the sealed package…"
+    }
+
+    private var preparationProgressTitle: LocalizedStringKey {
+        store.phase == .importing ? "Opening the package safely…" : "Preparing a safe preview…"
     }
 
     private var exportedContent: some View {
@@ -300,7 +331,7 @@ public struct MobileSyncView: View {
                 }
                 .astroRaisedSurface()
             }
-            Button("Send another package") { store.reset() }
+            Button("Send another package") { resetAndClear() }
                 .accessibilityIdentifier("v5.mobile-sync.cancel")
         }
     }
@@ -317,7 +348,7 @@ public struct MobileSyncView: View {
                     .astroBody()
                     .foregroundStyle(AstroTokens.Color.attention)
             }
-            Button("Done") { store.cancel() }
+            Button("Done") { cancelAndClear() }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("v5.mobile-sync.cancel")
         }
@@ -335,11 +366,26 @@ public struct MobileSyncView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("v5.mobile-sync.error.retry")
-                Button("Cancel", role: .cancel) { store.cancel() }
+                Button("Cancel", role: .cancel) { cancelAndClear() }
                     .accessibilityIdentifier("v5.mobile-sync.cancel")
             }
         }
         .astroRaisedSurface()
+    }
+
+    private func clearIncomingSelection() {
+        importSource = nil
+        importCode = ""
+    }
+
+    private func cancelAndClear() {
+        clearIncomingSelection()
+        store.cancel()
+    }
+
+    private func resetAndClear() {
+        clearIncomingSelection()
+        store.reset()
     }
 }
 

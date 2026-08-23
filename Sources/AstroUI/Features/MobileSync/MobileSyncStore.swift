@@ -60,6 +60,7 @@ public enum MobileSyncPhase: String, Equatable, Sendable {
     case exported
     case importing
     case importPreviewReady
+    case discarding
     case failed
 }
 
@@ -113,6 +114,7 @@ public final class MobileSyncStore {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var cancellationRequested = false
     @ObservationIgnored private var operationTask: Task<Void, Never>?
+    @ObservationIgnored private var discardTask: Task<Void, Never>?
     @ObservationIgnored private var incomingSource: URL?
     @ObservationIgnored private var incomingQRPayload: String?
 
@@ -162,7 +164,7 @@ public final class MobileSyncStore {
     }
 
     public var isBusy: Bool {
-        phase == .previewing || phase == .exporting || phase == .finishing || phase == .importing
+        phase == .previewing || phase == .exporting || phase == .finishing || phase == .importing || phase == .discarding
     }
 
     public func startPreview() {
@@ -172,7 +174,9 @@ public final class MobileSyncStore {
 
     public func startIncomingPreview(from source: URL, qrPayload: String) {
         operationTask?.cancel()
+        let priorDiscard = discardTask
         operationTask = Task { [weak self] in
+            await priorDiscard?.value
             let accessed = source.startAccessingSecurityScopedResource()
             defer { if accessed { source.stopAccessingSecurityScopedResource() } }
             await self?.previewIncomingPackage(from: source, qrPayload: qrPayload)
@@ -240,6 +244,7 @@ public final class MobileSyncStore {
     }
 
     public func preview() async {
+        await discardIncomingPreviewNow()
         beginNewOperation(.previewing)
         guard let rootURL else {
             fail(.missingLibrary, message: String(localized: "Open an image library on the Mac before sending anything."))
@@ -347,6 +352,10 @@ public final class MobileSyncStore {
             phase = .exported
         } catch {
             guard token == generation else { return }
+            if cancellationRequested {
+                clearCancelledExport()
+                return
+            }
             let destinationExists = (error as? MobilePackageError) == .destinationExists
             fail(
                 destinationExists ? .destinationExists : .exportFailed,
@@ -386,11 +395,16 @@ public final class MobileSyncStore {
     public func cancel() {
         if phase == .exporting {
             cancellationRequested = true
+            operationTask?.cancel()
             phase = .finishing
             return
         }
         if phase == .finishing { return }
-        discardIncomingPreview()
+        if phase == .discarding { return }
+        if incomingPreview != nil {
+            startDiscardingIncomingPreview()
+            return
+        }
         operationTask?.cancel()
         operationTask = nil
         generation += 1
@@ -413,13 +427,16 @@ public final class MobileSyncStore {
     }
 
     public func reset() {
-        guard phase != .finishing else { return }
+        guard phase != .finishing, phase != .discarding else { return }
         dismiss()
     }
 
     public func dismiss() {
-        guard phase != .finishing else { return }
-        discardIncomingPreview()
+        guard phase != .finishing, phase != .discarding else { return }
+        if incomingPreview != nil {
+            startDiscardingIncomingPreview()
+            return
+        }
         generation += 1
         operationTask?.cancel()
         operationTask = nil
@@ -458,7 +475,6 @@ public final class MobileSyncStore {
         phase = next
         cancellationRequested = false
         if next != .importing {
-            discardIncomingPreview()
             preview = nil
             incomingPreview = nil
             exportedURL = nil
@@ -483,16 +499,66 @@ public final class MobileSyncStore {
         isSummaryConfirmed = false
     }
 
-    private func discardIncomingPreview() {
-        guard let packageID = incomingPreview?.packageID else { return }
-        let discard = packageImportDiscard
-        Task { await discard(packageID) }
-    }
-
     private func discardIncomingPreviewNow() async {
+        if let discardTask {
+            await discardTask.value
+            self.discardTask = nil
+        }
         guard let packageID = incomingPreview?.packageID else { return }
         await packageImportDiscard(packageID)
         incomingPreview = nil
+    }
+
+    private func startDiscardingIncomingPreview() {
+        guard let packageID = incomingPreview?.packageID else { return }
+        operationTask?.cancel()
+        operationTask = nil
+        generation += 1
+        phase = .discarding
+        incomingPreview = nil
+        incomingSource = nil
+        incomingQRPayload = nil
+        let priorDiscard = discardTask
+        let discard = packageImportDiscard
+        discardTask = Task { [weak self] in
+            await priorDiscard?.value
+            await discard(packageID)
+            await self?.finishDiscardingIncomingPreview()
+        }
+    }
+
+    private func finishDiscardingIncomingPreview() {
+        guard phase == .discarding else { return }
+        discardTask = nil
+        operationTask = nil
+        phase = .idle
+        preview = nil
+        exportedURL = nil
+        packageID = nil
+        encryptedByteCount = nil
+        exportedAt = nil
+        oneTimeQRPayload = nil
+        errorMessage = nil
+        failure = nil
+        isIdentityConfirmed = false
+        isSummaryConfirmed = false
+        didApplyIncomingChanges = false
+    }
+
+    private func clearCancelledExport() {
+        operationTask = nil
+        phase = .idle
+        preview = nil
+        exportedURL = nil
+        packageID = nil
+        encryptedByteCount = nil
+        exportedAt = nil
+        oneTimeQRPayload = nil
+        errorMessage = nil
+        failure = nil
+        isIdentityConfirmed = false
+        isSummaryConfirmed = false
+        cancellationRequested = false
     }
 
     private static func summary(for snapshot: MobileLibrarySnapshot) -> MobileSnapshotSummary {

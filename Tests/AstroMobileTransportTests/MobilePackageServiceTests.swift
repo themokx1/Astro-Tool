@@ -41,6 +41,7 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(result.packageID == stored.packageID)
     #expect(result.createdAt == stored.createdAt)
     #expect(result.encryptedByteCount == stored.encryptedByteCount)
+    #expect(try MobileJSON.encoder.encode(result) == Data(contentsOf: destination.appendingPathComponent("manifest.json")))
     #expect(result.encryptedByteCount > 0)
 }
 
@@ -55,9 +56,10 @@ func replacementDirectoryProbeDoesNotGuess() throws {
         appropriateFor: destination,
         create: true
     )
+    defer { try? FileManager.default.removeItem(at: replacement) }
     let finalExistsAfterLookup = FileManager.default.fileExists(atPath: destination.path)
     print("replacement-probe destination=\(destination.path) replacement=\(replacement.path) finalExists=\(finalExistsAfterLookup)")
-    #expect(!finalExistsAfterLookup)
+    #expect(FileManager.default.fileExists(atPath: replacement.path))
 }
 
 @Test("System staging is parent-anchored, fresh export publishes, and destination is absent before rename")
@@ -92,6 +94,32 @@ func exporterPlaceholderRemainsUntouched() async throws {
     }
     #expect(error as? MobilePackageError == .destinationExists)
     #expect(try Data(contentsOf: destination) == Data())
+}
+
+@Test("Cancelled export before exclusive publication leaves no destination")
+func cancellationBeforeExclusivePublicationLeavesNoDestination() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("cancelled.astromobile")
+    let probe = PublicationPause()
+    let service = MobilePackageService(stagingDirectoryProvider: TestStagingProvider(root: root.url), testingExportStep: { step, _ in
+        guard step == .beforePublication else { return }
+        probe.reached.signal()
+        probe.release.wait()
+    })
+    let task = Task {
+        try await service.export(
+            MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []),
+            to: destination,
+            wrapping: DeterministicWrapper()
+        )
+    }
+    await probe.reached.wait()
+    task.cancel()
+    probe.release.signal()
+    let error = await errorFrom { _ = try await task.value }
+    #expect(error as? MobilePackageError == .stagingFailed)
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: root.url.path).isEmpty)
 }
 
 @Test func composedSnapshotWithOmittedOptionalFieldsRoundTrips() async throws {
@@ -775,6 +803,39 @@ private func decodableNonCanonicalBase64(_ canonical: String) -> String? {
 
 private final class URLStore: @unchecked Sendable {
     var value: URL?
+}
+
+private final class PublicationPause: @unchecked Sendable {
+    let reached = AsyncSignal()
+    let release = DispatchSemaphore(value: 0)
+}
+
+private final class AsyncSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var signalled = false
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if signalled {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                waiters.append(continuation)
+                lock.unlock()
+            }
+        }
+    }
+
+    func signal() {
+        lock.lock()
+        signalled = true
+        let pending = waiters
+        waiters.removeAll()
+        lock.unlock()
+        pending.forEach { $0.resume() }
+    }
 }
 
 private final class Int32Store: @unchecked Sendable {

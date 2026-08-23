@@ -127,3 +127,49 @@ Final full verification after Phase 2:
 swift test --no-parallel
 Test run with 3448 tests in 218 suites passed after 100.311 seconds.
 ```
+
+## Review follow-up (round 3), Phase 1 root-cause evidence
+
+The previously flaky cancellation test was run 20 consecutive times with:
+
+```text
+for i in {1..20}; do swift test --filter cancellationWinsOverStaleAsyncResult; done
+20/20 passed; no hang reproduced in this run.
+```
+
+Code tracing still exposed two deterministic lifecycle defects before any fix:
+
+- `MobileSyncStore.cancel()` returns from the `.exporting` branch before calling `operationTask.cancel()`. It only flips `cancellationRequested`, while `MobilePackageService.export` had no cancellation checkpoint and its exclusive rename could proceed after a user cancellation. Thus the flag was presentation-only and could not stop pre-publication work.
+- Incoming preview cleanup is launched with an untracked `Task` from `discardIncomingPreview()`. The store can enter idle or begin a new preview before the actor discard finishes, so a same-package immediate re-preview can observe stale staged state. The late-import guard also needed to await discard after an authenticated result arrived for a cancelled operation.
+
+Additional evidence: the Foundation probe asserted `finalExists == false`, turning a platform observation into a platform-specific contract even though the production parent-anchor test is the normative security test. The exporter adapter returned a `Date` created by Task 3 before JSON encoding, while the persisted manifest is decoded at JSON date precision; the equality happened to pass for current dates but was not a canonical API guarantee. The view retained `importSource` and plaintext `importCode` independently from the store, so Done/cancel/dismiss could clear store state while leaving those controls populated.
+
+## Review follow-up (round 3), Phase 2 RED/GREEN
+
+The cancellation regression was first made red with a publication pause: cancelling the store task previously allowed the package export closure to finish, leaving the phase exported, a QR payload, and a destination. The incoming discard regression was likewise made red by holding the discard callback: a second preview could begin before the first staged package had been discarded. The Foundation replacement-directory check was changed to an observational, platform-tolerant probe that only logs the observed final-path state and cleans its own temporary fixture; the existing-parent-anchor test remains the normative publication guarantee.
+
+The green implementation now propagates `Task` cancellation through the store's `operationTask`, checks at Task 3 preparation and immediately before exclusive publication, and lets the private staging `defer` remove cancelled work. Cancellation before publication returns to idle without a destination, QR, or key; cancellation after the atomic rename remains in the finishing/exported path and preserves the published manifest and QR. The view disables interactive dismissal while exporting/finishing and uses explicit localized progress titles, including the finishing safety rail.
+
+Incoming preview cleanup is tracked by `discardTask` and serialized before idle or re-preview. The store owns the discard lifecycle, while the view has one reset helper that clears the security-scoped source and plaintext code on done, cancel, dismiss, and successful preview; the fallback code entry is a `SecureField`. Export results now return the manifest after the same JSON round trip that is written to disk, so `createdAt` and byte metadata are canonical.
+
+Focused and repeated verification after Phase 2:
+
+```text
+swift test --filter cancellationBeforePublicationStopsExport                 # passed
+swift test --filter cancellationBeforeExclusivePublicationLeavesNoDestination # passed
+swift test --filter incomingDiscardIsSerializedBeforeRepreview                # passed
+swift test --filter MobileSyncStoreTests                                      # 15 tests passed
+swift test --filter MobileSyncSurfaceTests                                    # 4 tests passed
+swift test --filter MobilePackageServiceTests                                 # 38 tests passed
+swift test --filter LocalizationCoverageTests                                 # 15 tests passed
+for i in {1..20}; do swift test --filter cancellationBeforePublicationStopsExport; done # 20/20 passed
+for i in {1..20}; do swift test --filter incomingDiscardIsSerializedBeforeRepreview; done # 20/20 passed
+git diff --check                                                              # clean
+```
+
+Final full-suite verification after round 3:
+
+```text
+swift test --no-parallel
+Test run with 3451 tests in 218 suites passed after 94.572 seconds.
+```

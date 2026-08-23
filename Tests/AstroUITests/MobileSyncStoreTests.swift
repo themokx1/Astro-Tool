@@ -169,7 +169,7 @@ struct MobileSyncStoreTests {
     @Test("A cancelled export records a late published result and keeps its unlock code")
     func cancellationDoesNotLosePublishedPackage() async throws {
         let id = PortableLibraryID(rawValue: UUID())
-        let gate = AsyncGate()
+        let gate = SignalGate()
         let store = MobileSyncStore(
             rootURL: URL(fileURLWithPath: "/tmp/library"),
             identityPreview: { _ in .init(proposedID: id, relativePath: "id", alreadyExists: true) },
@@ -194,6 +194,40 @@ struct MobileSyncStoreTests {
         #expect(store.oneTimeQRPayload != nil)
     }
 
+    @Test("Cancelling before publication cancels the export task and leaves no destination or key")
+    func cancellationBeforePublicationStopsExport() async throws {
+        let id = PortableLibraryID(rawValue: UUID())
+        let entered = SignalGate()
+        let release = SignalGate()
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let destination = root.appendingPathComponent("cancelled.astromobile")
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in .init(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in .empty(libraryID: id) },
+            packageExport: { _, _, _ in
+                entered.open()
+                await release.wait()
+                try Task.checkCancellation()
+                return MobileSyncExportResult(packageID: UUID(), createdAt: Date(), encryptedByteCount: 1)
+            }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+        store.startExport(to: destination)
+        await entered.wait()
+        store.cancel()
+        release.open()
+        for _ in 0..<100 where store.phase == .finishing {
+            await Task.yield()
+        }
+        #expect(store.phase == .idle)
+        #expect(store.oneTimeQRPayload == nil)
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    }
+
     @Test("A cancelled import discards a late authenticated preview")
     func cancellationDiscardsLateImportPreview() async throws {
         let imported = MobilePackageImportPreview(
@@ -202,7 +236,7 @@ struct MobileSyncStoreTests {
             incomingChanges: [],
             encryptedByteCount: 32
         )
-        let gate = AsyncGate()
+        let gate = SignalGate()
         let discarded = ValueCounter()
         let store = MobileSyncStore(
             rootURL: nil,
@@ -253,6 +287,40 @@ struct MobileSyncStoreTests {
         #expect(calls.value == 2)
     }
 
+    @Test("Incoming discard is serialized before the same package is previewed again")
+    func incomingDiscardIsSerializedBeforeRepreview() async throws {
+        let imported = MobilePackageImportPreview(
+            packageID: UUID(),
+            snapshotSummary: .init(projectCount: 1, nightCount: 1, captureCount: 1, briefingCount: 0, noteCount: 0),
+            incomingChanges: [],
+            encryptedByteCount: 32
+        )
+        let discardEntered = SignalGate()
+        let discardRelease = SignalGate()
+        let store = MobileSyncStore(
+            rootURL: nil,
+            packageImportPreview: { _, _ in imported },
+            packageImportDiscard: { packageID in
+                #expect(packageID == imported.packageID)
+                discardEntered.open()
+                await discardRelease.wait()
+            }
+        )
+        let source = URL(fileURLWithPath: "/tmp/package")
+        let code = OneTimePackageKey().qrPayload
+        await store.previewIncomingPackage(from: source, qrPayload: code)
+        store.cancel()
+        #expect(store.phase == .discarding)
+        await discardEntered.wait()
+        let repreview = Task { await store.previewIncomingPackage(from: source, qrPayload: code) }
+        await Task.yield()
+        #expect(store.phase == .discarding)
+        discardRelease.open()
+        await repreview.value
+        #expect(store.phase == .importPreviewReady)
+        #expect(store.incomingPreview == imported)
+    }
+
     @Test("Metadata revision is stable, nonzero, and changes when content changes")
     func metadataRevisionTracksContent() {
         let projectID = UUID()
@@ -295,17 +363,30 @@ private final class ValueCounter: @unchecked Sendable {
     var value = 0
 }
 
-private final class AsyncGate: @unchecked Sendable {
-    private var continuation: CheckedContinuation<Void, Never>?
+private final class SignalGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuations: [CheckedContinuation<Void, Never>] = []
     private var isOpen = false
+
     func wait() async {
-        if isOpen { return }
-        await withCheckedContinuation { continuation = $0 }
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if isOpen {
+                lock.unlock()
+                continuation.resume()
+            } else {
+                continuations.append(continuation)
+                lock.unlock()
+            }
+        }
     }
     func open() {
+        lock.lock()
         isOpen = true
-        continuation?.resume()
-        continuation = nil
+        let pending = continuations
+        continuations.removeAll()
+        lock.unlock()
+        pending.forEach { $0.resume() }
     }
 }
 

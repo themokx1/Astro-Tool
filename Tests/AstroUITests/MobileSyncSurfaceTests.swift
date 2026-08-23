@@ -27,6 +27,11 @@ struct MobileSyncSurfaceTests {
         #expect(view.contains("fileExporter"))
         #expect(view.contains("fileImporter"))
         #expect(view.contains("configuration.existingFile"), "Replace requests must be rejected before SwiftUI writes a placeholder")
+        #expect(view.contains("interactiveDismissDisabled"))
+        #expect(view.contains("SecureField"))
+        #expect(view.contains("clearIncomingSelection"))
+        #expect(view.contains("case .discarding"))
+        #expect(view.contains("Finishing safely"))
         #expect(view.contains(".astroMobile"))
         let visibleCopy = view
             .split(separator: "\n")
