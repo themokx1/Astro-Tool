@@ -3,6 +3,28 @@ import Darwin
 import Foundation
 import AstroMobileDomain
 
+protocol MobilePackageStagingDirectoryProvider: Sendable {
+    func replacementDirectory(appropriateFor destination: URL) throws -> URL
+}
+
+private struct SystemStagingDirectoryProvider: MobilePackageStagingDirectoryProvider {
+    func replacementDirectory(appropriateFor destination: URL) throws -> URL {
+        try FileManager.default.url(
+            for: .itemReplacementDirectory,
+            in: .userDomainMask,
+            appropriateFor: destination,
+            create: true
+        )
+    }
+}
+
+enum MobilePackageExportTestStep: Sendable {
+    case beforeFirstFile
+    case beforeSecondFile
+    case beforePublication
+    case afterRename
+}
+
 public struct MobilePackageImportPreview: Equatable, Sendable {
     public let packageID: UUID
     public let snapshotSummary: MobileSnapshotSummary
@@ -60,14 +82,30 @@ public actor MobilePackageService {
     private var stagedImports: [UUID: StagedImport] = [:]
     private var consumedPackageIDs: Set<UUID> = []
     private var stagedImportBytes: Int64 = 0
-    private let testingBeforePublication: @Sendable (URL) -> Void
+    private let stagingDirectoryProvider: any MobilePackageStagingDirectoryProvider
+    private let testingExportStep: @Sendable (MobilePackageExportTestStep, URL) -> Void
+    private let testingDirectoryDuplicate: @Sendable (Int32) -> Int32
 
     public init() {
-        self.testingBeforePublication = { _ in }
+        self.stagingDirectoryProvider = SystemStagingDirectoryProvider()
+        self.testingExportStep = { _, _ in }
+        self.testingDirectoryDuplicate = Darwin.dup
     }
 
     init(testingBeforePublication: @escaping @Sendable (URL) -> Void) {
-        self.testingBeforePublication = testingBeforePublication
+        self.stagingDirectoryProvider = SystemStagingDirectoryProvider()
+        self.testingExportStep = { step, url in if step == .beforePublication { testingBeforePublication(url) } }
+        self.testingDirectoryDuplicate = Darwin.dup
+    }
+
+    init(
+        stagingDirectoryProvider: any MobilePackageStagingDirectoryProvider,
+        testingExportStep: @escaping @Sendable (MobilePackageExportTestStep, URL) -> Void = { _, _ in },
+        testingDirectoryDuplicate: @escaping @Sendable (Int32) -> Int32 = Darwin.dup
+    ) {
+        self.stagingDirectoryProvider = stagingDirectoryProvider
+        self.testingExportStep = testingExportStep
+        self.testingDirectoryDuplicate = testingDirectoryDuplicate
     }
 
     public func export(
@@ -75,7 +113,7 @@ public actor MobilePackageService {
         to destination: URL,
         wrapping: MobilePackageKeyWrapping
     ) throws {
-        try Self.validateEnvelope(envelope)
+        try Self.validateEnvelope(envelope, forExport: true)
         let packageID = UUID()
         let keyMode: MobilePackageKeyMode = wrapping is OneTimePackageKey ? .oneTimeQR : .pairedDevice
         let createdAt = Date()
@@ -116,24 +154,20 @@ public actor MobilePackageService {
 
         let staging: PrivateStaging
         do {
-            staging = try Self.createPrivateStaging()
-            try Self.writeFile(at: staging.descriptor, name: Self.encryptedPayloadFileName, data: combined)
-            try Self.writeFile(at: staging.descriptor, name: Self.manifestFileName, data: manifestData)
-            guard Self.sameStableIdentity(staging.identity, Self.identity(ofFD: staging.descriptor)) else {
-                throw MobilePackageError.stagingFailed
-            }
+            let replacementDirectory = try stagingDirectoryProvider.replacementDirectory(appropriateFor: destination)
+            staging = try Self.createPrivateStaging(in: replacementDirectory)
         } catch let error as MobilePackageError {
             throw error
         } catch {
             throw MobilePackageError.stagingFailed
         }
-        var published = false
-        defer {
-            if published {
-                Self.closePrivateStaging(staging)
-            } else {
-                Self.clearPrivateStaging(staging)
-            }
+        defer { staging.finish() }
+        testingExportStep(.beforeFirstFile, staging.url)
+        try Self.writeFile(at: staging.descriptor, name: Self.encryptedPayloadFileName, data: combined)
+        testingExportStep(.beforeSecondFile, staging.url)
+        try Self.writeFile(at: staging.descriptor, name: Self.manifestFileName, data: manifestData)
+        guard Self.sameStableIdentity(staging.identity, Self.identity(ofFD: staging.descriptor)) else {
+            throw MobilePackageError.stagingFailed
         }
 
         let parent = destination.deletingLastPathComponent()
@@ -145,9 +179,9 @@ public actor MobilePackageService {
                 parentFD: parentFD,
                 destinationName: destination.lastPathComponent,
                 staging: staging,
-                beforePublication: testingBeforePublication
+                testingExportStep: testingExportStep,
+                destination: destination
             )
-            published = true
         } catch let error as MobilePackageError {
             throw error
         } catch {
@@ -172,7 +206,7 @@ public actor MobilePackageService {
         guard directoryFD >= 0 else { throw MobilePackageError.malformedPackage }
         defer { Darwin.close(directoryFD) }
         guard Self.sameStableIdentity(sourceIdentity, Self.identity(ofFD: directoryFD)),
-              (try? Self.directoryEntries(directoryFD)) == Set([Self.manifestFileName, Self.encryptedPayloadFileName]) else {
+              (try? Self.directoryEntries(directoryFD, duplicating: testingDirectoryDuplicate)) == Set([Self.manifestFileName, Self.encryptedPayloadFileName]) else {
             throw MobilePackageError.malformedPackage
         }
 
@@ -606,13 +640,13 @@ public actor MobilePackageService {
         }
     }
 
-    private static func validateEnvelope(_ envelope: MobilePackageEnvelope) throws {
+    private static func validateEnvelope(_ envelope: MobilePackageEnvelope, forExport: Bool = false) throws {
         guard envelope.changes.count <= maximumCollectionCount,
               envelope.acknowledgedChangeIDs.count <= maximumCollectionCount,
               Set(envelope.acknowledgedChangeIDs).count == envelope.acknowledgedChangeIDs.count else {
             throw MobilePackageError.invalidEnvelope
         }
-        try validateAggregateLimits(envelope)
+        if forExport { try validateExportEncodingBudget(envelope) }
         let snapshot = envelope.snapshot
         if let snapshot {
             guard snapshot.schemaVersion > 0, snapshot.schemaVersion <= MobileLibrarySnapshot.currentSchemaVersion,
@@ -702,8 +736,8 @@ public actor MobilePackageService {
         for note in snapshot.notes { guard validString(note.id), validString(note.ownerID), validString(note.text), note.baseRevision >= 0, note.updatedAt.timeIntervalSince1970.isFinite else { throw MobilePackageError.invalidEnvelope } }
     }
 
-    private static func validateAggregateLimits(_ envelope: MobilePackageEnvelope) throws {
-        var budget = JSONEncodingBudget()
+    private static func validateExportEncodingBudget(_ envelope: MobilePackageEnvelope) throws {
+        var budget = ExportEncodingBudget()
         try budget.addRecord()
         try budget.addRecord()
         try budget.addArray(envelope.acknowledgedChangeIDs.count)
@@ -765,11 +799,11 @@ public actor MobilePackageService {
         }
     }
 
-    private struct JSONEncodingBudget {
+    private struct ExportEncodingBudget {
         private var encodedByteCount: Int64 = 0
         private var elementCount: Int64 = 0
 
-        mutating func addRecord() throws { try add(1024) }
+        mutating func addRecord() throws { try add(512) }
 
         mutating func addArray(_ count: Int) throws {
             guard count <= maximumCollectionCount else { throw MobilePackageError.invalidEnvelope }
@@ -783,12 +817,19 @@ public actor MobilePackageService {
         }
 
         mutating func addString(_ value: String) throws {
-            let sourceBytes = Int64(value.utf8.count)
-            let (escapedBytes, overflow) = sourceBytes.multipliedReportingOverflow(by: 6)
-            guard !overflow else { throw MobilePackageError.invalidEnvelope }
-            let (withQuotes, quoteOverflow) = escapedBytes.addingReportingOverflow(2)
-            guard !quoteOverflow else { throw MobilePackageError.invalidEnvelope }
-            try add(withQuotes)
+            var escapedByteCount: Int64 = 2
+            for byte in value.utf8 {
+                let cost: Int64
+                switch byte {
+                case 0x00...0x1F: cost = 6
+                case 0x22, 0x5C: cost = 2
+                default: cost = 1
+                }
+                let (next, overflow) = escapedByteCount.addingReportingOverflow(cost)
+                guard !overflow else { throw MobilePackageError.invalidEnvelope }
+                escapedByteCount = next
+            }
+            try add(escapedByteCount)
         }
 
         private mutating func add(_ count: Int64) throws {
@@ -807,12 +848,40 @@ public actor MobilePackageService {
         let type: FileAttributeType
     }
 
-    private struct PrivateStaging {
+    private final class PrivateStaging: @unchecked Sendable {
         let parentDescriptor: Int32
         let name: String
         let url: URL
         let descriptor: Int32
         let identity: FileIdentity
+
+        private var published = false
+        private var finished = false
+
+        init(parentDescriptor: Int32, name: String, url: URL, descriptor: Int32, identity: FileIdentity) {
+            self.parentDescriptor = parentDescriptor
+            self.name = name
+            self.url = url
+            self.descriptor = descriptor
+            self.identity = identity
+        }
+
+        func markPublished() { published = true }
+
+        func finish() {
+            guard !finished else { return }
+            finished = true
+            if !published,
+               MobilePackageService.sameStableIdentity(identity, MobilePackageService.identity(ofFD: descriptor)),
+               MobilePackageService.sameStableIdentity(identity, MobilePackageService.identity(at: parentDescriptor, name: name)) {
+                for child in [MobilePackageService.manifestFileName, MobilePackageService.encryptedPayloadFileName] {
+                    _ = child.withCString { Darwin.unlinkat(descriptor, $0, 0) }
+                }
+                _ = name.withCString { Darwin.unlinkat(parentDescriptor, $0, AT_REMOVEDIR) }
+            }
+            Darwin.close(descriptor)
+            Darwin.close(parentDescriptor)
+        }
     }
 
     private static func identity(of url: URL, fileManager: FileManager) -> FileIdentity? {
@@ -872,9 +941,13 @@ public actor MobilePackageService {
         return FileIdentity(device: UInt64(status.st_dev), inode: UInt64(status.st_ino), size: Int64(status.st_size), type: type)
     }
 
-    private static func directoryEntries(_ directoryFD: Int32) throws -> Set<String> {
-        let duplicate = Darwin.dup(directoryFD)
-        guard duplicate >= 0, let stream = Darwin.fdopendir(duplicate) else { throw MobilePackageError.malformedPackage }
+    private static func directoryEntries(_ directoryFD: Int32, duplicating: @Sendable (Int32) -> Int32) throws -> Set<String> {
+        let duplicate = duplicating(directoryFD)
+        guard duplicate >= 0 else { throw MobilePackageError.malformedPackage }
+        guard let stream = Darwin.fdopendir(duplicate) else {
+            Darwin.close(duplicate)
+            throw MobilePackageError.malformedPackage
+        }
         defer { Darwin.closedir(stream) }
         var entries = Set<String>()
         errno = 0
@@ -956,11 +1029,11 @@ public actor MobilePackageService {
         return identity.type == .typeDirectory
     }
 
-    private static func createPrivateStaging() throws -> PrivateStaging {
-        let temporaryRoot = FileManager.default.temporaryDirectory.path
-        let parentDescriptor = temporaryRoot.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+    private static func createPrivateStaging(in replacementDirectory: URL) throws -> PrivateStaging {
+        let replacementRoot = replacementDirectory.path
+        let parentDescriptor = replacementRoot.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
         guard parentDescriptor >= 0 else { throw MobilePackageError.stagingFailed }
-        var template = Array((temporaryRoot + "/AstroMobileTransport-XXXXXXXX").utf8).map(CChar.init) + [0]
+        var template = Array((replacementRoot + "/AstroMobileTransport-XXXXXXXX").utf8).map(CChar.init) + [0]
         guard let path = template.withUnsafeMutableBufferPointer({ Darwin.mkdtemp($0.baseAddress) }) else {
             Darwin.close(parentDescriptor)
             throw MobilePackageError.stagingFailed
@@ -981,22 +1054,6 @@ public actor MobilePackageService {
         return PrivateStaging(parentDescriptor: parentDescriptor, name: name, url: url, descriptor: descriptor, identity: identity)
     }
 
-    /// Cleanup is descriptor-relative and intentionally leaves the now-empty,
-    /// mode-0700 operation directory for the system temporary-directory reaper.
-    /// This avoids ever unlinking a mutable parent/name that could designate a
-    /// replacement entry controlled by the destination's owner.
-    private static func clearPrivateStaging(_ staging: PrivateStaging) {
-        for child in [Self.manifestFileName, Self.encryptedPayloadFileName] {
-            _ = child.withCString { Darwin.unlinkat(staging.descriptor, $0, 0) }
-        }
-        closePrivateStaging(staging)
-    }
-
-    private static func closePrivateStaging(_ staging: PrivateStaging) {
-        Darwin.close(staging.descriptor)
-        Darwin.close(staging.parentDescriptor)
-    }
-
     private static func sameStableIdentity(_ lhs: FileIdentity?, _ rhs: FileIdentity?) -> Bool {
         guard let lhs, let rhs else { return false }
         return lhs.device == rhs.device && lhs.inode == rhs.inode && lhs.type == rhs.type
@@ -1006,10 +1063,11 @@ public actor MobilePackageService {
         parentFD: Int32,
         destinationName: String,
         staging: PrivateStaging,
-        beforePublication: @Sendable (URL) -> Void
+        testingExportStep: @Sendable (MobilePackageExportTestStep, URL) -> Void,
+        destination: URL
     ) throws {
         guard Darwin.fsync(staging.descriptor) == 0 else { throw MobilePackageError.stagingFailed }
-        beforePublication(staging.url)
+        testingExportStep(.beforePublication, staging.url)
         guard sameStableIdentity(staging.identity, identity(ofFD: staging.descriptor)),
               sameStableIdentity(staging.identity, identity(at: staging.parentDescriptor, name: staging.name)) else {
             throw MobilePackageError.stagingFailed
@@ -1023,6 +1081,8 @@ public actor MobilePackageService {
             if errno == EEXIST { throw MobilePackageError.destinationExists }
             throw MobilePackageError.stagingFailed
         }
+        staging.markPublished()
+        testingExportStep(.afterRename, destination)
         guard sameStableIdentity(staging.identity, identity(at: parentFD, name: destinationName)) else {
             throw MobilePackageError.stagingFailed
         }

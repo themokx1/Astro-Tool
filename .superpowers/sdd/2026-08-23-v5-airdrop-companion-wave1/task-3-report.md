@@ -266,3 +266,41 @@ The diff check was clean.
 - A failed private staging operation can leave an empty mode-0700 temporary directory; it contains no package bytes and is recoverable by the system temporary-directory reaper. The implementation never deletes an entry through a mutable parent/name after it has identified it.
 
 ✅
+
+## Security fix round 5 — ownership and volume-local replacement staging
+
+### RED/GREEN evidence
+
+#### RED
+
+`fiveThousandShortCapturesExportAndImportWithinActualPayloadLimit` was added first. The prior 1 KiB-per-record/6x-string estimate rejected this valid 5,000-short-capture v1 snapshot before encoding with `.invalidEnvelope`. That estimate was also applied during import, so it could reject an authenticated, structurally valid package despite the existing actual plaintext cap and lexical validation.
+
+#### GREEN
+
+- Export now uses a `PrivateStaging` ownership lease that is armed immediately after `mkdtemp` succeeds. Its single `finish()` path closes both descriptors on every exit, removes package children descriptor-relatively, and reclaims the stage directory only if the trusted replacement-root name still has the retained device/inode identity. A replaced name is preserved as safe residue.
+- `directoryEntries` now closes its `dup` descriptor if `fdopendir` cannot adopt it.
+- Export staging is volume-local: `FileManager.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: destination, create: true)` supplies Apple-managed replacement storage on the destination volume, then a mode-0700 private `mkdtemp` child is used as the exclusive-rename source. This preserves secure atomic publication for normal writable external volumes without staging in the uncontrolled destination parent. The injected provider test verifies the abstraction without requiring a physical external disk.
+- Successful `renameatx_np(..., RENAME_EXCL)` immediately marks the lease as published before any post-rename hook or identity check. A later failure therefore only closes descriptors; it never removes package files from the published directory or a replacement entry.
+- Import performs structural/domain validation only. Export alone applies the pre-encode `ExportEncodingBudget`, which now charges canonical UUIDs/raw safe UTF-8 accurately, control bytes at JSON escape cost, and bounded fixed-shape record overhead. The hard cap remains in place before `JSONEncoder`, while valid 5,000-capture packages pass.
+
+Added coverage: 5,000 capture export/import acceptance; first-write and second-write cleanup; no normal staging residue; post-rename verification failure; injected descriptor-duplicate failure; replacement-root provider use; escaped `\\u0061` decoded 129-byte key rejection before schema; and briefing-note wrong-scope/wrong-owner checks independently. The focused service set is now 29 tests.
+
+### Final verification
+
+```text
+swift test --filter MobilePackageServiceTests
+Test run with 29 tests in 0 suites passed after 0.267 seconds.
+
+swift test --filter MobilePackageCryptoTests
+Test run with 9 tests in 0 suites passed after 0.001 seconds.
+
+swift test --filter MobilePackage
+Test run with 38 tests in 0 suites passed after 0.247 seconds.
+
+swift test --no-parallel
+Test run with 3423 tests in 216 suites passed after 95.773 seconds.
+```
+
+`git diff --check` is clean.
+
+✅

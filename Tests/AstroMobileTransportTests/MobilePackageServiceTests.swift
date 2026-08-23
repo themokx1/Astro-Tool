@@ -363,6 +363,29 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(countError as? MobilePackageError == .invalidEnvelope)
 }
 
+@Test func fiveThousandShortCapturesExportAndImportWithinActualPayloadLimit() async throws {
+    let root = try TemporaryPackageDirectory()
+    let projectID = UUID()
+    let nightID = UUID()
+    let snapshot = MobileLibrarySnapshot(
+        schemaVersion: 1,
+        libraryID: PortableLibraryID(rawValue: UUID()),
+        snapshotID: UUID(),
+        revision: 0,
+        createdAt: Date(),
+        projects: [MobileProject(id: projectID, displayName: "p", catalogID: "c", phase: "ready", integrationSeconds: 0, goalHours: nil)],
+        nights: [MobileNight(id: nightID, localDate: "2026-08-23", timeZoneID: "UTC")],
+        captures: (0..<5_000).map { _ in MobileCapture(id: UUID(), projectID: projectID, nightID: nightID, displayName: "c", filterName: nil, exposureSeconds: 1, integrationSeconds: 1) },
+        briefings: [],
+        notes: []
+    )
+    let destination = root.url.appendingPathComponent("five-thousand.astromobile")
+    let service = MobilePackageService()
+    try await service.export(MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    let preview = try await service.importPreview(from: destination, wrapping: DeterministicWrapper())
+    #expect(preview.snapshotSummary.captureCount == 5_000)
+}
+
 @Test func publicationReplacementFailsWithoutDeletingReplacement() async throws {
     let root = try TemporaryPackageDirectory()
     let destination = root.url.appendingPathComponent("replacement.astromobile")
@@ -383,6 +406,67 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     try FileManager.default.removeItem(at: stagingURL)
 }
 
+@Test func stagingLeaseReclaimsNormalWriteFailuresAndUsesProvidedVolumeLocalRoot() async throws {
+    let root = try TemporaryPackageDirectory()
+    let replacementRoot = root.url.appendingPathComponent("replacement-root", isDirectory: true)
+    try FileManager.default.createDirectory(at: replacementRoot, withIntermediateDirectories: false)
+    let provider = TestStagingProvider(root: replacementRoot)
+    let stagingURL = URLStore()
+    let service = MobilePackageService(stagingDirectoryProvider: provider, testingExportStep: { step, url in
+        stagingURL.value = url
+        if step == .beforeSecondFile { try? Data().write(to: url.appendingPathComponent(MobilePackageService.manifestFileName)) }
+    })
+    let destination = root.url.appendingPathComponent("failure.astromobile")
+    let error = await errorFrom { try await service.export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .stagingFailed)
+    #expect(provider.lastDestination == destination)
+    #expect(!FileManager.default.fileExists(atPath: try #require(stagingURL.value).path))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: replacementRoot.path).isEmpty)
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+}
+
+@Test func stagingLeaseReclaimsBeforeFirstWriteFailureAndLeavesNoNormalResidue() async throws {
+    let root = try TemporaryPackageDirectory()
+    let replacementRoot = root.url.appendingPathComponent("replacement-root", isDirectory: true)
+    try FileManager.default.createDirectory(at: replacementRoot, withIntermediateDirectories: false)
+    let stagingURL = URLStore()
+    let service = MobilePackageService(stagingDirectoryProvider: TestStagingProvider(root: replacementRoot), testingExportStep: { step, url in
+        guard step == .beforeFirstFile else { return }
+        stagingURL.value = url
+        try? Data().write(to: url.appendingPathComponent(MobilePackageService.encryptedPayloadFileName))
+    })
+    let error = await errorFrom { try await service.export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("prewrite.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .stagingFailed)
+    #expect(!FileManager.default.fileExists(atPath: try #require(stagingURL.value).path))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: replacementRoot.path).isEmpty)
+}
+
+@Test func directoryEnumerationDuplicateFailureFailsClosed() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("duplicate-fd.astromobile")
+    try await MobilePackageService().export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    let service = MobilePackageService(stagingDirectoryProvider: TestStagingProvider(root: root.url), testingDirectoryDuplicate: { _ in -1 })
+    let error = await errorFrom { _ = try await service.importPreview(from: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .malformedPackage)
+}
+
+@Test func postRenameFailureNeverCleansThePublishedOrReplacementEntry() async throws {
+    let root = try TemporaryPackageDirectory()
+    let replacementRoot = root.url.appendingPathComponent("replacement-root", isDirectory: true)
+    try FileManager.default.createDirectory(at: replacementRoot, withIntermediateDirectories: false)
+    let destination = root.url.appendingPathComponent("post-rename.astromobile")
+    let service = MobilePackageService(stagingDirectoryProvider: TestStagingProvider(root: replacementRoot), testingExportStep: { step, _ in
+        guard step == .afterRename else { return }
+        try? FileManager.default.removeItem(at: destination)
+        try? FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
+        try? Data("replacement".utf8).write(to: destination.appendingPathComponent("sentinel"))
+    })
+    let error = await errorFrom { try await service.export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .stagingFailed)
+    #expect(try Data(contentsOf: destination.appendingPathComponent("sentinel")) == Data("replacement".utf8))
+    #expect(try FileManager.default.contentsOfDirectory(atPath: replacementRoot.path).isEmpty)
+}
+
 @Test func lexicalSurrogateAndDecodedKeyBoundariesAreIndependentOfSchema() async throws {
     let root = try TemporaryPackageDirectory()
     let destination = root.url.appendingPathComponent("unicode.astromobile")
@@ -399,6 +483,11 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     try rewriteAuthenticatedPayloadRaw(at: destination, plaintext: malformed)
     let error = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
     #expect(error as? MobilePackageError == .invalidEnvelope)
+
+    let escapedKey = String(repeating: "\\u0061", count: 129)
+    try rewriteAuthenticatedPayloadRaw(at: destination, plaintext: Data("{\"\(escapedKey)\":null}".utf8))
+    let escapedError = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
+    #expect(escapedError as? MobilePackageError == .invalidEnvelope)
 }
 
 @Test func hardlinkedChildrenAreRejected() async throws {
@@ -434,6 +523,21 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     let nonEditableChange = MobileChange.noteRevision(NoteRevisionChange(changeID: UUID(), deviceID: UUID(), noteID: note.id, ownerID: note.ownerID, baseRevision: 0, text: "x", createdAt: Date()))
     let nonEditableError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [], notes: [note]), changes: [nonEditableChange], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("noneditable.astromobile"), wrapping: DeterministicWrapper()) }
     #expect(nonEditableError as? MobilePackageError == .invalidEnvelope)
+}
+
+@Test func briefingNoteScopeAndOwnerAreIndependentlyRequired() async throws {
+    let root = try TemporaryPackageDirectory()
+    let briefingID = UUID()
+    let briefing = MobileBriefing(id: briefingID, revision: 0, savedAt: Date(), nightDate: nil, readiness: "ready", targets: [], checklist: [], noteID: "note")
+    func snapshot(note: MobileNote) -> MobileLibrarySnapshot {
+        MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [briefing], notes: [note])
+    }
+    let wrongScope = MobileNote(id: "note", scope: .project, ownerID: briefingID.uuidString, text: "", baseRevision: 0, updatedAt: Date(), isEditableOnPhone: true)
+    let scopeError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: snapshot(note: wrongScope), changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("scope.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(scopeError as? MobilePackageError == .invalidEnvelope)
+    let wrongOwner = MobileNote(id: "note", scope: .briefing, ownerID: UUID().uuidString, text: "", baseRevision: 0, updatedAt: Date(), isEditableOnPhone: true)
+    let ownerError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: snapshot(note: wrongOwner), changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("owner.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(ownerError as? MobilePackageError == .invalidEnvelope)
 }
 
 @Test func importDoesNotModifySourceAndRejectsSymlinkedChildren() async throws {
@@ -538,6 +642,18 @@ private func decodableNonCanonicalBase64(_ canonical: String) -> String? {
 
 private final class URLStore: @unchecked Sendable {
     var value: URL?
+}
+
+private final class TestStagingProvider: @unchecked Sendable, MobilePackageStagingDirectoryProvider {
+    let root: URL
+    var lastDestination: URL?
+
+    init(root: URL) { self.root = root }
+
+    func replacementDirectory(appropriateFor destination: URL) throws -> URL {
+        lastDestination = destination
+        return root
+    }
 }
 
 private func errorFrom(_ operation: () async throws -> Void) async -> Error? {
