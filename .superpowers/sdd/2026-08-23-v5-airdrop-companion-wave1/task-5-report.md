@@ -160,3 +160,22 @@ git diff --check                                                    # passed
 ```
 
 The iOS build and XCTest/UI runtime remain blocked by the host Xcode/account gate; no iOS build success is claimed.
+
+## Closure fix round 3 — hash-bound durability recovery
+
+- Replaced bare journal strings with versioned `MobileDurabilityJournalRecord` values containing phase, operation ID, prior-state SHA-256 (nil for initial migration), and intended-state SHA-256. Pending is durably written before the state replacement; clear is written only after confirmed state-parent sync and is bound to the same operation.
+- Bootstrap/reload hashes the authoritative `state.json` bytes and classifies a valid pending/uncertain/attempted record as committed-uncertain when intended bytes are present, retryable-attempted when prior bytes are present, and ambiguous when bytes do not match. Missing, corrupt, or unknown journals remain visible as ambiguous recovery state and are never silently cleared. Valid clear records matching either the intended state or a confirmed pre-rename prior state clear stale flags.
+- Added a distinct localized ambiguous-storage banner, fixed `reload()` to assign both existing warning flags (and the ambiguous flag), and added tests for old/new crash windows, corrupt/missing journals, initial migration, clear records, stale-flag clearing, and all injected pending/state/clear uncertainty paths.
+
+Closure fix round-3 verification:
+
+```text
+xcodegen generate                                                   # passed
+rg project.pbxproj membership                                      # MobileDocumentIntake file ref + Sources entry present
+swiftc -frontend -parse <changed iOS sources/tests>                 # passed
+swift test --disable-sandbox --filter MobilePackageServiceTests \
+  --no-parallel                                                    # 39 tests passed
+git diff --check                                                    # passed
+```
+
+The iOS build, XCTest, and UI runtime remain blocked by the host Xcode/account gate. No iOS build or runtime success is claimed in this closure round.

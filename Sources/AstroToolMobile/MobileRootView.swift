@@ -12,6 +12,7 @@ struct MobileRootView: View {
     @State private var recoveryState: MobileLibraryStoreRecoveryState = .empty
     @State private var durabilityWarning = false
     @State private var durabilityAttemptWarning = false
+    @State private var durabilityAmbiguousWarning = false
     @State private var keyPayload = ""
     @State private var message: String?
     @State private var showingScanner = false
@@ -55,8 +56,8 @@ struct MobileRootView: View {
                         Button("Dismiss") { self.intakeError = nil; message = nil }
                     }.padding(10).background(.red.opacity(0.15)).accessibilityIdentifier("mobile-intake-error")
                 }
-                if durabilityWarning || durabilityAttemptWarning {
-                    Label(durabilityWarning ? "The latest change was saved, but iPhone storage needs attention. Keep the app open and make a backup before the next import." : "A save attempt may need attention. Keep the app open and try the same action again.", systemImage: "externaldrive.badge.exclamationmark")
+                if durabilityWarning || durabilityAttemptWarning || durabilityAmbiguousWarning {
+                    Label(durabilityWarning ? "The latest change was saved, but iPhone storage needs attention. Keep the app open and make a backup before the next import." : durabilityAttemptWarning ? "A save attempt may need attention. Keep the app open and try the same action again." : "AstroTool could not confirm whether the latest save reached iPhone storage. Keep this iPhone data unchanged and restore from a trusted backup before retrying.", systemImage: "externaldrive.badge.exclamationmark")
                         .font(.footnote)
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -212,6 +213,7 @@ struct MobileRootView: View {
         recoveryState = await store.recoveryState
         durabilityWarning = await store.durabilityWarning
         durabilityAttemptWarning = await store.durabilityAttemptWarning
+        durabilityAmbiguousWarning = await store.durabilityAmbiguousWarning
         stagedPackageURL = await store.stagedPackageURL
     }
 

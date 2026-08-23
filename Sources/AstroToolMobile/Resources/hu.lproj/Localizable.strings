@@ -22,5 +22,6 @@
 "The scanned key is not valid. Scan the one-time key shown on your Mac." = "A beolvasott kulcs érvénytelen. Olvasd be a Macen látható egyszer használatos kulcsot.";
 "The latest change was saved, but iPhone storage needs attention. Keep the app open and make a backup before the next import." = "A legutóbbi módosítás mentve lett, de az iPhone tárhelye figyelmet igényel. A következő import előtt hagyd nyitva az appot, és készíts biztonsági mentést.";
 "A save attempt may need attention. Keep the app open and try the same action again." = "Lehet, hogy a mentési kísérlet figyelmet igényel. Hagyd nyitva az appot, és próbáld meg újra ugyanazt a műveletet.";
+"AstroTool could not confirm whether the latest save reached iPhone storage. Keep this iPhone data unchanged and restore from a trusted backup before retrying." = "Az AstroTool nem tudta megerősíteni, hogy a legutóbbi mentés elérte-e az iPhone tárhelyét. Hagyd változatlanul az iPhone adatait, és újrapróbálás előtt állítsd helyre megbízható mentésből.";
 "AstroTool could not copy that mobile package safely. Send it from your Mac again and try once more." = "Az AstroTool nem tudta biztonságosan átmásolni ezt a mobilcsomagot. Küldd el újra a Macről, majd próbáld ismét.";
 "Dismiss" = "Bezárás";

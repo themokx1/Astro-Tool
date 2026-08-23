@@ -153,13 +153,83 @@ import Testing
 @Test func pendingDurabilityJournalSurvivesRelaunchAsVisibleWarning() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let journalURL = fixture.rootURL.appendingPathComponent(".state-durability")
-    try Data("pending".utf8).write(to: journalURL, options: .atomic)
+    let stateData = try Data(contentsOf: fixture.rootURL.appendingPathComponent("state.json"))
+    let record = MobileDurabilityJournalRecord(version: MobileDurabilityJournalRecord.currentVersion, phase: .pending, priorStateSHA256: journalHash(stateData), intendedStateSHA256: String(repeating: "a", count: 64), operationID: UUID())
+    try MobileJSON.encoder.encode(record).write(to: journalURL, options: .atomic)
 
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
 
     #expect(await relaunched.durabilityAttemptWarning)
     #expect(!(await relaunched.durabilityWarning))
+    #expect(!(await relaunched.durabilityAmbiguousWarning))
     #expect(await relaunched.activeSnapshot?.revision == 1)
+}
+
+@Test func crashWindowJournalWithNewStateShowsSavedWarning() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    let oldData = try Data(contentsOf: stateURL)
+    var object = try JSONSerialization.jsonObject(with: oldData) as! [String: Any]
+    object["durabilityWarning"] = false
+    let newData = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    let record = MobileDurabilityJournalRecord(version: MobileDurabilityJournalRecord.currentVersion, phase: .pending, priorStateSHA256: journalHash(oldData), intendedStateSHA256: journalHash(newData), operationID: UUID())
+    try newData.write(to: stateURL, options: .atomic)
+    try MobileJSON.encoder.encode(record).write(to: fixture.rootURL.appendingPathComponent(".state-durability"), options: .atomic)
+
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+
+    #expect(await relaunched.durabilityWarning)
+    #expect(!(await relaunched.durabilityAttemptWarning))
+    #expect(!(await relaunched.durabilityAmbiguousWarning))
+}
+
+@Test func corruptJournalShowsAmbiguousRecoveryWarning() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try Data("not-json".utf8).write(to: fixture.rootURL.appendingPathComponent(".state-durability"), options: .atomic)
+
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+
+    #expect(!(await relaunched.durabilityWarning))
+    #expect(!(await relaunched.durabilityAttemptWarning))
+    #expect(await relaunched.durabilityAmbiguousWarning)
+}
+
+@Test func missingJournalShowsAmbiguousRecoveryWarning() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try FileManager.default.removeItem(at: fixture.rootURL.appendingPathComponent(".state-durability"))
+
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+
+    #expect(await relaunched.durabilityAmbiguousWarning)
+}
+
+@Test func migrationWritesInitialClearRecordBoundToState() throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateData = try Data(contentsOf: fixture.rootURL.appendingPathComponent("state.json"))
+    let record = try readJournal(fixture)
+
+    #expect(record.version == MobileDurabilityJournalRecord.currentVersion)
+    #expect(record.phase == .clear)
+    #expect(record.priorStateSHA256 == nil)
+    #expect(record.intendedStateSHA256 == journalHash(stateData))
+}
+
+@Test func reloadClearsStaleDurabilityFlagsAfterConfirmedClearRecord() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateData = try Data(contentsOf: fixture.rootURL.appendingPathComponent("state.json"))
+    let pending = MobileDurabilityJournalRecord(version: MobileDurabilityJournalRecord.currentVersion, phase: .pending, priorStateSHA256: journalHash(stateData), intendedStateSHA256: String(repeating: "b", count: 64), operationID: UUID())
+    let journalURL = fixture.rootURL.appendingPathComponent(".state-durability")
+    try MobileJSON.encoder.encode(pending).write(to: journalURL, options: .atomic)
+    await fixture.store.reload()
+    #expect(await fixture.store.durabilityAttemptWarning)
+
+    let clear = MobileDurabilityJournalRecord(version: MobileDurabilityJournalRecord.currentVersion, phase: .clear, priorStateSHA256: journalHash(stateData), intendedStateSHA256: journalHash(stateData), operationID: pending.operationID)
+    try MobileJSON.encoder.encode(clear).write(to: journalURL, options: .atomic)
+    await fixture.store.reload()
+
+    #expect(!(await fixture.store.durabilityWarning))
+    #expect(!(await fixture.store.durabilityAttemptWarning))
+    #expect(!(await fixture.store.durabilityAmbiguousWarning))
 }
 
 @Test func pendingJournalSyncFailurePreventsStateReplacement() async throws {
@@ -182,7 +252,7 @@ import Testing
     #expect(await store.queuedChanges.isEmpty)
     #expect(!(await store.durabilityWarning))
     #expect(await store.durabilityAttemptWarning)
-    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "attempted")
+    #expect(try readJournal(fixture).phase == .attempted)
 }
 
 @Test func preRenameStateWriteFailureClearsPendingWithoutSavedWarning() async throws {
@@ -203,7 +273,7 @@ import Testing
     #expect(try Data(contentsOf: stateURL) == before)
     #expect(!(await store.durabilityWarning))
     #expect(!(await store.durabilityAttemptWarning))
-    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "clear")
+    #expect(try readJournal(fixture).phase == .clear)
 }
 
 @Test func clearJournalSyncUncertaintyRemainsConservative() async throws {
@@ -220,7 +290,7 @@ import Testing
     #expect(await store.activeSnapshot?.revision == 1)
     #expect(await store.durabilityWarning)
     #expect(!(await store.durabilityAttemptWarning))
-    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "uncertain")
+    #expect(try readJournal(fixture).phase == .uncertain)
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
     #expect(await relaunched.durabilityWarning)
 }
@@ -238,7 +308,7 @@ import Testing
     try await store.editNote(id: "night-note", text: "Needs durable warning")
 
     #expect(await store.durabilityWarning)
-    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "uncertain")
+    #expect(try readJournal(fixture).phase == .uncertain)
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
     #expect(await relaunched.durabilityWarning)
     #expect(await relaunched.activeSnapshot?.revision == 1)
@@ -542,6 +612,14 @@ private func sectionJSON(id: String, items: [[String: Any]] = []) -> [String: An
 
 private func itemJSON(id: String) -> [String: Any] {
     ["id": id, "title": "Focus", "explanation": NSNull(), "isCompleted": false, "baseRevision": 0]
+}
+
+private func journalHash(_ data: Data) -> String {
+    SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+}
+
+private func readJournal(_ fixture: MobileStoreFixture) throws -> MobileDurabilityJournalRecord {
+    try MobileJSON.decoder.decode(MobileDurabilityJournalRecord.self, from: Data(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability")))
 }
 
 private final class MobileStoreFixture {
