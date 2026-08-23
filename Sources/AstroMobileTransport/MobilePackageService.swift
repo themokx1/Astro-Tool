@@ -60,8 +60,15 @@ public actor MobilePackageService {
     private var stagedImports: [UUID: StagedImport] = [:]
     private var consumedPackageIDs: Set<UUID> = []
     private var stagedImportBytes: Int64 = 0
+    private let testingBeforePublication: @Sendable (URL) -> Void
 
-    public init() {}
+    public init() {
+        self.testingBeforePublication = { _ in }
+    }
+
+    init(testingBeforePublication: @escaping @Sendable (URL) -> Void) {
+        self.testingBeforePublication = testingBeforePublication
+    }
 
     public func export(
         _ envelope: MobilePackageEnvelope,
@@ -107,30 +114,43 @@ public actor MobilePackageService {
             throw MobilePackageError.invalidManifest
         }
 
+        let staging: PrivateStaging
+        do {
+            staging = try Self.createPrivateStaging()
+            try Self.writeFile(at: staging.descriptor, name: Self.encryptedPayloadFileName, data: combined)
+            try Self.writeFile(at: staging.descriptor, name: Self.manifestFileName, data: manifestData)
+            guard Self.sameStableIdentity(staging.identity, Self.identity(ofFD: staging.descriptor)) else {
+                throw MobilePackageError.stagingFailed
+            }
+        } catch let error as MobilePackageError {
+            throw error
+        } catch {
+            throw MobilePackageError.stagingFailed
+        }
+        var published = false
+        defer {
+            if published {
+                Self.closePrivateStaging(staging)
+            } else {
+                Self.clearPrivateStaging(staging)
+            }
+        }
+
         let parent = destination.deletingLastPathComponent()
-        let temporaryName = ".\(destination.lastPathComponent).staging-\(UUID().uuidString)"
         let parentFD = parent.path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
         guard parentFD >= 0 else { throw MobilePackageError.stagingFailed }
         defer { Darwin.close(parentFD) }
-        var temporaryFD: Int32 = -1
-        defer { if temporaryFD >= 0 { Darwin.close(temporaryFD) } }
-        var temporaryIdentity: FileIdentity?
         do {
-            guard temporaryName.withCString({ Darwin.mkdirat(parentFD, $0, 0o700) }) == 0 else { throw MobilePackageError.stagingFailed }
-            temporaryFD = temporaryName.withCString { Darwin.openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
-            guard temporaryFD >= 0, let identity = Self.identity(ofFD: temporaryFD) else { throw MobilePackageError.stagingFailed }
-            temporaryIdentity = identity
-            try Self.writeFile(at: temporaryFD, name: Self.encryptedPayloadFileName, data: combined)
-            try Self.writeFile(at: temporaryFD, name: Self.manifestFileName, data: manifestData)
-            guard Self.sameStableIdentity(temporaryIdentity, Self.identity(ofFD: temporaryFD)) else {
-                throw MobilePackageError.stagingFailed
-            }
-            try Self.publishExclusively(parentFD: parentFD, temporaryName: temporaryName, destinationName: destination.lastPathComponent)
+            try Self.publishExclusively(
+                parentFD: parentFD,
+                destinationName: destination.lastPathComponent,
+                staging: staging,
+                beforePublication: testingBeforePublication
+            )
+            published = true
         } catch let error as MobilePackageError {
-            Self.removeTemporaryAt(parentFD: parentFD, name: temporaryName, identity: temporaryIdentity)
             throw error
         } catch {
-            Self.removeTemporaryAt(parentFD: parentFD, name: temporaryName, identity: temporaryIdentity)
             if (error as NSError).code == EEXIST { throw MobilePackageError.destinationExists }
             throw MobilePackageError.stagingFailed
         }
@@ -683,37 +703,99 @@ public actor MobilePackageService {
     }
 
     private static func validateAggregateLimits(_ envelope: MobilePackageEnvelope) throws {
-        var estimated: Int64 = 0
-        func add(_ string: String) throws {
-            let count = Int64(string.utf8.count)
-            let (next, overflow) = estimated.addingReportingOverflow(count)
-            guard !overflow, next <= maximumEstimatedContentByteCount else { throw MobilePackageError.invalidEnvelope }
-            estimated = next
-        }
-        func add(_ uuid: UUID) throws { try add(uuid.uuidString) }
-        func checkCount(_ count: Int) throws { guard count <= maximumCollectionCount else { throw MobilePackageError.invalidEnvelope } }
-        for id in envelope.acknowledgedChangeIDs { try add(id) }
+        var budget = JSONEncodingBudget()
+        try budget.addRecord()
+        try budget.addRecord()
+        try budget.addArray(envelope.acknowledgedChangeIDs.count)
+        for id in envelope.acknowledgedChangeIDs { try budget.addString(id.uuidString) }
+        try budget.addArray(envelope.changes.count)
         for change in envelope.changes {
+            try budget.addRecord()
             switch change {
             case .checklistCompletion(let value):
-                try add(value.changeID); try add(value.deviceID); try add(value.briefingID); try add(value.itemID)
+                try budget.addString(value.changeID.uuidString); try budget.addString(value.deviceID.uuidString)
+                try budget.addString(value.briefingID.uuidString); try budget.addString(value.itemID)
             case .noteRevision(let value):
-                try add(value.changeID); try add(value.deviceID); try add(value.noteID); try add(value.ownerID); try add(value.text)
+                try budget.addString(value.changeID.uuidString); try budget.addString(value.deviceID.uuidString)
+                try budget.addString(value.noteID); try budget.addString(value.ownerID); try budget.addString(value.text)
             }
         }
         guard let snapshot = envelope.snapshot else { return }
-        for project in snapshot.projects { try add(project.id); try add(project.displayName); try add(project.catalogID); try add(project.phase) }
-        for night in snapshot.nights { try add(night.id); try add(night.localDate); try add(night.timeZoneID) }
-        for capture in snapshot.captures { try add(capture.id); try add(capture.projectID); try add(capture.nightID); try add(capture.displayName); if let value = capture.filterName { try add(value) } }
+        try budget.addRecord()
+        try budget.addString(snapshot.libraryID.rawValue.uuidString)
+        try budget.addString(snapshot.snapshotID.uuidString)
+        try budget.addArray(snapshot.projects.count)
+        for project in snapshot.projects {
+            try budget.addRecord(); try budget.addString(project.id.uuidString); try budget.addString(project.displayName)
+            try budget.addString(project.catalogID); try budget.addString(project.phase)
+        }
+        try budget.addArray(snapshot.nights.count)
+        for night in snapshot.nights {
+            try budget.addRecord(); try budget.addString(night.id.uuidString); try budget.addString(night.localDate); try budget.addString(night.timeZoneID)
+        }
+        try budget.addArray(snapshot.captures.count)
+        for capture in snapshot.captures {
+            try budget.addRecord(); try budget.addString(capture.id.uuidString); try budget.addString(capture.projectID.uuidString)
+            try budget.addString(capture.nightID.uuidString); try budget.addString(capture.displayName)
+            if let value = capture.filterName { try budget.addString(value) }
+        }
+        try budget.addArray(snapshot.briefings.count)
         for briefing in snapshot.briefings {
-            try checkCount(briefing.targets.count); try checkCount(briefing.checklist.count); try add(briefing.id); try add(briefing.readiness); try add(briefing.noteID)
-            for target in briefing.targets { try checkCount(target.warnings.count); try add(target.id); try add(target.name); try add(target.role); for warning in target.warnings { try add(warning) } }
+            try budget.addRecord(); try budget.addString(briefing.id.uuidString); try budget.addString(briefing.readiness); try budget.addString(briefing.noteID)
+            try budget.addArray(briefing.targets.count)
+            for target in briefing.targets {
+                try budget.addRecord(); try budget.addString(target.id.uuidString); try budget.addString(target.name); try budget.addString(target.role)
+                try budget.addArray(target.warnings.count)
+                for warning in target.warnings { try budget.addString(warning) }
+            }
+            try budget.addArray(briefing.checklist.count)
             for section in briefing.checklist {
-                try checkCount(section.items.count); try add(section.id); try add(section.title)
-                for item in section.items { try add(item.id); try add(item.title); if let explanation = item.explanation { try add(explanation) } }
+                try budget.addRecord(); try budget.addString(section.id); try budget.addString(section.title)
+                try budget.addArray(section.items.count)
+                for item in section.items {
+                    try budget.addRecord(); try budget.addString(item.id); try budget.addString(item.title)
+                    if let explanation = item.explanation { try budget.addString(explanation) }
+                }
             }
         }
-        for note in snapshot.notes { try add(note.id); try add(note.scope.rawValue); try add(note.ownerID); try add(note.text) }
+        try budget.addArray(snapshot.notes.count)
+        for note in snapshot.notes {
+            try budget.addRecord(); try budget.addString(note.id); try budget.addString(note.scope.rawValue)
+            try budget.addString(note.ownerID); try budget.addString(note.text)
+        }
+    }
+
+    private struct JSONEncodingBudget {
+        private var encodedByteCount: Int64 = 0
+        private var elementCount: Int64 = 0
+
+        mutating func addRecord() throws { try add(1024) }
+
+        mutating func addArray(_ count: Int) throws {
+            guard count <= maximumCollectionCount else { throw MobilePackageError.invalidEnvelope }
+            let count64 = Int64(count)
+            let (nextElements, elementOverflow) = elementCount.addingReportingOverflow(count64)
+            guard !elementOverflow, nextElements <= maximumTotalNestedRecords else { throw MobilePackageError.invalidEnvelope }
+            elementCount = nextElements
+            let (arrayBytes, byteOverflow) = count64.multipliedReportingOverflow(by: 16)
+            guard !byteOverflow else { throw MobilePackageError.invalidEnvelope }
+            try add(arrayBytes)
+        }
+
+        mutating func addString(_ value: String) throws {
+            let sourceBytes = Int64(value.utf8.count)
+            let (escapedBytes, overflow) = sourceBytes.multipliedReportingOverflow(by: 6)
+            guard !overflow else { throw MobilePackageError.invalidEnvelope }
+            let (withQuotes, quoteOverflow) = escapedBytes.addingReportingOverflow(2)
+            guard !quoteOverflow else { throw MobilePackageError.invalidEnvelope }
+            try add(withQuotes)
+        }
+
+        private mutating func add(_ count: Int64) throws {
+            let (next, overflow) = encodedByteCount.addingReportingOverflow(count)
+            guard !overflow, next <= maximumEstimatedContentByteCount else { throw MobilePackageError.invalidEnvelope }
+            encodedByteCount = next
+        }
     }
 
     private static func validString(_ value: String) -> Bool { value.utf8.count <= maximumStringByteCount }
@@ -723,6 +805,14 @@ public actor MobilePackageService {
         let inode: UInt64
         let size: Int64
         let type: FileAttributeType
+    }
+
+    private struct PrivateStaging {
+        let parentDescriptor: Int32
+        let name: String
+        let url: URL
+        let descriptor: Int32
+        let identity: FileIdentity
     }
 
     private static func identity(of url: URL, fileManager: FileManager) -> FileIdentity? {
@@ -758,6 +848,20 @@ public actor MobilePackageService {
     private static func identity(ofFD descriptor: Int32) -> FileIdentity? {
         var status = stat()
         guard Darwin.fstat(descriptor, &status) == 0 else { return nil }
+        let mode = status.st_mode & S_IFMT
+        let type: FileAttributeType
+        switch mode {
+        case S_IFDIR: type = .typeDirectory
+        case S_IFREG: type = .typeRegular
+        default: type = .typeSymbolicLink
+        }
+        return FileIdentity(device: UInt64(status.st_dev), inode: UInt64(status.st_ino), size: Int64(status.st_size), type: type)
+    }
+
+    private static func identity(at directoryFD: Int32, name: String) -> FileIdentity? {
+        var status = stat()
+        let result = name.withCString { Darwin.fstatat(directoryFD, $0, &status, AT_SYMLINK_NOFOLLOW) }
+        guard result == 0 else { return nil }
         let mode = status.st_mode & S_IFMT
         let type: FileAttributeType
         switch mode {
@@ -852,20 +956,45 @@ public actor MobilePackageService {
         return identity.type == .typeDirectory
     }
 
-    private static func removeTemporaryAt(parentFD: Int32, name: String, identity expectedIdentity: FileIdentity?) {
-        guard let expectedIdentity else { return }
-        let childFD = name.withCString { Darwin.openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
-        guard childFD >= 0 else { return }
-        defer { Darwin.close(childFD) }
-        var status = stat()
-        guard Darwin.fstat(childFD, &status) == 0,
-              status.st_dev == Int32(truncatingIfNeeded: expectedIdentity.device),
-              status.st_ino == expectedIdentity.inode,
-              status.st_mode & S_IFMT == S_IFDIR else { return }
-        for child in [Self.manifestFileName, Self.encryptedPayloadFileName] {
-            _ = child.withCString { Darwin.unlinkat(childFD, $0, 0) }
+    private static func createPrivateStaging() throws -> PrivateStaging {
+        let temporaryRoot = FileManager.default.temporaryDirectory.path
+        let parentDescriptor = temporaryRoot.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+        guard parentDescriptor >= 0 else { throw MobilePackageError.stagingFailed }
+        var template = Array((temporaryRoot + "/AstroMobileTransport-XXXXXXXX").utf8).map(CChar.init) + [0]
+        guard let path = template.withUnsafeMutableBufferPointer({ Darwin.mkdtemp($0.baseAddress) }) else {
+            Darwin.close(parentDescriptor)
+            throw MobilePackageError.stagingFailed
         }
-        _ = name.withCString { Darwin.unlinkat(parentFD, $0, AT_REMOVEDIR) }
+        let url = URL(fileURLWithPath: String(cString: path), isDirectory: true)
+        let name = url.lastPathComponent
+        let descriptor = name.withCString { Darwin.openat(parentDescriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+        guard descriptor >= 0, let identity = identity(ofFD: descriptor), identity.type == .typeDirectory else {
+            if descriptor >= 0 { Darwin.close(descriptor) }
+            Darwin.close(parentDescriptor)
+            throw MobilePackageError.stagingFailed
+        }
+        guard Darwin.fchmod(descriptor, 0o700) == 0 else {
+            Darwin.close(descriptor)
+            Darwin.close(parentDescriptor)
+            throw MobilePackageError.stagingFailed
+        }
+        return PrivateStaging(parentDescriptor: parentDescriptor, name: name, url: url, descriptor: descriptor, identity: identity)
+    }
+
+    /// Cleanup is descriptor-relative and intentionally leaves the now-empty,
+    /// mode-0700 operation directory for the system temporary-directory reaper.
+    /// This avoids ever unlinking a mutable parent/name that could designate a
+    /// replacement entry controlled by the destination's owner.
+    private static func clearPrivateStaging(_ staging: PrivateStaging) {
+        for child in [Self.manifestFileName, Self.encryptedPayloadFileName] {
+            _ = child.withCString { Darwin.unlinkat(staging.descriptor, $0, 0) }
+        }
+        closePrivateStaging(staging)
+    }
+
+    private static func closePrivateStaging(_ staging: PrivateStaging) {
+        Darwin.close(staging.descriptor)
+        Darwin.close(staging.parentDescriptor)
     }
 
     private static func sameStableIdentity(_ lhs: FileIdentity?, _ rhs: FileIdentity?) -> Bool {
@@ -873,14 +1002,28 @@ public actor MobilePackageService {
         return lhs.device == rhs.device && lhs.inode == rhs.inode && lhs.type == rhs.type
     }
 
-    private static func publishExclusively(parentFD: Int32, temporaryName: String, destinationName: String) throws {
-        let result = temporaryName.withCString { sourcePath in
+    private static func publishExclusively(
+        parentFD: Int32,
+        destinationName: String,
+        staging: PrivateStaging,
+        beforePublication: @Sendable (URL) -> Void
+    ) throws {
+        guard Darwin.fsync(staging.descriptor) == 0 else { throw MobilePackageError.stagingFailed }
+        beforePublication(staging.url)
+        guard sameStableIdentity(staging.identity, identity(ofFD: staging.descriptor)),
+              sameStableIdentity(staging.identity, identity(at: staging.parentDescriptor, name: staging.name)) else {
+            throw MobilePackageError.stagingFailed
+        }
+        let result = staging.name.withCString { sourcePath in
             destinationName.withCString { destinationPath in
-                Darwin.renameatx_np(parentFD, sourcePath, parentFD, destinationPath, UInt32(RENAME_EXCL))
+                Darwin.renameatx_np(staging.parentDescriptor, sourcePath, parentFD, destinationPath, UInt32(RENAME_EXCL))
             }
         }
         guard result == 0 else {
             if errno == EEXIST { throw MobilePackageError.destinationExists }
+            throw MobilePackageError.stagingFailed
+        }
+        guard sameStableIdentity(staging.identity, identity(at: parentFD, name: destinationName)) else {
             throw MobilePackageError.stagingFailed
         }
     }

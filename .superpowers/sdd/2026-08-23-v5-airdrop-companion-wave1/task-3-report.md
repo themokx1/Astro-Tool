@@ -211,3 +211,58 @@ git diff --cached --check
 ```
 
 Both diff checks were clean before commit. Round-3 tests cover descriptor-bound package listing, no-follow hard/symbolic link rejection, staging cleanup, aggregate warning/nested-array limits, lexical Unicode and trailing-data boundaries, symmetric wrapped-key limits, and independent semantic owner/editability failures.
+
+## Security fix round 4 — replacement implementation
+
+### RED/GREEN evidence
+
+#### RED
+
+`escapedWarningsAndEmptyWarningCountsFailBeforeEncoding` was added with a valid briefing/note relationship and 10,000 warnings containing 200 control characters each. With the conservative encoded-content budget deliberately relaxed to 16 MiB, the focused run failed exactly as expected:
+
+```text
+Expectation failed: escapedError == .invalidEnvelope
+Expectation failed: destination does not exist
+```
+
+The export therefore encoded and published the escaped-content package. This was a real reproduction of the missing pre-encode escaping accounting, not a fixture/schema failure.
+
+#### GREEN
+
+The service now:
+
+- builds package bytes in a private, mode-0700 `mkdtemp` staging directory and publishes only with `renameatx_np(..., RENAME_EXCL)` from that app-private source; it never creates a final package directory in an uncontrolled destination parent;
+- binds the retained private staging descriptor to its parent/name immediately before the exclusive rename. A detected replacement fails closed, leaves the replacement untouched, and performs only descriptor-relative cleanup of the original private files. The empty private directory is intentionally left for the temporary-directory reaper rather than risk deleting a replacement by mutable name;
+- safely rejects a cross-filesystem publication (`EXDEV`) rather than falling back to a non-atomic or substituteable final-directory construction;
+- uses overflow-checked aggregate array-element accounting for every nested array (including warnings), plus a conservative encoded JSON budget: every source UTF-8 byte costs six encoded bytes, quotes/array structure are counted, and every fixed-shape record reserves 1 KiB for keys, numbers, dates, punctuation, and other structural output. Thus `JSONEncoder` is called only when the resulting encoding is bounded below the 8 MiB safe budget;
+- adds direct proof for a valid escaped surrogate pair, a decoded 129-byte JSON key failure prior to schema handling, and a platform-decodable noncanonical standard-Base64 spelling of the wrapped key rejected by canonical re-encoding.
+
+New tests cover escaped warning expansion, 10,001 empty warnings, private staging-name replacement/publication and replacement-preserving cleanup, valid surrogate acceptance, long decoded key rejection, and decodable noncanonical Base64. The service test count is now 23.
+
+### Final verification
+
+```text
+swift test --filter MobilePackageServiceTests
+Test run with 23 tests in 0 suites passed after 0.234 seconds.
+
+swift test --filter MobilePackageCryptoTests
+Test run with 9 tests in 0 suites passed after 0.001 seconds.
+
+swift test --filter MobilePackage
+Test run with 32 tests in 0 suites passed after 0.222 seconds.
+
+swift test --no-parallel
+Test run with 3417 tests in 216 suites passed after 96.561 seconds.
+
+git diff --check
+```
+
+The diff check was clean.
+
+### Scope and residual behavior
+
+- No library-root, network, UI, CloudKit, or Task 4+ behavior changed.
+- A publication whose selected destination is on a different filesystem safely fails rather than copying into an uncontrolled directory and weakening the source-identity guarantee.
+- A failed private staging operation can leave an empty mode-0700 temporary directory; it contains no package bytes and is recoverable by the system temporary-directory reaper. The implementation never deletes an entry through a mutable parent/name after it has identified it.
+
+✅

@@ -310,6 +310,22 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(noncanonicalError as? MobilePackageError == .invalidManifest)
 }
 
+@Test func decodableNonCanonicalWrappedKeyBase64IsRejected() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("noncanonical-base64.astromobile")
+    try await MobilePackageService().export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    let manifestURL = destination.appendingPathComponent("manifest.json")
+    var manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as! [String: Any]
+    let canonical = manifest["wrappedContentKeyBase64"] as! String
+    let noncanonical = decodableNonCanonicalBase64(canonical)
+    #expect(noncanonical != nil)
+    guard let noncanonical else { return }
+    manifest["wrappedContentKeyBase64"] = noncanonical
+    try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys]).write(to: manifestURL, options: .atomic)
+    let error = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .invalidManifest)
+}
+
 @Test func aggregateWarningsAndNestedArraysFailBeforePublication() async throws {
     let root = try TemporaryPackageDirectory()
     let target = MobileBriefingTarget(id: UUID(), name: "target", role: "role", start: Date(), end: Date(), warnings: Array(repeating: "warning", count: MobilePackageService.maximumCollectionCount + 1))
@@ -319,6 +335,70 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     let error = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("aggregate.astromobile"), wrapping: DeterministicWrapper()) }
     #expect(error as? MobilePackageError == .invalidEnvelope)
     #expect(!(FileManager.default.fileExists(atPath: root.url.appendingPathComponent("aggregate.astromobile").path)))
+}
+
+@Test func escapedWarningsAndEmptyWarningCountsFailBeforeEncoding() async throws {
+    let root = try TemporaryPackageDirectory()
+    let briefingID = UUID()
+    let note = MobileNote(id: "note", scope: .briefing, ownerID: briefingID.uuidString, text: "", baseRevision: 0, updatedAt: Date(), isEditableOnPhone: true)
+    let target = MobileBriefingTarget(
+        id: UUID(), name: "target", role: "role", start: Date(), end: Date(),
+        warnings: Array(repeating: String(repeating: "\u{0001}", count: 200), count: MobilePackageService.maximumCollectionCount)
+    )
+    let briefing = MobileBriefing(id: briefingID, revision: 0, savedAt: Date(), nightDate: nil, readiness: "ready", targets: [target], checklist: [], noteID: note.id)
+    let snapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [briefing], notes: [note])
+    let escapedDestination = root.url.appendingPathComponent("escaped.astromobile")
+    let escapedError = await errorFrom {
+        try await MobilePackageService().export(MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: []), to: escapedDestination, wrapping: DeterministicWrapper())
+    }
+    #expect(escapedError as? MobilePackageError == .invalidEnvelope)
+    #expect(!FileManager.default.fileExists(atPath: escapedDestination.path))
+
+    let oversizedTarget = MobileBriefingTarget(id: UUID(), name: "target", role: "role", start: Date(), end: Date(), warnings: Array(repeating: "", count: MobilePackageService.maximumCollectionCount + 1))
+    let oversizedBriefing = MobileBriefing(id: briefingID, revision: 0, savedAt: Date(), nightDate: nil, readiness: "ready", targets: [oversizedTarget], checklist: [], noteID: note.id)
+    let oversizedSnapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [oversizedBriefing], notes: [note])
+    let countError = await errorFrom {
+        try await MobilePackageService().export(MobilePackageEnvelope(snapshot: oversizedSnapshot, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("too-many-empty.astromobile"), wrapping: DeterministicWrapper())
+    }
+    #expect(countError as? MobilePackageError == .invalidEnvelope)
+}
+
+@Test func publicationReplacementFailsWithoutDeletingReplacement() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("replacement.astromobile")
+    let replacedStagingURL = URLStore()
+    let service = MobilePackageService(testingBeforePublication: { url in
+        replacedStagingURL.value = url
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        try? Data("replacement".utf8).write(to: url.appendingPathComponent("sentinel"))
+    })
+    let error = await errorFrom {
+        try await service.export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    }
+    #expect(error as? MobilePackageError == .stagingFailed)
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+    let stagingURL = try #require(replacedStagingURL.value)
+    #expect(try Data(contentsOf: stagingURL.appendingPathComponent("sentinel")) == Data("replacement".utf8))
+    try FileManager.default.removeItem(at: stagingURL)
+}
+
+@Test func lexicalSurrogateAndDecodedKeyBoundariesAreIndependentOfSchema() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("unicode.astromobile")
+    try await MobilePackageService().export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    let manifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: Data(contentsOf: destination.appendingPathComponent("manifest.json")))
+    let createdAt = "2026-08-23T00:00:00.00000000000000000Z"
+    let valid = Data("{\"packageID\":\"\(manifest.packageID.uuidString)\",\"envelope\":{\"changes\":[{\"kind\":\"noteRevision\",\"payload\":{\"changeID\":\"\(UUID().uuidString)\",\"deviceID\":\"\(UUID().uuidString)\",\"noteID\":\"n\",\"ownerID\":\"o\",\"baseRevision\":0,\"text\":\"\\uD83D\\uDE00\",\"createdAt\":\"\(createdAt)\"}}],\"acknowledgedChangeIDs\":[]}}".utf8)
+    try rewriteAuthenticatedPayloadRaw(at: destination, plaintext: valid)
+    let preview = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper())
+    #expect(preview.incomingChanges.count == 1)
+
+    let tooLongKey = String(repeating: "a", count: 129)
+    let malformed = Data("{\"\(tooLongKey)\":null}".utf8)
+    try rewriteAuthenticatedPayloadRaw(at: destination, plaintext: malformed)
+    let error = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .invalidEnvelope)
 }
 
 @Test func hardlinkedChildrenAreRejected() async throws {
@@ -434,6 +514,30 @@ private func rewriteAuthenticatedPayloadRaw(at package: URL, plaintext: Data) th
     manifestObject["encryptedByteCount"] = combined.count
     manifestObject["ciphertextSHA256"] = MobilePackageCrypto.sha256Hex(combined)
     try JSONSerialization.data(withJSONObject: manifestObject, options: [.sortedKeys]).write(to: package.appendingPathComponent("manifest.json"), options: .atomic)
+}
+
+private func decodableNonCanonicalBase64(_ canonical: String) -> String? {
+    guard let decoded = Data(base64Encoded: canonical) else {
+        return nil
+    }
+    let alphabet = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+    var characters = Array(canonical)
+    guard let padding = characters.firstIndex(of: "="), padding > 0 else { return nil }
+    let lastDataIndex = padding - 1
+    guard let position = alphabet.firstIndex(of: characters[lastDataIndex]) else { return nil }
+    let groupStart = position & ~3
+    for offset in 0..<4 where groupStart + offset != position {
+        characters[lastDataIndex] = alphabet[groupStart + offset]
+        let candidate = String(characters)
+        if Data(base64Encoded: candidate) == decoded, candidate != canonical, decoded.base64EncodedString() != candidate {
+            return candidate
+        }
+    }
+    return nil
+}
+
+private final class URLStore: @unchecked Sendable {
+    var value: URL?
 }
 
 private func errorFrom(_ operation: () async throws -> Void) async -> Error? {
