@@ -271,6 +271,56 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(oversizedError as? MobilePackageError == .invalidEnvelope)
 }
 
+@Test func lexicalUnicodeBoundariesAndTrailingDataFailClosed() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("lexical.astromobile")
+    try await MobilePackageService().export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    let manifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: Data(contentsOf: destination.appendingPathComponent("manifest.json")))
+    let prefix = "{\"packageID\":\"\(manifest.packageID.uuidString)\",\"envelope\":{\"changes\":[],\"acknowledgedChangeIDs\":[],\"x\":\""
+    let suffix = "\"}}"
+    for value in ["\\uD83D\\uDE00", "\\uD800", String(repeating: "a", count: 129)] {
+        let raw = Data((prefix + value + suffix).utf8)
+        try rewriteAuthenticatedPayloadRaw(at: destination, plaintext: raw)
+        let error = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
+        #expect(error as? MobilePackageError == .invalidEnvelope)
+    }
+    let trailing = Data(("{\"packageID\":\"\(manifest.packageID.uuidString)\",\"envelope\":{\"changes\":[],\"acknowledgedChangeIDs\":[]}}x").utf8)
+    try rewriteAuthenticatedPayloadRaw(at: destination, plaintext: trailing)
+    let trailingError = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
+    #expect(trailingError as? MobilePackageError == .invalidEnvelope)
+}
+
+@Test func wrappedKeyEncodingAndDecodedSizeAreBounded() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("wrapped.astromobile")
+    try await MobilePackageService().export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
+    var manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: destination.appendingPathComponent("manifest.json"))) as! [String: Any]
+    manifest["wrappedContentKeyBase64"] = Data(repeating: 0, count: MobilePackageService.maximumWrappedKeyByteCount + 1).base64EncodedString()
+    try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys]).write(to: destination.appendingPathComponent("manifest.json"), options: .atomic)
+    let oversizedError = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
+    #expect(oversizedError as? MobilePackageError == .invalidManifest)
+
+    try await MobilePackageService().export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("canonical.astromobile"), wrapping: DeterministicWrapper())
+    let canonicalURL = root.url.appendingPathComponent("canonical.astromobile/manifest.json")
+    var noncanonical = try JSONSerialization.jsonObject(with: Data(contentsOf: canonicalURL)) as! [String: Any]
+    let encoded = noncanonical["wrappedContentKeyBase64"] as! String
+    noncanonical["wrappedContentKeyBase64"] = String(encoded.dropLast())
+    try JSONSerialization.data(withJSONObject: noncanonical, options: [.sortedKeys]).write(to: canonicalURL, options: .atomic)
+    let noncanonicalError = await errorFrom { _ = try await MobilePackageService().importPreview(from: root.url.appendingPathComponent("canonical.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(noncanonicalError as? MobilePackageError == .invalidManifest)
+}
+
+@Test func aggregateWarningsAndNestedArraysFailBeforePublication() async throws {
+    let root = try TemporaryPackageDirectory()
+    let target = MobileBriefingTarget(id: UUID(), name: "target", role: "role", start: Date(), end: Date(), warnings: Array(repeating: "warning", count: MobilePackageService.maximumCollectionCount + 1))
+    let note = MobileNote(id: "note", scope: .briefing, ownerID: UUID().uuidString, text: "", baseRevision: 0, updatedAt: Date(), isEditableOnPhone: true)
+    let briefing = MobileBriefing(id: UUID(), revision: 0, savedAt: Date(), nightDate: nil, readiness: "ready", targets: [target], checklist: [], noteID: note.id)
+    let snapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [briefing], notes: [note])
+    let error = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("aggregate.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .invalidEnvelope)
+    #expect(!(FileManager.default.fileExists(atPath: root.url.appendingPathComponent("aggregate.astromobile").path)))
+}
+
 @Test func hardlinkedChildrenAreRejected() async throws {
     let root = try TemporaryPackageDirectory()
     let destination = root.url.appendingPathComponent("hardlink.astromobile")
@@ -297,9 +347,13 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     let missingError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: missingSnapshot, changes: [], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("missing.astromobile"), wrapping: DeterministicWrapper()) }
     #expect(missingError as? MobilePackageError == .invalidEnvelope)
 
-    let change = MobileChange.noteRevision(NoteRevisionChange(changeID: UUID(), deviceID: UUID(), noteID: note.id, ownerID: "wrong", baseRevision: 0, text: "x", createdAt: Date()))
-    let changeError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [], notes: [note]), changes: [change], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("change.astromobile"), wrapping: DeterministicWrapper()) }
-    #expect(changeError as? MobilePackageError == .invalidEnvelope)
+    let editableNote = MobileNote(id: "editable", scope: .briefing, ownerID: "owner", text: "", baseRevision: 0, updatedAt: Date(), isEditableOnPhone: true)
+    let wrongOwnerChange = MobileChange.noteRevision(NoteRevisionChange(changeID: UUID(), deviceID: UUID(), noteID: editableNote.id, ownerID: "wrong", baseRevision: 0, text: "x", createdAt: Date()))
+    let wrongOwnerError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [], notes: [editableNote]), changes: [wrongOwnerChange], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("wrong-owner.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(wrongOwnerError as? MobilePackageError == .invalidEnvelope)
+    let nonEditableChange = MobileChange.noteRevision(NoteRevisionChange(changeID: UUID(), deviceID: UUID(), noteID: note.id, ownerID: note.ownerID, baseRevision: 0, text: "x", createdAt: Date()))
+    let nonEditableError = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [], notes: [note]), changes: [nonEditableChange], acknowledgedChangeIDs: []), to: root.url.appendingPathComponent("noneditable.astromobile"), wrapping: DeterministicWrapper()) }
+    #expect(nonEditableError as? MobilePackageError == .invalidEnvelope)
 }
 
 @Test func importDoesNotModifySourceAndRejectsSymlinkedChildren() async throws {

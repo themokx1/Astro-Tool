@@ -34,6 +34,8 @@ public actor MobilePackageService {
     public static let maximumCollectionCount = 10_000
     public static let maximumTotalNestedRecords = 50_000
     public static let maximumStringByteCount = 256 * 1024
+    public static let maximumEstimatedContentByteCount: Int64 = 8 * 1024 * 1024
+    public static let maximumWrappedKeyByteCount = 4096
     public static let maximumJSONDepth = 32
     public static let maximumStagedImportCount = 8
     public static let maximumStagedImportBytes: Int64 = 32 * 1024 * 1024
@@ -88,7 +90,7 @@ public actor MobilePackageService {
             throw MobilePackageError.invalidEnvelope
         }
         let wrappedKey = try wrapping.wrap(contentKey)
-        guard !wrappedKey.isEmpty, wrappedKey.count <= 4096 else { throw MobilePackageError.invalidKey }
+        guard !wrappedKey.isEmpty, wrappedKey.count <= Self.maximumWrappedKeyByteCount else { throw MobilePackageError.invalidKey }
 
         let manifest = MobilePackageManifest(
             formatVersion: Self.currentFormatVersion,
@@ -105,32 +107,31 @@ public actor MobilePackageService {
             throw MobilePackageError.invalidManifest
         }
 
-        let fileManager = FileManager.default
         let parent = destination.deletingLastPathComponent()
-        let temporary = parent.appendingPathComponent(
-            ".\(destination.lastPathComponent).staging-\(UUID().uuidString)",
-            isDirectory: true
-        )
+        let temporaryName = ".\(destination.lastPathComponent).staging-\(UUID().uuidString)"
+        let parentFD = parent.path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+        guard parentFD >= 0 else { throw MobilePackageError.stagingFailed }
+        defer { Darwin.close(parentFD) }
+        var temporaryFD: Int32 = -1
+        defer { if temporaryFD >= 0 { Darwin.close(temporaryFD) } }
         var temporaryIdentity: FileIdentity?
         do {
-            guard fileManager.fileExists(atPath: parent.path) else {
+            guard temporaryName.withCString({ Darwin.mkdirat(parentFD, $0, 0o700) }) == 0 else { throw MobilePackageError.stagingFailed }
+            temporaryFD = temporaryName.withCString { Darwin.openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+            guard temporaryFD >= 0, let identity = Self.identity(ofFD: temporaryFD) else { throw MobilePackageError.stagingFailed }
+            temporaryIdentity = identity
+            try Self.writeFile(at: temporaryFD, name: Self.encryptedPayloadFileName, data: combined)
+            try Self.writeFile(at: temporaryFD, name: Self.manifestFileName, data: manifestData)
+            guard Self.sameStableIdentity(temporaryIdentity, Self.identity(ofFD: temporaryFD)) else {
                 throw MobilePackageError.stagingFailed
             }
-            try fileManager.createDirectory(at: temporary, withIntermediateDirectories: false)
-            temporaryIdentity = Self.identity(of: temporary, fileManager: fileManager)
-            guard temporaryIdentity != nil else { throw MobilePackageError.stagingFailed }
-            try combined.write(to: temporary.appendingPathComponent(Self.encryptedPayloadFileName), options: .atomic)
-            try manifestData.write(to: temporary.appendingPathComponent(Self.manifestFileName), options: .atomic)
-            guard Self.sameStableIdentity(temporaryIdentity, Self.identity(of: temporary, fileManager: fileManager)) else {
-                throw MobilePackageError.stagingFailed
-            }
-            try Self.publishExclusively(from: temporary, to: destination)
+            try Self.publishExclusively(parentFD: parentFD, temporaryName: temporaryName, destinationName: destination.lastPathComponent)
         } catch let error as MobilePackageError {
-            Self.removeTemporaryIfOwned(temporary, identity: temporaryIdentity, fileManager: fileManager)
+            Self.removeTemporaryAt(parentFD: parentFD, name: temporaryName, identity: temporaryIdentity)
             throw error
         } catch {
-            Self.removeTemporaryIfOwned(temporary, identity: temporaryIdentity, fileManager: fileManager)
-            if (error as NSError).code == EEXIST || fileManager.fileExists(atPath: destination.path) { throw MobilePackageError.destinationExists }
+            Self.removeTemporaryAt(parentFD: parentFD, name: temporaryName, identity: temporaryIdentity)
+            if (error as NSError).code == EEXIST { throw MobilePackageError.destinationExists }
             throw MobilePackageError.stagingFailed
         }
     }
@@ -145,20 +146,15 @@ public actor MobilePackageService {
             throw MobilePackageError.sourceNotFound
         }
         let sourceIdentity = Self.identity(of: source, fileManager: fileManager)
-        guard (try? fileManager.contentsOfDirectory(atPath: source.path))
-            .map(Set.init) == Set([Self.manifestFileName, Self.encryptedPayloadFileName]) else {
-            throw MobilePackageError.malformedPackage
-        }
-        guard fileManager.fileExists(atPath: source.appendingPathComponent(Self.manifestFileName).path),
-              fileManager.fileExists(atPath: source.appendingPathComponent(Self.encryptedPayloadFileName).path) else {
-            throw MobilePackageError.malformedPackage
-        }
-
         let directoryFD = source.path.withCString { path in
             Darwin.open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         }
         guard directoryFD >= 0 else { throw MobilePackageError.malformedPackage }
         defer { Darwin.close(directoryFD) }
+        guard Self.sameStableIdentity(sourceIdentity, Self.identity(ofFD: directoryFD)),
+              (try? Self.directoryEntries(directoryFD)) == Set([Self.manifestFileName, Self.encryptedPayloadFileName]) else {
+            throw MobilePackageError.malformedPackage
+        }
 
         let manifestData: Data
         do {
@@ -210,7 +206,9 @@ public actor MobilePackageService {
         let wrappedData: Data
         guard let wrappedBase64 = manifest.wrappedContentKeyBase64,
               let decodedWrapped = Data(base64Encoded: wrappedBase64),
-              !decodedWrapped.isEmpty else {
+              !decodedWrapped.isEmpty,
+              decodedWrapped.count <= Self.maximumWrappedKeyByteCount,
+              decodedWrapped.base64EncodedString() == wrappedBase64 else {
             throw MobilePackageError.invalidManifest
         }
         wrappedData = decodedWrapped
@@ -289,7 +287,7 @@ public actor MobilePackageService {
               manifest.createdAt.timeIntervalSince1970.isFinite,
               manifest.ciphertextSHA256.count == 64,
               manifest.ciphertextSHA256.allSatisfy({ $0.isNumber || ($0 >= "a" && $0 <= "f") || ($0 >= "A" && $0 <= "F") }),
-              manifest.wrappedContentKeyBase64.map({ !$0.isEmpty && $0.count <= 4096 }) == true else {
+              manifest.wrappedContentKeyBase64.map({ !$0.isEmpty && $0.count <= 8192 }) == true else {
             throw MobilePackageError.invalidManifest
         }
     }
@@ -448,7 +446,7 @@ public actor MobilePackageService {
                 count += 1
                 guard count <= 32 else { throw MobilePackageError.invalidEnvelope }
                 guard index < bytes.count, bytes[index] == 0x22 else { throw MobilePackageError.invalidEnvelope }
-                try parseString()
+                guard try parseString(maximumByteCount: 128) <= 128 else { throw MobilePackageError.invalidEnvelope }
                 skipWhitespace(); guard consume(0x3A) else { throw MobilePackageError.invalidEnvelope }
                 try parseValue()
                 skipWhitespace()
@@ -475,12 +473,13 @@ public actor MobilePackageService {
             }
         }
 
-        mutating private func parseString() throws {
+        @discardableResult
+        mutating private func parseString(maximumByteCount: Int = MobilePackageService.maximumStringByteCount) throws -> Int {
             guard consume(0x22) else { throw MobilePackageError.invalidEnvelope }
             var byteCount = 0
             while index < bytes.count {
                 let byte = bytes[index]
-                if byte == 0x22 { index += 1; guard byteCount <= MobilePackageService.maximumStringByteCount else { throw MobilePackageError.invalidEnvelope }; return }
+                if byte == 0x22 { index += 1; guard byteCount <= maximumByteCount else { throw MobilePackageError.invalidEnvelope }; return byteCount }
                 if byte < 0x20 { throw MobilePackageError.invalidEnvelope }
                 if byte == 0x5C {
                     index += 1
@@ -488,17 +487,53 @@ public actor MobilePackageService {
                     switch bytes[index] {
                     case 0x22, 0x5C, 0x2F, 0x62, 0x66, 0x6E, 0x72, 0x74: byteCount += 1; index += 1
                     case 0x75:
-                        guard index + 4 < bytes.count else { throw MobilePackageError.invalidEnvelope }
-                        for offset in 1...4 { guard isHex(bytes[index + offset]) else { throw MobilePackageError.invalidEnvelope } }
-                        byteCount += 1; index += 5
+                        index -= 1
+                        let first = try parseUnicodeEscape()
+                        if first >= 0xD800 && first <= 0xDBFF {
+                            guard index + 5 < bytes.count, bytes[index] == 0x5C, bytes[index + 1] == 0x75 else { throw MobilePackageError.invalidEnvelope }
+                            let second = try parseUnicodeEscape()
+                            guard second >= 0xDC00 && second <= 0xDFFF else { throw MobilePackageError.invalidEnvelope }
+                            byteCount += 4
+                        } else if first >= 0xDC00 && first <= 0xDFFF {
+                            throw MobilePackageError.invalidEnvelope
+                        } else {
+                            byteCount += first <= 0x7F ? 1 : (first <= 0x7FF ? 2 : 3)
+                        }
                     default: throw MobilePackageError.invalidEnvelope
                     }
                 } else {
-                    byteCount += 1; index += 1
+                    byteCount += try consumeUTF8Scalar()
                 }
-                guard byteCount <= MobilePackageService.maximumStringByteCount else { throw MobilePackageError.invalidEnvelope }
+                guard byteCount <= maximumByteCount else { throw MobilePackageError.invalidEnvelope }
             }
             throw MobilePackageError.invalidEnvelope
+        }
+
+        mutating private func parseUnicodeEscape() throws -> Int {
+            guard index < bytes.count, bytes[index] == 0x5C, index + 5 < bytes.count, bytes[index + 1] == 0x75 else { throw MobilePackageError.invalidEnvelope }
+            var value = 0
+            for offset in 2...5 { guard isHex(bytes[index + offset]) else { throw MobilePackageError.invalidEnvelope }; value = value * 16 + hexValue(bytes[index + offset]) }
+            index += 6
+            return value
+        }
+
+        mutating private func consumeUTF8Scalar() throws -> Int {
+            let first = bytes[index]
+            let length: Int
+            let minimum: UInt32
+            if first <= 0x7F { length = 1; minimum = 0 }
+            else if first >= 0xC2 && first <= 0xDF { length = 2; minimum = 0x80 }
+            else if first >= 0xE0 && first <= 0xEF { length = 3; minimum = 0x800 }
+            else if first >= 0xF0 && first <= 0xF4 { length = 4; minimum = 0x10000 }
+            else { throw MobilePackageError.invalidEnvelope }
+            guard index + length <= bytes.count else { throw MobilePackageError.invalidEnvelope }
+            var scalar = UInt32(first & (length == 1 ? 0x7F : length == 2 ? 0x1F : length == 3 ? 0x0F : 0x07))
+            if length > 1 {
+                for offset in 1..<length { let continuation = bytes[index + offset]; guard continuation & 0xC0 == 0x80 else { throw MobilePackageError.invalidEnvelope }; scalar = (scalar << 6) | UInt32(continuation & 0x3F) }
+            }
+            guard scalar >= minimum, scalar <= 0x10FFFF, !(scalar >= 0xD800 && scalar <= 0xDFFF) else { throw MobilePackageError.invalidEnvelope }
+            index += length
+            return length
         }
 
         mutating private func parseLiteral(_ literal: [UInt8]) throws {
@@ -532,6 +567,7 @@ public actor MobilePackageService {
         mutating private func consume(_ value: UInt8) -> Bool { guard index < bytes.count, bytes[index] == value else { return false }; index += 1; return true }
         mutating private func skipWhitespace() { while index < bytes.count && (bytes[index] == 0x20 || bytes[index] == 0x09 || bytes[index] == 0x0A || bytes[index] == 0x0D) { index += 1 } }
         private func isHex(_ value: UInt8) -> Bool { (value >= 0x30 && value <= 0x39) || (value >= 0x41 && value <= 0x46) || (value >= 0x61 && value <= 0x66) }
+        private func hexValue(_ value: UInt8) -> Int { value >= 0x30 && value <= 0x39 ? Int(value - 0x30) : (value >= 0x41 && value <= 0x46 ? Int(value - 0x41) + 10 : Int(value - 0x61) + 10) }
     }
 
     private static func objectValue(_ value: Any) throws -> [String: Any] {
@@ -556,6 +592,7 @@ public actor MobilePackageService {
               Set(envelope.acknowledgedChangeIDs).count == envelope.acknowledgedChangeIDs.count else {
             throw MobilePackageError.invalidEnvelope
         }
+        try validateAggregateLimits(envelope)
         let snapshot = envelope.snapshot
         if let snapshot {
             guard snapshot.schemaVersion > 0, snapshot.schemaVersion <= MobileLibrarySnapshot.currentSchemaVersion,
@@ -638,8 +675,45 @@ public actor MobilePackageService {
         }
         let noteIDs = Set(snapshot.notes.map(\.id))
         guard noteIDs.count == snapshot.notes.count else { throw MobilePackageError.invalidEnvelope }
-        for briefing in snapshot.briefings { guard noteIDs.contains(briefing.noteID) else { throw MobilePackageError.invalidEnvelope } }
+        let notesByID = Dictionary(uniqueKeysWithValues: snapshot.notes.map { ($0.id, $0) })
+        for briefing in snapshot.briefings {
+            guard let note = notesByID[briefing.noteID], note.scope == .briefing, note.ownerID == briefing.id.uuidString else { throw MobilePackageError.invalidEnvelope }
+        }
         for note in snapshot.notes { guard validString(note.id), validString(note.ownerID), validString(note.text), note.baseRevision >= 0, note.updatedAt.timeIntervalSince1970.isFinite else { throw MobilePackageError.invalidEnvelope } }
+    }
+
+    private static func validateAggregateLimits(_ envelope: MobilePackageEnvelope) throws {
+        var estimated: Int64 = 0
+        func add(_ string: String) throws {
+            let count = Int64(string.utf8.count)
+            let (next, overflow) = estimated.addingReportingOverflow(count)
+            guard !overflow, next <= maximumEstimatedContentByteCount else { throw MobilePackageError.invalidEnvelope }
+            estimated = next
+        }
+        func add(_ uuid: UUID) throws { try add(uuid.uuidString) }
+        func checkCount(_ count: Int) throws { guard count <= maximumCollectionCount else { throw MobilePackageError.invalidEnvelope } }
+        for id in envelope.acknowledgedChangeIDs { try add(id) }
+        for change in envelope.changes {
+            switch change {
+            case .checklistCompletion(let value):
+                try add(value.changeID); try add(value.deviceID); try add(value.briefingID); try add(value.itemID)
+            case .noteRevision(let value):
+                try add(value.changeID); try add(value.deviceID); try add(value.noteID); try add(value.ownerID); try add(value.text)
+            }
+        }
+        guard let snapshot = envelope.snapshot else { return }
+        for project in snapshot.projects { try add(project.id); try add(project.displayName); try add(project.catalogID); try add(project.phase) }
+        for night in snapshot.nights { try add(night.id); try add(night.localDate); try add(night.timeZoneID) }
+        for capture in snapshot.captures { try add(capture.id); try add(capture.projectID); try add(capture.nightID); try add(capture.displayName); if let value = capture.filterName { try add(value) } }
+        for briefing in snapshot.briefings {
+            try checkCount(briefing.targets.count); try checkCount(briefing.checklist.count); try add(briefing.id); try add(briefing.readiness); try add(briefing.noteID)
+            for target in briefing.targets { try checkCount(target.warnings.count); try add(target.id); try add(target.name); try add(target.role); for warning in target.warnings { try add(warning) } }
+            for section in briefing.checklist {
+                try checkCount(section.items.count); try add(section.id); try add(section.title)
+                for item in section.items { try add(item.id); try add(item.title); if let explanation = item.explanation { try add(explanation) } }
+            }
+        }
+        for note in snapshot.notes { try add(note.id); try add(note.scope.rawValue); try add(note.ownerID); try add(note.text) }
     }
 
     private static func validString(_ value: String) -> Bool { value.utf8.count <= maximumStringByteCount }
@@ -679,6 +753,57 @@ public actor MobilePackageService {
         let mode = status.st_mode & S_IFMT
         guard mode == S_IFREG else { return nil }
         return Int64(status.st_size)
+    }
+
+    private static func identity(ofFD descriptor: Int32) -> FileIdentity? {
+        var status = stat()
+        guard Darwin.fstat(descriptor, &status) == 0 else { return nil }
+        let mode = status.st_mode & S_IFMT
+        let type: FileAttributeType
+        switch mode {
+        case S_IFDIR: type = .typeDirectory
+        case S_IFREG: type = .typeRegular
+        default: type = .typeSymbolicLink
+        }
+        return FileIdentity(device: UInt64(status.st_dev), inode: UInt64(status.st_ino), size: Int64(status.st_size), type: type)
+    }
+
+    private static func directoryEntries(_ directoryFD: Int32) throws -> Set<String> {
+        let duplicate = Darwin.dup(directoryFD)
+        guard duplicate >= 0, let stream = Darwin.fdopendir(duplicate) else { throw MobilePackageError.malformedPackage }
+        defer { Darwin.closedir(stream) }
+        var entries = Set<String>()
+        errno = 0
+        while let entry = Darwin.readdir(stream) {
+            let name = withUnsafePointer(to: entry.pointee.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
+            }
+            if name != "." && name != ".." { entries.insert(name) }
+            if entries.count > 2 { throw MobilePackageError.malformedPackage }
+        }
+        guard errno == 0 else { throw MobilePackageError.malformedPackage }
+        return entries
+    }
+
+    private static func writeFile(at directoryFD: Int32, name: String, data: Data) throws {
+        let descriptor = name.withCString { Darwin.openat(directoryFD, $0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600) }
+        guard descriptor >= 0 else { throw MobilePackageError.stagingFailed }
+        defer { Darwin.close(descriptor) }
+        var offset = 0
+        let bytes = [UInt8](data)
+        while offset < bytes.count {
+            let remaining = bytes.count - offset
+            let count = bytes.withUnsafeBytes { buffer in
+                Darwin.write(descriptor, buffer.baseAddress!.advanced(by: offset), remaining)
+            }
+            guard count > 0 else { throw MobilePackageError.stagingFailed }
+            offset += count
+        }
+        guard Darwin.fsync(descriptor) == 0 else { throw MobilePackageError.stagingFailed }
+        var status = stat()
+        guard Darwin.fstat(descriptor, &status) == 0, status.st_mode & S_IFMT == S_IFREG, status.st_nlink == 1, status.st_size == bytes.count else {
+            throw MobilePackageError.stagingFailed
+        }
     }
 
     private static func isRegular(at directoryFD: Int32, name: String) -> Bool {
@@ -727,13 +852,9 @@ public actor MobilePackageService {
         return identity.type == .typeDirectory
     }
 
-    private static func removeTemporaryIfOwned(_ url: URL, identity expectedIdentity: FileIdentity?, fileManager: FileManager) {
+    private static func removeTemporaryAt(parentFD: Int32, name: String, identity expectedIdentity: FileIdentity?) {
         guard let expectedIdentity else { return }
-        let parent = url.deletingLastPathComponent()
-        let parentFD = parent.path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
-        guard parentFD >= 0 else { return }
-        defer { Darwin.close(parentFD) }
-        let childFD = url.lastPathComponent.withCString { Darwin.openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+        let childFD = name.withCString { Darwin.openat(parentFD, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
         guard childFD >= 0 else { return }
         defer { Darwin.close(childFD) }
         var status = stat()
@@ -744,7 +865,7 @@ public actor MobilePackageService {
         for child in [Self.manifestFileName, Self.encryptedPayloadFileName] {
             _ = child.withCString { Darwin.unlinkat(childFD, $0, 0) }
         }
-        _ = url.lastPathComponent.withCString { Darwin.unlinkat(parentFD, $0, AT_REMOVEDIR) }
+        _ = name.withCString { Darwin.unlinkat(parentFD, $0, AT_REMOVEDIR) }
     }
 
     private static func sameStableIdentity(_ lhs: FileIdentity?, _ rhs: FileIdentity?) -> Bool {
@@ -752,10 +873,10 @@ public actor MobilePackageService {
         return lhs.device == rhs.device && lhs.inode == rhs.inode && lhs.type == rhs.type
     }
 
-    private static func publishExclusively(from temporary: URL, to destination: URL) throws {
-        let result = temporary.path.withCString { sourcePath in
-            destination.path.withCString { destinationPath in
-                Darwin.renameatx_np(AT_FDCWD, sourcePath, AT_FDCWD, destinationPath, UInt32(RENAME_EXCL))
+    private static func publishExclusively(parentFD: Int32, temporaryName: String, destinationName: String) throws {
+        let result = temporaryName.withCString { sourcePath in
+            destinationName.withCString { destinationPath in
+                Darwin.renameatx_np(parentFD, sourcePath, parentFD, destinationPath, UInt32(RENAME_EXCL))
             }
         }
         guard result == 0 else {

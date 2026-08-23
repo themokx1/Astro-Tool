@@ -171,3 +171,43 @@ The implementation now:
 Round-2 security tests added: 5 (composed optional-field round-trip, nested schema rejection, token/oversized export limits, hard-link rejection, and semantic reference validation). The service security test set now contains 16 tests.
 
 Replay semantics remain intentionally actor-scoped: duplicate staged/committed package IDs fail within one service actor; durable replay/idempotency persistence remains Task 7 and no transport-layer library writes were added.
+
+## Security fix round 3 — final same-implementer remediation
+
+### RED/GREEN evidence
+
+- Import now opens the package directory first, fstats and binds its device/inode/type to the initial identity, and enumerates the exact two children through that retained descriptor. Child reads remain `openat(..., O_NOFOLLOW)`/descriptor-relative with regular-file, single-link, size, and post-read identity checks.
+- Export opens and retains the destination parent descriptor, creates the private staging directory with `mkdirat`, creates both files with descriptor-relative `openat(..., O_CREAT|O_EXCL|O_NOFOLLOW)`, writes/fsyncs/fstats them, verifies the staging identity, and publishes with descriptor-relative `renameatx_np(..., RENAME_EXCL)`. Cleanup uses the retained parent descriptor and stable staging identity, so a replacement entry is not unlinked.
+- Export validation now performs overflow-checked aggregate UTF-8 accounting across every snapshot/domain/change ID, text, optional string, warning, and scope string; enforces every nested per-array cap and an explicit 8 MiB estimated-content budget before `JSONEncoder` allocation. Encoded plaintext, ciphertext, wrapped key, and manifest caps remain enforced afterward.
+- The lexical preflight now counts decoded UTF-8 bytes, validates raw UTF-8 scalars, combines valid surrogate pairs, rejects isolated/invalid surrogates, applies the decoded 128-byte key limit, and rejects trailing/top-level data.
+- Wrapped-key limits are symmetric at 4096 decoded bytes; import additionally requires canonical Base64 re-encoding and rejects oversize/noncanonical values.
+- Briefing note references now require a `.briefing` note whose owner ID equals the briefing UUID; tests separately cover wrong owner and non-editable notes.
+
+### Round-3 verification evidence
+
+```text
+swift test --filter MobilePackageServiceTests
+Test run with 19 tests in 0 suites passed after 0.221 seconds.
+```
+
+```text
+swift test --filter MobilePackage
+Test run with 28 tests in 0 suites passed after 0.223 seconds.
+```
+
+```text
+swift test --filter MobilePackageCryptoTests
+Test run with 9 tests in 0 suites passed after 0.001 seconds.
+```
+
+```text
+swift test --no-parallel
+Test run with 3413 tests in 216 suites passed after 98.133 seconds.
+```
+
+```text
+git diff --check
+git diff --cached --check
+```
+
+Both diff checks were clean before commit. Round-3 tests cover descriptor-bound package listing, no-follow hard/symbolic link rejection, staging cleanup, aggregate warning/nested-array limits, lexical Unicode and trailing-data boundaries, symmetric wrapped-key limits, and independent semantic owner/editability failures.
