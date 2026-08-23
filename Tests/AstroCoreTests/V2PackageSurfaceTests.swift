@@ -29,7 +29,7 @@ struct V2PackageSurfaceTests {
             .filter { !$0.isWhitespace }
 
         let requiredDeclarations = [
-            ".target(name:\"AstroApplication\",dependencies:[\"AstroCore\",\"AstroMobileDomain\"])",
+            ".target(name:\"AstroApplication\",dependencies:[\"AstroCore\",\"AstroMobileDomain\",\"AstroMobileTransport\"])",
             ".target(name:\"AstroUI\",dependencies:[\"AstroApplication\"],linkerSettings:[.linkedFramework(\"WebKit\"),.linkedFramework(\"PDFKit\")])",
             ".executableTarget(name:\"AstroToolApp\",dependencies:[\"AstroCore\",\"AstroApplication\",\"AstroUI\"],resources:[.process(\"Resources\")])",
             ".testTarget(name:\"AstroApplicationTests\",dependencies:[\"AstroApplication\",\"AstroCore\"])",

@@ -9,14 +9,16 @@ let package = Package(
         .library(name: "AstroCore", targets: ["AstroCore"]),
         .library(name: "AstroApplication", targets: ["AstroApplication"]),
         .library(name: "AstroMobileDomain", targets: ["AstroMobileDomain"]),
+        .library(name: "AstroMobileTransport", targets: ["AstroMobileTransport"]),
         .library(name: "AstroUI", targets: ["AstroUI"]),
         .executable(name: "astrotool", targets: ["astrotool"]),
         .executable(name: "AstroToolApp", targets: ["AstroToolApp"]),
     ],
     targets: [
         .target(name: "AstroCore", linkerSettings: [.linkedLibrary("sqlite3")]),
-        .target(name: "AstroApplication", dependencies: ["AstroCore", "AstroMobileDomain"]),
+        .target(name: "AstroApplication", dependencies: ["AstroCore", "AstroMobileDomain", "AstroMobileTransport"]),
         .target(name: "AstroMobileDomain"),
+        .target(name: "AstroMobileTransport", dependencies: ["AstroMobileDomain"]),
         .target(
             name: "AstroUI",
             dependencies: ["AstroApplication"],
@@ -38,5 +40,6 @@ let package = Package(
             dependencies: ["AstroUI", "AstroApplication"]
         ),
         .testTarget(name: "AstroMobileDomainTests", dependencies: ["AstroMobileDomain"]),
+        .testTarget(name: "AstroMobileTransportTests", dependencies: ["AstroMobileTransport", "AstroMobileDomain"]),
     ]
 )
