@@ -33,6 +33,8 @@
 	<string>1</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AstroTool uses the camera to scan the one-time key for a mobile package from your Mac.</string>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<false/>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

@@ -57,14 +57,80 @@ import Testing
     #expect(await relaunched.deviceID == deviceID)
 }
 
+@Test func corruptDeviceIdentityLocksWritesWithoutReplacingBytes() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let deviceURL = fixture.rootURL.appendingPathComponent("device-id")
+    let corrupt = Data("not-a-device".utf8)
+    try corrupt.write(to: deviceURL, options: .atomic)
+    let store = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+
+    #expect(await store.recoveryState == .invalidDeviceID)
+    do {
+        try await store.editNote(id: "night-note", text: "blocked")
+        Issue.record("A corrupt device identity did not lock writes")
+    } catch let error as MobileLibraryStoreError {
+        #expect(error == .recoveryRequired)
+    }
+    #expect(try Data(contentsOf: deviceURL) == corrupt)
+}
+
+@Test func queuedChecklistValueIsEffectiveForLaterToggle() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let store = fixture.store
+    try await store.toggleChecklistItem(briefingID: fixture.briefingID, itemID: "focus", isCompleted: true)
+    try await store.toggleChecklistItem(briefingID: fixture.briefingID, itemID: "focus", isCompleted: false)
+
+    #expect(await store.queuedChanges.count == 2)
+    do {
+        try await store.toggleChecklistItem(briefingID: fixture.briefingID, itemID: "focus", isCompleted: false)
+        Issue.record("An effective queued checklist value was not treated as a no-op")
+    } catch let error as MobileLibraryStoreError {
+        #expect(error == .noOpChange)
+    }
+}
+
+@Test func validImportCommitsSnapshotAndReceiptAcrossRelaunch() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let sourceFixture = try MobileStoreFixture(snapshotRevision: 2)
+    let key = OneTimePackageKey()
+    let packageURL = fixture.rootURL.appendingPathComponent("valid.astromobile", isDirectory: true)
+    let envelope = MobilePackageEnvelope(snapshot: sourceFixture.snapshot, changes: [], acknowledgedChangeIDs: [])
+    _ = try await MobilePackageService().export(envelope, to: packageURL, wrapping: key)
+
+    let staged = try await fixture.store.stagePackage(from: packageURL)
+    try await fixture.store.importPackage(from: staged, key: key, removeStagedSource: true)
+
+    #expect(await fixture.store.activeSnapshot?.revision == 2)
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.activeSnapshot?.revision == 2)
+    #expect(await relaunched.recoveryState == .ready)
+}
+
+@Test func validPackageWithWrongKeyDoesNotReachCommit() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let sourceFixture = try MobileStoreFixture(snapshotRevision: 2)
+    let packageKey = OneTimePackageKey()
+    let packageURL = fixture.rootURL.appendingPathComponent("wrong-key.astromobile", isDirectory: true)
+    let envelope = MobilePackageEnvelope(snapshot: sourceFixture.snapshot, changes: [], acknowledgedChangeIDs: [])
+    _ = try await MobilePackageService().export(envelope, to: packageURL, wrapping: packageKey)
+    let staged = try await fixture.store.stagePackage(from: packageURL)
+
+    await #expect(throws: MobilePackageError.authenticationFailed) {
+        try await fixture.store.importPackage(from: staged, key: OneTimePackageKey(), removeStagedSource: true)
+    }
+    #expect(await fixture.store.activeSnapshot?.revision == 1)
+    #expect(await fixture.store.queuedChanges.isEmpty)
+}
+
 private final class MobileStoreFixture {
     let rootURL: URL
     let corruptPackageURL: URL
     let briefingID: UUID
+    let snapshot: MobileLibrarySnapshot
     let store: MobileLibraryStore
 
     init(snapshotRevision: Int) throws {
-        rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("AstroToolMobileStore-(UUID().uuidString)", isDirectory: true)
+        rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("AstroToolMobileStore-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
 
         let projectID = UUID()
@@ -92,6 +158,7 @@ private final class MobileStoreFixture {
             )],
             notes: [MobileNote(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_700_000_002), isEditableOnPhone: true)]
         )
+        self.snapshot = snapshot
 
         let activeDirectory = rootURL.appendingPathComponent("active", isDirectory: true)
         try FileManager.default.createDirectory(at: activeDirectory, withIntermediateDirectories: true)

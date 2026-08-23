@@ -16,6 +16,7 @@
 		0A62B2090AAC40057AF6B310 /* AccessDeniedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2DA2E22FA8897DE0D98678E /* AccessDeniedView.swift */; };
 		0C722098ED9EEBE0A99A9F0C /* CalibrationPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E78E7875A0FD189A385744A /* CalibrationPage.swift */; };
 		0D35B1549F58A5CCED5A82CC /* ToastOverlay.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63ABB9714DFB216C52F82B6F /* ToastOverlay.swift */; };
+		144D7A72C14F2071E5293BB5 /* CameraQRScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F5FD1E2A0196BF313079EFD /* CameraQRScanner.swift */; };
 		14ED02E1C9BAEA6C5D1F08B8 /* NewSessionSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F42EDEA15557865A79B87D99 /* NewSessionSheet.swift */; };
 		16EE4CBE56F7226A898A6CEA /* GoalEditSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A2AED10DB720188747D0EE0 /* GoalEditSheet.swift */; };
 		192FFA8F83619FE861461CC3 /* EquipmentSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4A4985497B7FD86AE138793 /* EquipmentSettingsView.swift */; };
@@ -148,6 +149,7 @@
 		85989AD314D6E207002F1C46 /* LibrarySettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySettingsView.swift; sourceTree = "<group>"; };
 		865D9AB0199F3CDB0F90C92E /* AstroToolMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AstroToolMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		86B50A088FE68F49D85EEB3F /* LibraryRulesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryRulesSettingsView.swift; sourceTree = "<group>"; };
+		8F5FD1E2A0196BF313079EFD /* CameraQRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraQRScanner.swift; sourceTree = "<group>"; };
 		92706D204E8A85DEFC0F8E38 /* VerifyConfirmationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerifyConfirmationSheet.swift; sourceTree = "<group>"; };
 		92B4D65C4CE8741F0C986087 /* MetricInfoButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricInfoButton.swift; sourceTree = "<group>"; };
 		9328F7F42F822BFB20411F0F /* MosaicPanelTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MosaicPanelTable.swift; sourceTree = "<group>"; };
@@ -363,6 +365,7 @@
 			isa = PBXGroup;
 			children = (
 				26B7A75E90C6BB56D03D05D0 /* AstroToolMobileApp.swift */,
+				8F5FD1E2A0196BF313079EFD /* CameraQRScanner.swift */,
 				9CEF9DFC08F996EC79513F02 /* Info.plist */,
 				6506AA17E940B02F2B7EE272 /* MobileLibraryStore.swift */,
 				537EC0A1C143D675F5FD9D78 /* MobileRootView.swift */,
@@ -511,21 +514,21 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					0A815DDC8A63A90C998E5755 = {
-						ProvisioningStyle = Manual;
+						ProvisioningStyle = Automatic;
 					};
 					262B6F9A48D819AC015D1ADE = {
-						ProvisioningStyle = Manual;
+						ProvisioningStyle = Automatic;
 						TestTargetID = D7649BA3C7FC1E3455819F1F;
 					};
 					C7FEECF35122701EC3DA905D = {
-						ProvisioningStyle = Manual;
+						ProvisioningStyle = Automatic;
 						TestTargetID = 0A815DDC8A63A90C998E5755;
 					};
 					D7649BA3C7FC1E3455819F1F = {
-						ProvisioningStyle = Manual;
+						ProvisioningStyle = Automatic;
 					};
 					EFA3285A6351F15B6D3A97BE = {
-						ProvisioningStyle = Manual;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -669,6 +672,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AE6B9BB6E0E15D0484A9F793 /* AstroToolMobileApp.swift in Sources */,
+				144D7A72C14F2071E5293BB5 /* CameraQRScanner.swift in Sources */,
 				E0CEE5655536EFA7F4889504 /* MobileLibraryStore.swift in Sources */,
 				7B6BF6E6D6B7DE4A8D08803E /* MobileRootView.swift in Sources */,
 			);
@@ -750,8 +754,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -786,6 +789,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AstroTool;
@@ -821,6 +825,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = AstroTool;
@@ -920,8 +925,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGNING_REQUIRED = NO;
-				CODE_SIGN_IDENTITY = "-";
-				CODE_SIGN_STYLE = Manual;
+				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
@@ -949,8 +953,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/AstroToolMobile/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AstroTool;
@@ -986,8 +989,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGNING_ALLOWED = NO;
-				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_IDENTITY = "";
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Sources/AstroToolMobile/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AstroTool;

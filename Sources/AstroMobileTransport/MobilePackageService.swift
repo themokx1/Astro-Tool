@@ -338,6 +338,13 @@ public actor MobilePackageService {
         stagedImportBytes = max(0, stagedImportBytes - staged.preview.encryptedByteCount)
     }
 
+    /// Returns the already-authenticated envelope without consuming its
+    /// one-time package receipt. Consumers must validate local policy before
+    /// calling `commitImport`.
+    public func previewEnvelope(packageID: UUID) throws -> MobilePackageEnvelope? {
+        stagedImports[packageID]?.envelope
+    }
+
     public func commitImport(packageID: UUID) throws -> MobilePackageEnvelope {
         guard let staged = stagedImports.removeValue(forKey: packageID) else {
             throw MobilePackageError.duplicatePackageID

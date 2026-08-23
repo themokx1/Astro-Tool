@@ -8,3 +8,10 @@
 "Revision" = "Revision";
 "Projects" = "Projects";
 "Queued changes" = "Queued changes";
+"Recovery required" = "Recovery required";
+"AstroTool found damaged local data and has locked imports and edits. Keep this iPhone data unchanged and restore it from a trusted backup before trying again." = "AstroTool found damaged local data and has locked imports and edits. Keep this iPhone data unchanged and restore it from a trusted backup before trying again.";
+"Scan the one-time key shown on your Mac." = "Scan the one-time key shown on your Mac.";
+"Scan one-time key" = "Scan one-time key";
+"Cancel" = "Cancel";
+"Camera access is unavailable. Try again on an iPhone with camera access." = "Camera access is unavailable. Try again on an iPhone with camera access.";
+"The package could not be imported. Check the key and try again." = "The package could not be imported. Check the key and try again.";

@@ -1,4 +1,5 @@
 import Darwin
+import CryptoKit
 import Foundation
 import AstroMobileDomain
 import AstroMobileTransport
@@ -17,6 +18,9 @@ public enum MobileLibraryStoreError: Error, Equatable, Sendable, CustomStringCon
     case duplicateChange
     case noOpChange
     case persistenceFailed
+    case recoveryRequired
+    case invalidDeviceID
+    case invalidReceipts
 
     public var description: String {
         switch self {
@@ -33,6 +37,9 @@ public enum MobileLibraryStoreError: Error, Equatable, Sendable, CustomStringCon
         case .duplicateChange: return "That change is already queued."
         case .noOpChange: return "That change would not change anything."
         case .persistenceFailed: return "AstroTool could not save the mobile library safely."
+        case .recoveryRequired: return "AstroTool needs recovery before it can change this iPhone's library."
+        case .invalidDeviceID: return "The iPhone identity is damaged. Nothing will be overwritten."
+        case .invalidReceipts: return "The package receipt record is damaged. Imports are locked until recovery."
         }
     }
 }
@@ -42,6 +49,8 @@ public enum MobileLibraryStoreRecoveryState: Equatable, Sendable {
     case empty
     case invalidSnapshot
     case invalidQueue
+    case invalidDeviceID
+    case invalidReceipts
 }
 
 /// The iPhone's private, append-only local state. This actor never receives a
@@ -50,12 +59,14 @@ public actor MobileLibraryStore {
     public let applicationSupportURL: URL
     public private(set) var activeSnapshot: MobileLibrarySnapshot?
     public private(set) var queuedChanges: [MobileChange]
-    public private(set) var deviceID: UUID
+    public private(set) var deviceID: UUID?
     public private(set) var recoveryState: MobileLibraryStoreRecoveryState
 
     private let packageService: MobilePackageService
     private let fileManager = FileManager.default
     private var consumedPackageIDs: Set<UUID>
+    private var keyFingerprints: [String: UUID]
+    private var ownedStaging: [URL: StagingIdentity]
 
     private var activeDirectory: URL { applicationSupportURL.appendingPathComponent("active", isDirectory: true) }
     private var changesDirectory: URL { applicationSupportURL.appendingPathComponent("changes", isDirectory: true) }
@@ -65,6 +76,8 @@ public actor MobileLibraryStore {
     private var queueURL: URL { changesDirectory.appendingPathComponent("queue.json") }
     private var deviceURL: URL { applicationSupportURL.appendingPathComponent("device-id") }
     private var consumedURL: URL { receiptsDirectory.appendingPathComponent("consumed.json") }
+    private var stateURL: URL { applicationSupportURL.appendingPathComponent("state.json") }
+    private var keyURL: URL { receiptsDirectory.appendingPathComponent("keys.json") }
 
     public init(applicationSupportURL: URL? = nil, packageService: MobilePackageService = MobilePackageService()) {
         self.applicationSupportURL = applicationSupportURL ?? Self.defaultApplicationSupportURL()
@@ -74,12 +87,15 @@ public actor MobileLibraryStore {
         self.deviceID = UUID()
         self.recoveryState = .empty
         self.consumedPackageIDs = []
+        self.keyFingerprints = [:]
+        self.ownedStaging = [:]
         let initial = Self.bootstrap(applicationSupportURL: self.applicationSupportURL, fallbackDeviceID: self.deviceID)
         self.activeSnapshot = initial.snapshot
         self.queuedChanges = initial.queue
         self.deviceID = initial.deviceID
         self.recoveryState = initial.recoveryState
         self.consumedPackageIDs = initial.consumedPackageIDs
+        self.keyFingerprints = initial.keyFingerprints
     }
 
     /// Compatibility spelling for callers that use the shorter root label.
@@ -89,7 +105,16 @@ public actor MobileLibraryStore {
 
     public func reload() { recover() }
 
+    private var writesAllowed: Bool {
+        recoveryState == .ready || recoveryState == .empty
+    }
+
+    private func ensureWritable() throws {
+        guard writesAllowed else { throw MobileLibraryStoreError.recoveryRequired }
+    }
+
     public func stagePackage(from source: URL) throws -> URL {
+        try ensureWritable()
         try ensureDirectories()
         guard fileManager.fileExists(atPath: source.path), isDirectory(source) else {
             throw MobilePackageError.sourceNotFound
@@ -97,7 +122,7 @@ public actor MobileLibraryStore {
         let destination = stagingDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: false)
         do {
-            let children = try fileManager.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles])
+            let children = try fileManager.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [])
             guard Set(children.map(\.lastPathComponent)) == [MobilePackageService.manifestFileName, MobilePackageService.encryptedPayloadFileName] else {
                 throw MobilePackageError.malformedPackage
             }
@@ -106,8 +131,12 @@ public actor MobileLibraryStore {
                 guard values.isSymbolicLink != true, values.isDirectory != true else { throw MobilePackageError.malformedPackage }
                 let target = destination.appendingPathComponent(child.lastPathComponent)
                 guard !fileManager.fileExists(atPath: target.path) else { throw MobilePackageError.stagingFailed }
-                try fileManager.copyItem(at: child, to: target)
+                try copyRegularFile(from: child, to: target)
             }
+            // The public manifest is inspected only after the operation-owned
+            // copy is complete, so unlock UI never sees an unvalidated package.
+            try validatePublicManifest(at: destination)
+            ownedStaging[destination] = try stagingIdentity(of: destination)
             return destination
         } catch {
             try? fileManager.removeItem(at: destination)
@@ -115,9 +144,60 @@ public actor MobileLibraryStore {
         }
     }
 
-    public func discardStagedPackage(at url: URL) {
-        guard url.path.hasPrefix(stagingDirectory.path + "/") else { return }
+    func discardStagedPackage(at url: URL) {
+        guard let expected = ownedStaging.removeValue(forKey: url),
+              let current = try? stagingIdentity(of: url), current == expected else { return }
         try? fileManager.removeItem(at: url)
+    }
+
+    private func validatePublicManifest(at package: URL) throws {
+        let manifestURL = package.appendingPathComponent(MobilePackageService.manifestFileName)
+        let values = try manifestURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else { throw MobilePackageError.malformedPackage }
+        let data = try Data(contentsOf: manifestURL)
+        guard data.count <= MobilePackageService.maximumManifestByteCount else { throw MobilePackageError.invalidManifest }
+        let manifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: data)
+        guard manifest.formatVersion == MobilePackageService.currentFormatVersion,
+              manifest.keyMode == .oneTimeQR,
+              manifest.encryptedByteCount > 0,
+              manifest.encryptedByteCount <= MobilePackageService.maximumEncryptedByteCount else {
+            throw MobilePackageError.unsupportedFormatVersion
+        }
+    }
+
+    private func copyRegularFile(from source: URL, to destination: URL) throws {
+        let fd = source.path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
+        guard fd >= 0 else { throw MobilePackageError.malformedPackage }
+        defer { Darwin.close(fd) }
+        var info = Darwin.stat()
+        guard Darwin.fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFREG, info.st_nlink == 1,
+              info.st_size >= 0, info.st_size <= MobilePackageService.maximumEncryptedByteCount else {
+            throw MobilePackageError.malformedPackage
+        }
+        var data = Data()
+        data.reserveCapacity(Int(info.st_size))
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = Darwin.read(fd, &buffer, buffer.count)
+            guard count >= 0 else { throw MobilePackageError.malformedPackage }
+            if count == 0 { break }
+            data.append(contentsOf: buffer[0..<count])
+        }
+        guard Int64(data.count) == Int64(info.st_size) else { throw MobilePackageError.malformedPackage }
+        try data.write(to: destination, options: .withoutOverwriting)
+    }
+
+    private struct StagingIdentity: Equatable {
+        let device: UInt64
+        let inode: UInt64
+        let size: Int64
+    }
+
+    private func stagingIdentity(of url: URL) throws -> StagingIdentity {
+        var info = Darwin.stat()
+        guard url.path.withCString({ Darwin.lstat($0, &info) }) == 0,
+              info.st_mode & S_IFMT == S_IFDIR else { throw MobilePackageError.stagingFailed }
+        return StagingIdentity(device: UInt64(info.st_dev), inode: UInt64(info.st_ino), size: Int64(info.st_size))
     }
 
     public func importPackage(from source: URL, keyPayload: String, removeStagedSource: Bool = false) async throws {
@@ -136,6 +216,12 @@ public actor MobileLibraryStore {
     }
 
     private func performImport(from source: URL, key: OneTimePackageKey, removeStagedSource: Bool) async throws {
+        try ensureWritable()
+        let fingerprint = SHA256.hash(data: Data(key.qrPayload.utf8)).map { String(format: "%02x", $0) }.joined()
+        if keyFingerprints[fingerprint] != nil {
+            if removeStagedSource { discardStagedPackage(at: source) }
+            throw MobileLibraryStoreError.packageAlreadyConsumed
+        }
         let preview: MobilePackageImportPreview
         do {
             preview = try await packageService.importPreview(from: source, wrapping: key)
@@ -149,21 +235,28 @@ public actor MobileLibraryStore {
             throw MobileLibraryStoreError.packageAlreadyConsumed
         }
         do {
-            let envelope = try await packageService.commitImport(packageID: preview.packageID)
-            guard let snapshot = envelope.snapshot else { throw MobileLibraryStoreError.invalidPackage }
-            try Self.validate(snapshot)
+            guard let envelope = try await packageService.previewEnvelope(packageID: preview.packageID), let candidate = envelope.snapshot else {
+                await packageService.discardImportPreview(packageID: preview.packageID)
+                throw MobileLibraryStoreError.invalidPackage
+            }
+            try Self.validate(candidate)
             if let current = activeSnapshot {
-                guard current.libraryID == snapshot.libraryID else { throw MobileLibraryStoreError.libraryMismatch }
-                guard snapshot.revision > current.revision else { throw MobileLibraryStoreError.revisionNotMonotonic }
+                guard current.libraryID == candidate.libraryID else { throw MobileLibraryStoreError.libraryMismatch }
+                guard candidate.revision > current.revision, candidate.revision < current.revision + 1_000_000 else { throw MobileLibraryStoreError.revisionNotMonotonic }
             }
-            try atomicWrite(snapshot, to: snapshotURL, validate: Self.validate)
-            consumedPackageIDs.insert(preview.packageID)
-            try atomicWrite(Array(consumedPackageIDs).sorted { $0.uuidString < $1.uuidString }, to: consumedURL) { ids in
-                guard Set(ids).count == ids.count else { throw MobileLibraryStoreError.persistenceFailed }
-            }
+            let committed = try await packageService.commitImport(packageID: preview.packageID)
+            guard let snapshot = committed.snapshot else { throw MobileLibraryStoreError.invalidPackage }
+            var nextReceipts = consumedPackageIDs
+            nextReceipts.insert(preview.packageID)
+            var nextKeys = keyFingerprints
+            nextKeys[fingerprint] = preview.packageID
+            try commitState(snapshot: snapshot, queue: queuedChanges, receipts: nextReceipts, keyFingerprints: nextKeys)
+            consumedPackageIDs = nextReceipts
+            keyFingerprints = nextKeys
             activeSnapshot = snapshot
             recoveryState = .ready
         } catch {
+            await packageService.discardImportPreview(packageID: preview.packageID)
             if removeStagedSource { discardStagedPackage(at: source) }
             throw error
         }
@@ -171,10 +264,16 @@ public actor MobileLibraryStore {
     }
 
     public func editNote(id: String, text: String) throws {
+        try ensureWritable()
         guard let snapshot = activeSnapshot else { throw MobileLibraryStoreError.noLibrary }
+        guard let deviceID else { throw MobileLibraryStoreError.recoveryRequired }
         guard let note = snapshot.notes.first(where: { $0.id == id }) else { throw MobileLibraryStoreError.unknownNote }
         guard note.isEditableOnPhone else { throw MobileLibraryStoreError.noteNotEditable }
-        guard note.text != text else { throw MobileLibraryStoreError.noOpChange }
+        let effectiveText = queuedChanges.reversed().compactMap { change -> String? in
+            guard case .noteRevision(let revision) = change, revision.noteID == id else { return nil }
+            return revision.text
+        }.first ?? note.text
+        guard effectiveText != text else { throw MobileLibraryStoreError.noOpChange }
         let change = MobileChange.noteRevision(NoteRevisionChange(
             changeID: UUID(), deviceID: deviceID, noteID: note.id, ownerID: note.ownerID,
             baseRevision: note.baseRevision, text: text, createdAt: Date()
@@ -183,13 +282,20 @@ public actor MobileLibraryStore {
     }
 
     public func toggleChecklistItem(briefingID: UUID, itemID: String, isCompleted: Bool? = nil) throws {
+        try ensureWritable()
         guard let snapshot = activeSnapshot else { throw MobileLibraryStoreError.noLibrary }
+        guard let deviceID else { throw MobileLibraryStoreError.recoveryRequired }
         guard let briefing = snapshot.briefings.first(where: { $0.id == briefingID }),
               let item = briefing.checklist.flatMap(\.items).first(where: { $0.id == itemID }) else {
             throw MobileLibraryStoreError.unknownChecklistItem
         }
-        let value = isCompleted ?? !item.isCompleted
-        guard value != item.isCompleted else { throw MobileLibraryStoreError.noOpChange }
+        let effectiveValue = queuedChanges.reversed().compactMap { change -> Bool? in
+            guard case .checklistCompletion(let completion) = change,
+                  completion.briefingID == briefingID, completion.itemID == itemID else { return nil }
+            return completion.isCompleted
+        }.first ?? item.isCompleted
+        let value = isCompleted ?? !effectiveValue
+        guard value != effectiveValue else { throw MobileLibraryStoreError.noOpChange }
         let change = MobileChange.checklistCompletion(ChecklistCompletionChange(
             changeID: UUID(), deviceID: deviceID, briefingID: briefingID, itemID: itemID,
             baseRevision: item.baseRevision, isCompleted: value, createdAt: Date()
@@ -207,13 +313,12 @@ public actor MobileLibraryStore {
         case .checklistCompletion(let value): id = value.changeID
         case .noteRevision(let value): id = value.changeID
         }
+        try ensureWritable()
         guard !queuedChanges.contains(where: { Self.changeID($0) == id }) else { throw MobileLibraryStoreError.duplicateChange }
         var updated = queuedChanges
         updated.append(change)
         do {
-            try atomicWrite(updated, to: queueURL) { decoded in
-                guard Set(decoded.map(Self.changeID)).count == decoded.count else { throw MobileLibraryStoreError.invalidQueue }
-            }
+            try commitState(snapshot: activeSnapshot, queue: updated, receipts: consumedPackageIDs, keyFingerprints: keyFingerprints)
         } catch let error as MobileLibraryStoreError { throw error } catch { throw MobileLibraryStoreError.persistenceFailed }
         queuedChanges = updated
     }
@@ -230,12 +335,21 @@ public actor MobileLibraryStore {
     private struct BootstrapState {
         let snapshot: MobileLibrarySnapshot?
         let queue: [MobileChange]
-        let deviceID: UUID
+        let deviceID: UUID?
         let recoveryState: MobileLibraryStoreRecoveryState
         let consumedPackageIDs: Set<UUID>
+        let keyFingerprints: [String: UUID]
     }
 
-    private static func bootstrap(applicationSupportURL: URL, fallbackDeviceID: UUID) -> BootstrapState {
+    private struct PersistedState: Codable {
+        let snapshot: MobileLibrarySnapshot?
+        let queue: [MobileChange]
+        let deviceID: UUID?
+        let consumedPackageIDs: [UUID]
+        let keyFingerprints: [String: UUID]
+    }
+
+    private static func bootstrap(applicationSupportURL: URL, fallbackDeviceID: UUID?) -> BootstrapState {
         let fileManager = FileManager.default
         let activeDirectory = applicationSupportURL.appendingPathComponent("active", isDirectory: true)
         let changesDirectory = applicationSupportURL.appendingPathComponent("changes", isDirectory: true)
@@ -245,15 +359,45 @@ public actor MobileLibraryStore {
         let queueURL = changesDirectory.appendingPathComponent("queue.json")
         let deviceURL = applicationSupportURL.appendingPathComponent("device-id")
         let consumedURL = receiptsDirectory.appendingPathComponent("consumed.json")
+        let keyURL = receiptsDirectory.appendingPathComponent("keys.json")
         do {
             for url in [applicationSupportURL, activeDirectory, changesDirectory, stagingDirectory, receiptsDirectory] {
                 try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
             }
-            var deviceID = fallbackDeviceID
+            var deviceID: UUID? = fallbackDeviceID
+            var deviceError = false
             if fileManager.fileExists(atPath: deviceURL.path), let text = try? String(contentsOf: deviceURL, encoding: .utf8), let id = UUID(uuidString: text.trimmingCharacters(in: .whitespacesAndNewlines)) {
                 deviceID = id
+            } else if fileManager.fileExists(atPath: deviceURL.path) {
+                deviceID = nil
+                deviceError = true
             } else if !fileManager.fileExists(atPath: deviceURL.path) {
-                try Data(deviceID.uuidString.utf8).write(to: deviceURL, options: .atomic)
+                if let deviceID { try durableWrite(Data(deviceID.uuidString.utf8), to: deviceURL) }
+            }
+            if fileManager.fileExists(atPath: applicationSupportURL.appendingPathComponent("state.json").path) {
+                do {
+                    let state = try MobileJSON.decoder.decode(PersistedState.self, from: Data(contentsOf: applicationSupportURL.appendingPathComponent("state.json")))
+                    if let snapshot = state.snapshot { try validate(snapshot) }
+                    guard Set(state.queue.map(changeID)).count == state.queue.count,
+                          Set(state.consumedPackageIDs).count == state.consumedPackageIDs.count,
+                          state.deviceID != nil else { throw MobileLibraryStoreError.recoveryRequired }
+                    let mirrorSnapshotCorrupt: Bool = {
+                        guard fileManager.fileExists(atPath: snapshotURL.path) else { return false }
+                        guard let data = try? Data(contentsOf: snapshotURL), let value = try? MobileJSON.decoder.decode(MobileLibrarySnapshot.self, from: data) else { return true }
+                        return (try? validate(value)) == nil
+                    }()
+                    let mirrorQueueCorrupt: Bool = {
+                        guard fileManager.fileExists(atPath: queueURL.path) else { return false }
+                        guard let data = try? Data(contentsOf: queueURL), let value = try? MobileJSON.decoder.decode([MobileChange].self, from: data) else { return true }
+                        return Set(value.map(changeID)).count != value.count
+                    }()
+                    let mirrorReceiptsCorrupt = fileManager.fileExists(atPath: consumedURL.path) && (try? JSONDecoder().decode([UUID].self, from: Data(contentsOf: consumedURL))) == nil
+                    let mirrorKeysCorrupt = fileManager.fileExists(atPath: keyURL.path) && (try? JSONDecoder().decode([String: UUID].self, from: Data(contentsOf: keyURL))) == nil
+                    let recovery: MobileLibraryStoreRecoveryState = deviceError ? .invalidDeviceID : (mirrorSnapshotCorrupt ? .invalidSnapshot : (mirrorQueueCorrupt ? .invalidQueue : ((mirrorReceiptsCorrupt || mirrorKeysCorrupt) ? .invalidReceipts : .ready)))
+                    return BootstrapState(snapshot: state.snapshot, queue: state.queue, deviceID: deviceError ? nil : state.deviceID, recoveryState: recovery, consumedPackageIDs: Set(state.consumedPackageIDs), keyFingerprints: state.keyFingerprints)
+                } catch {
+                    return BootstrapState(snapshot: nil, queue: [], deviceID: nil, recoveryState: .invalidSnapshot, consumedPackageIDs: [], keyFingerprints: [:])
+                }
             }
             var snapshot: MobileLibrarySnapshot?
             var snapshotError = false
@@ -274,17 +418,25 @@ public actor MobileLibraryStore {
                 } catch { queueError = true }
             }
             var consumed: Set<UUID> = []
+            var receiptsError = false
             if fileManager.fileExists(atPath: consumedURL.path) {
-                let ids = try JSONDecoder().decode([UUID].self, from: Data(contentsOf: consumedURL))
-                guard Set(ids).count == ids.count else { throw MobileLibraryStoreError.invalidQueue }
-                consumed = Set(ids)
+                do {
+                    let ids = try JSONDecoder().decode([UUID].self, from: Data(contentsOf: consumedURL))
+                    guard Set(ids).count == ids.count else { throw MobileLibraryStoreError.invalidQueue }
+                    consumed = Set(ids)
+                } catch { receiptsError = true }
             }
-            let recovery: MobileLibraryStoreRecoveryState = snapshotError ? .invalidSnapshot : (queueError ? .invalidQueue : (snapshot == nil ? .empty : .ready))
-            return BootstrapState(snapshot: snapshot, queue: queue, deviceID: deviceID, recoveryState: recovery, consumedPackageIDs: consumed)
+            var keys: [String: UUID] = [:]
+            if fileManager.fileExists(atPath: applicationSupportURL.appendingPathComponent("receipts/keys.json").path) {
+                do { keys = try JSONDecoder().decode([String: UUID].self, from: Data(contentsOf: applicationSupportURL.appendingPathComponent("receipts/keys.json"))) }
+                catch { receiptsError = true }
+            }
+            let recovery: MobileLibraryStoreRecoveryState = deviceError ? .invalidDeviceID : (receiptsError ? .invalidReceipts : (snapshotError ? .invalidSnapshot : (queueError ? .invalidQueue : (snapshot == nil ? .empty : .ready))))
+            return BootstrapState(snapshot: snapshot, queue: queue, deviceID: deviceError ? nil : deviceID, recoveryState: recovery, consumedPackageIDs: consumed, keyFingerprints: keys)
         } catch let error as MobileLibraryStoreError {
-            return BootstrapState(snapshot: nil, queue: [], deviceID: fallbackDeviceID, recoveryState: error == .invalidSnapshot ? .invalidSnapshot : .invalidQueue, consumedPackageIDs: [])
+            return BootstrapState(snapshot: nil, queue: [], deviceID: fallbackDeviceID, recoveryState: error == .invalidSnapshot ? .invalidSnapshot : .invalidQueue, consumedPackageIDs: [], keyFingerprints: [:])
         } catch {
-            return BootstrapState(snapshot: nil, queue: [], deviceID: fallbackDeviceID, recoveryState: fileManager.fileExists(atPath: snapshotURL.path) ? .invalidSnapshot : .invalidQueue, consumedPackageIDs: [])
+            return BootstrapState(snapshot: nil, queue: [], deviceID: fallbackDeviceID, recoveryState: fileManager.fileExists(atPath: snapshotURL.path) ? .invalidSnapshot : .invalidQueue, consumedPackageIDs: [], keyFingerprints: [:])
         }
     }
 
@@ -318,18 +470,8 @@ public actor MobileLibraryStore {
         }
     }
 
-    private func atomicWrite<T: Codable>(_ value: T, to destination: URL, validate: ((T) throws -> Void)? = nil) throws {
-        do {
-            let data = try MobileJSON.encoder.encode(value)
-            let decoded = try MobileJSON.decoder.decode(T.self, from: data)
-            try validate?(decoded)
-            try writeRaw(data, to: destination)
-        } catch let error as MobileLibraryStoreError { throw error } catch { throw MobileLibraryStoreError.persistenceFailed }
-    }
-
-    private func writeRaw(_ data: Data, to destination: URL) throws {
-        try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".(destination.lastPathComponent).(UUID().uuidString).tmp")
+    private static func durableWrite(_ data: Data, to destination: URL) throws {
+        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
         let descriptor = temporary.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR) }
         guard descriptor >= 0 else { throw MobileLibraryStoreError.persistenceFailed }
         do {
@@ -343,7 +485,59 @@ public actor MobileLibraryStore {
             }
             guard Darwin.fsync(descriptor) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
             guard Darwin.close(descriptor) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
+            guard try Data(contentsOf: temporary) == data else { throw MobileLibraryStoreError.persistenceFailed }
             guard Darwin.rename(temporary.path, destination.path) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
+        } catch {
+            _ = Darwin.close(descriptor)
+            try? FileManager.default.removeItem(at: temporary)
+            throw error
+        }
+    }
+
+    private func commitState(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], receipts: Set<UUID>, keyFingerprints: [String: UUID]) throws {
+        guard Set(queue.map(Self.changeID)).count == queue.count else { throw MobileLibraryStoreError.invalidQueue }
+        guard let deviceID else { throw MobileLibraryStoreError.invalidDeviceID }
+        let state = PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: receipts.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keyFingerprints)
+        try atomicWrite(state, to: stateURL)
+        // state.json is the transaction authority. These mirrors are only for
+        // compatibility/inspection; a mirror failure cannot report a failed
+        // transaction after the durable state commit.
+        try? atomicWrite(queue, to: queueURL)
+        try? atomicWrite(Array(receipts).sorted { $0.uuidString < $1.uuidString }, to: consumedURL)
+        try? atomicWrite(keyFingerprints, to: keyURL)
+        if let snapshot { try? atomicWrite(snapshot, to: snapshotURL, validate: Self.validate) }
+    }
+
+    private func atomicWrite<T: Codable>(_ value: T, to destination: URL, validate: ((T) throws -> Void)? = nil) throws {
+        do {
+            let data = try MobileJSON.encoder.encode(value)
+            let decoded = try MobileJSON.decoder.decode(T.self, from: data)
+            try validate?(decoded)
+            try writeRaw(data, to: destination)
+        } catch let error as MobileLibraryStoreError { throw error } catch { throw MobileLibraryStoreError.persistenceFailed }
+    }
+
+    private func writeRaw(_ data: Data, to destination: URL) throws {
+        try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
+        let descriptor = temporary.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR) }
+        guard descriptor >= 0 else { throw MobileLibraryStoreError.persistenceFailed }
+        do {
+            try data.withUnsafeBytes { bytes in
+                var offset = 0
+                while offset < data.count {
+                    let written = Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), data.count - offset)
+                    guard written > 0 else { throw MobileLibraryStoreError.persistenceFailed }
+                    offset += written
+                }
+            }
+            guard Darwin.fsync(descriptor) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
+            guard Darwin.close(descriptor) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
+            let persisted = try Data(contentsOf: temporary)
+            guard persisted == data else { throw MobileLibraryStoreError.persistenceFailed }
+            guard Darwin.rename(temporary.path, destination.path) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
+            let parentDescriptor = destination.deletingLastPathComponent().path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
+            if parentDescriptor >= 0 { _ = Darwin.fsync(parentDescriptor); _ = Darwin.close(parentDescriptor) }
         } catch {
             Darwin.close(descriptor)
             try? fileManager.removeItem(at: temporary)

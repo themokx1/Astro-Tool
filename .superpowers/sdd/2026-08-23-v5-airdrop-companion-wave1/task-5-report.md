@@ -8,12 +8,13 @@ GREEN evidence available on this host:
 
 ```text
 xcodegen generate                                      # generated AstroTool.xcodeproj
-swiftc -swift-version 6 -typecheck ...                # domain + transport + mobile app sources: passed
+xcodebuild build -target AstroToolMobile ...           # iOS 26.5 SDK, arm64+x86_64: BUILD SUCCEEDED
+xcodebuild build -target AstroToolMobileTests ...      # Debug/testability, arm64+x86_64: BUILD SUCCEEDED
 swift test --no-parallel                               # 3452 tests in 218 suites passed
 git diff --check                                       # passed
 ```
 
-The required iOS build/test commands could not execute on this host. `xcodebuild` resolves the local package graph but reports that the iOS 26.5 SDK is not installed. The installed simulator inventory contains iOS 26.4 devices (including iPhone 17 Pro) and older runtimes; CoreSimulator therefore cannot satisfy this package's iOS 26 deployment build. No simulator UI or focused iOS XCTest result is claimed.
+The iOS 26.5 SDK is installed and the direct app and unit-test target builds pass for both simulator architectures. The scheme-level generic destination is unavailable because this host has no iOS 26.5 runtime (only iOS 26.4 and older runtimes), and CoreSimulator rejects the available 26.4 device for this scheme. Consequently no focused iOS XCTest runtime result is claimed; the test bundle itself builds successfully.
 
 ## Target and signing evidence
 
@@ -21,25 +22,28 @@ The required iOS build/test commands could not execute on this host. `xcodebuild
 - Targets: `AstroToolMobile`, `AstroToolMobileTests`, `AstroToolMobileUITests`.
 - Deployment: macOS 26 remains unchanged; iOS 26 is added.
 - Package dependencies are limited to `AstroMobileDomain` and `AstroMobileTransport`; no macOS UI/application target is linked.
-- No development team, paid capability, CloudKit, Network.framework, or background entitlement is declared. `CODE_SIGNING_ALLOWED = NO` and the existing identity/manual settings allow simulator builds without a team. A physical device requires the user's own Personal Team selection in Xcode.
+- No development team, paid capability, CloudKit, Network.framework, or background entitlement is declared. The iOS target uses Automatic signing with an empty identity/team, and the project contains no global/manual `CODE_SIGNING_ALLOWED = NO`; the CLI-only simulator verification passes `CODE_SIGNING_ALLOWED=NO`. A physical device therefore remains compatible with the user's own Personal Team selection in Xcode.
 - `Info.plist` declares `.astromobile` as an exported package/content document type, the matching filename/MIME tags, and a plain-English camera purpose string.
 
 ## Implementation
 
-- `MobileLibraryStore` is an injected-root actor with stable per-install device ID, last-good active snapshot, append-only typed queue, consumed-package receipts, and recovery state.
-- Snapshot, queue, device ID, and receipts are stored under Application Support. Writes use operation-private sibling files, exclusive creation, complete writes, `fsync`, close, JSON decode/semantic validation, and atomic rename. Existing active bytes are never removed before validated replacement.
-- Recovery preserves valid state when the other file is corrupt and reports `.invalidSnapshot` or `.invalidQueue` without deleting user data.
-- Imports parse the exact `astrotool-mobile-key:v1:` payload, preview/authenticate through `MobilePackageService`, require a snapshot/current schema, reject cross-library and non-increasing revisions, preserve the queue, install atomically, and persist package receipts. App-owned staging copies are no-follow checked, private, and removed only by the store's staging seam.
+- `MobileLibraryStore` is an injected-root actor with stable per-install device ID, last-good active snapshot, append-only typed queue, consumed-package/key-fingerprint receipts, and explicit recovery state. Corrupt device IDs and receipt mirrors lock all mutations/imports without regeneration, deletion, or silent reset; the UI gives recovery guidance.
+- Snapshot, queue, device ID, receipts, and metadata are represented by one durable state document. The writer uses unique operation-private siblings, exclusive create, complete writes, `fsync`, close, exact-byte reopen/decode validation, atomic rename, and parent-directory sync. Mirror files are best-effort compatibility copies; the state document is the transaction authority, so an import cannot report failure after a snapshot-only commit.
+- Recovery preserves valid snapshot/queue/device bytes when another component is corrupt and reports `.invalidSnapshot`, `.invalidQueue`, `.invalidDeviceID`, or `.invalidReceipts` without deleting user data. Tests cover relaunch and byte preservation for mutation attempts.
+- Imports parse the exact `astrotool-mobile-key:v1:` payload, preview/authenticate through `MobilePackageService`, validate public manifest/package structure before unlock UI, validate snapshot/library/schema/revision before commit, reject cross-library/non-increasing/over-cap revisions, bind one-time key fingerprints to package IDs, preserve the queue, and install atomically. Valid-import and wrong-key tests reach the transport path.
+- App-owned staging copies enumerate hidden entries, enforce exactly the two public children, use no-follow regular-file descriptors and size/link checks, verify copied bytes, and discard only an operation-owned URL whose recorded device/inode identity still matches. Generic public staged-package deletion is no longer exposed.
 - Only checklist completion and note revision changes can be appended. Unknown records, non-editable notes, duplicate changes, and no-op edits fail closed; the active snapshot remains unchanged.
+- Effective queue values fold earlier queued changes, so repeated note/checklist values are deterministic no-ops rather than UUID-dependent duplicates.
+- The unlock flow now uses an AVFoundation camera QR scanner seam as the primary production path. It appears only after public package validation, stops on cancel/background, clears plaintext payload lifetime on exits, and accepts simulator launch-argument injection for tests.
 - The app shell handles security-scoped document intake, clears the unlock text on background/success/failure, and presents the exact English empty-state safety promise plus Hungarian equivalents. The shell remains intentionally smaller than Task 6's full tabs.
 
 ## Localization and accessibility
 
-English and Hungarian tables include the empty state, AirDrop guidance, safety promise, package unlock, and queue/library labels. The shell uses Dynamic Type-compatible system text, VoiceOver header/accessibility labels, native controls, and high-contrast system materials. The UI-test target includes English empty-state and Hungarian launch checks with fixture launch arguments.
+English and Hungarian tables include the empty state, AirDrop guidance, safety promise, package unlock, camera errors, and queue/library labels. The shell uses Dynamic Type-compatible system text, VoiceOver header/accessibility labels, stable identifiers for empty/recovery/unlocking/imported/error/action states, native controls, and high-contrast system materials. The UI-test target includes English empty-state and Hungarian launch checks with fixture launch arguments.
 
 ## Atomicity / threat self-review
 
 - Original files and incoming source URLs never enter persisted mobile state; source security-scoped access is released immediately after the app-owned copy completes.
 - Symlinked package roots/children and unexpected package members are rejected before staging. The transport service performs the authenticated package and schema validation.
 - Failed decode, wrong key, replay receipt, cross-library package, downgrade, and failed atomic write leave the previous snapshot and queue untouched.
-- Remaining concern: iOS unit/UI execution and runtime QR-camera validation require an installed iOS 26.5 SDK/runtime and were not available in this environment. The next device gate should run the focused store suite plus English/Hungarian launch journeys on an iOS 26 simulator or Personal-Team device.
+- Remaining concern: iOS unit/UI execution and runtime QR-camera validation require a usable CoreSimulator runtime; the host's iOS 26.4 device is rejected by the scheme while iOS 26.5 has no installed runtime. The next device gate should run the focused store suite plus English/Hungarian launch journeys on an iOS 26.5 simulator or Personal-Team device.

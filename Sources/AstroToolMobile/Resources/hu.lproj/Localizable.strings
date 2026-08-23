@@ -8,3 +8,10 @@
 "Revision" = "Verzió";
 "Projects" = "Projektek";
 "Queued changes" = "Várakozó módosítások";
+"Recovery required" = "Helyreállítás szükséges";
+"AstroTool found damaged local data and has locked imports and edits. Keep this iPhone data unchanged and restore it from a trusted backup before trying again." = "Az AstroTool sérült helyi adatot talált, ezért zárolta az importálást és a szerkesztést. Hagyd változatlanul az iPhone adatait, és megbízható mentésből állítsd helyre őket.";
+"Scan the one-time key shown on your Mac." = "Olvasd be a Macen látható egyszer használatos kulcsot.";
+"Scan one-time key" = "Egyszer használatos kulcs beolvasása";
+"Cancel" = "Mégse";
+"Camera access is unavailable. Try again on an iPhone with camera access." = "A kamera nem érhető el. Próbáld újra kamerával rendelkező iPhone-on.";
+"The package could not be imported. Check the key and try again." = "A csomag importálása nem sikerült. Ellenőrizd a kulcsot, majd próbáld újra.";
