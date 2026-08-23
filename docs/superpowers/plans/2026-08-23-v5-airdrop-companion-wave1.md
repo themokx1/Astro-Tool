@@ -38,6 +38,7 @@
 
 - `Sources/AstroMobileTransport/MobilePackageCrypto.swift` — authenticated encryption and key wrapping.
 - `Sources/AstroMobileTransport/MobilePackageService.swift` — cross-platform package staging/export/import.
+- `Sources/AstroMobileTransport/MobilePackageType.swift` — shared `.astromobile` UTType declaration.
 - `Tests/AstroMobileTransportTests/*` — crypto, tamper, schema, and atomic package tests.
 
 **Mac adapters**
@@ -406,6 +407,7 @@ git commit -m "feat: compose portable mobile library snapshots"
 - Modify: `Package.swift`
 - Create: `Sources/AstroMobileTransport/MobilePackageCrypto.swift`
 - Create: `Sources/AstroMobileTransport/MobilePackageService.swift`
+- Create: `Sources/AstroMobileTransport/MobilePackageType.swift`
 - Create: `Tests/AstroMobileTransportTests/MobilePackageCryptoTests.swift`
 - Create: `Tests/AstroMobileTransportTests/MobilePackageServiceTests.swift`
 
@@ -451,6 +453,8 @@ public protocol MobilePackageKeyWrapping: Sendable {
 
 Define `MobileSealedPayload` as mutable `nonce`, `ciphertext`, and `tag` byte arrays so tamper tests can change each authenticated part. Provide a deterministic in-memory wrapper only to tests and a QR one-time-key wrapper for the Personal Team prototype. `OneTimePackageKey` generates 256 random bits, exposes a versioned Base64URL payload for QR rendering, and reconstructs the symmetric key only after scanning. Persist no plaintext content key in the package.
 
+Define `UTType.astroMobile` in `MobilePackageType.swift` as `UTType(exportedAs: "io.github.themokx1.astrotool.mobile-snapshot", conformingTo: .package)`. Task 4 uses this symbol for Mac file import/export; Task 5 adds the matching Info.plist declaration to the iOS target.
+
 - [ ] **Step 4: Write failing package staging tests**
 
 Cover valid export/import, wrong key, manifest hash mismatch, schema too new, duplicate package ID, truncated payload, and destination replacement only after complete validation.
@@ -490,6 +494,7 @@ git commit -m "feat: add encrypted AstroTool mobile packages"
 - Create: `Sources/AstroUI/Features/MobileSync/MobileSyncView.swift`
 - Modify: `Sources/AstroUI/Settings/V2SettingsView.swift`
 - Modify: `Sources/AstroUI/App/V2RootView.swift`
+- Modify: `Sources/AstroUI/Features/Briefing/NightBriefingView.swift`
 - Create: `Tests/AstroUITests/MobileSyncStoreTests.swift`
 - Create: `Tests/AstroUITests/MobileSyncSurfaceTests.swift`
 
