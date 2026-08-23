@@ -22,11 +22,45 @@ public struct V2SettingsView: View {
             ImagingSetupsSettingsView(appModel: appModel).tabItem { Label("Imaging Setups", systemImage: "camera.on.rectangle") }
             EquipmentEvaluationSettingsView(store: store).tabItem { Label("Equipment", systemImage: "camera.aperture") }
             NotificationSettingsView(appModel: appModel).tabItem { Label("Notifications", systemImage: "bell") }
+            MobileSyncSettingsView(appModel: appModel).tabItem { Label("iPhone Sync", systemImage: "iphone") }
             IntegrationsSupportSettingsView(appModel: appModel, store: store).tabItem { Label("Support", systemImage: "lifepreserver") }
         }
         .padding(20)
         .frame(width: 720, height: 520)
         .accessibilityIdentifier("v2.settings")
+    }
+}
+
+private struct MobileSyncSettingsView: View {
+    let appModel: AppModel
+    @State private var isPresented = false
+
+    var body: some View {
+        Form {
+            Section("iPhone Sync") {
+                Text("iPhone szinkron")
+                    .font(.headline)
+                    .accessibilityHidden(true)
+                Text("Review a safe summary and create a package for your iPhone. Original photos stay on the Mac.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Button("Open iPhone Sync…", systemImage: "iphone") {
+                    isPresented = true
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v5.mobile-sync.open")
+            }
+        }
+        .formStyle(.grouped)
+        .sheet(isPresented: $isPresented) {
+            MobileSyncView(
+                rootURL: appModel.currentLibraryRootURL,
+                snapshotProvider: MobileSyncStore.metadataSnapshotProvider(
+                    metadataStore: appModel.currentMetadataStore
+                )
+            )
+                .frame(minWidth: 720, minHeight: 620)
+        }
     }
 }
 

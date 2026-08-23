@@ -175,6 +175,11 @@ public enum AstroTokens {
         /// "critical" is a property of a state.
         public static let critical = dynamic(dark: 0xFF6455, light: 0xD0392A)
 
+        /// High-contrast QR quiet-zone background. Kept white in both
+        /// appearances so the generated code remains scannable beside the
+        /// app's night-sky surfaces.
+        public static let qrBackground = dynamic(dark: 0xFFFFFF, light: 0xFFFFFF)
+
         /// Builds a color from two literal RGB hex values, one per
         /// appearance, via `NSColor(name:dynamicProvider:)` -- the only way
         /// a token here can honestly claim to support both appearances.

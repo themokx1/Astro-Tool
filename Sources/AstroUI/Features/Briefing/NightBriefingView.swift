@@ -5,8 +5,10 @@ import SwiftUI
 
 public struct NightBriefingView: View {
     @State private var store: NightBriefingStore
+    private let rootURL: URL?
     @State private var customChecklistTitle = ""
     @State private var otherNightDate = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+    @State private var isMobileSyncPresented = false
 
     public init(
         rootURL: URL?,
@@ -14,6 +16,7 @@ public struct NightBriefingView: View {
         applicationSupport: URL? = nil,
         caches: URL? = nil
     ) {
+        self.rootURL = rootURL
         _store = State(initialValue: NightBriefingStore(
             libraryRoot: rootURL,
             seed: seed,
@@ -33,6 +36,10 @@ public struct NightBriefingView: View {
         .navigationTitle("Éjszakai briefing")
         .astroSectionMarker("v2.detail.briefing", label: "Éjszakai briefing")
         .task { await store.loadRecent() }
+        .sheet(isPresented: $isMobileSyncPresented) {
+            MobileSyncView(rootURL: rootURL)
+                .frame(minWidth: 720, minHeight: 620)
+        }
     }
 
     private var start: some View {
@@ -496,6 +503,10 @@ public struct NightBriefingView: View {
                         .accessibilityIdentifier("v2.briefing.export.pdf-png")
                     Button("Csak képek…") { export(.pngOnly) }
                         .accessibilityIdentifier("v2.briefing.export.png")
+                    Button("Send to iPhone", systemImage: "iphone") {
+                        isMobileSyncPresented = true
+                    }
+                    .accessibilityIdentifier("v5.mobile-sync.open")
                 }
                 Label("Az export csak új PDF-et és – ha kéred – új PNG-oldalakat hoz létre. Nem töröl, nem mozgat és nem ír felül semmit.", systemImage: "shield.lefthalf.filled")
                     .font(.callout).foregroundStyle(AstroTokens.Color.ok)

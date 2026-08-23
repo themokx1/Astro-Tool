@@ -1,0 +1,173 @@
+import Foundation
+import Testing
+@testable import AstroUI
+@testable import AstroApplication
+@testable import AstroMobileDomain
+@testable import AstroMobileTransport
+
+@Suite("V5 Mac mobile sync store")
+@MainActor
+struct MobileSyncStoreTests {
+    @Test("Preview is read-only until identity and exact summary are confirmed")
+    func previewRequiresBothConfirmations() async throws {
+        let root = URL(fileURLWithPath: "/tmp/AstroTool-mobile-sync-test", isDirectory: true)
+        let identity = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot(
+            schemaVersion: 1,
+            libraryID: identity,
+            snapshotID: UUID(),
+            revision: 4,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            projects: [], nights: [], captures: [], briefings: [], notes: []
+        )
+        let writes = WriteCounter()
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in PortableIdentityPreview(proposedID: identity, relativePath: ".astro_tool/mobile/library-id", alreadyExists: false) },
+            identityCommit: { _, _ in writes.value += 1; return identity },
+            snapshotProvider: { _, _ in snapshot },
+            packageExport: { _, _, _ in MobileSyncExportResult(packageID: UUID(), createdAt: Date(), encryptedByteCount: 12) }
+        )
+
+        await store.preview()
+        #expect(store.phase == .ready)
+        #expect(writes.value == 0)
+        #expect(!store.canExport)
+
+        store.confirmIdentity(identity)
+        #expect(writes.value == 1)
+        #expect(!store.canExport)
+        store.confirmSummary(snapshot.summary)
+        #expect(store.canExport)
+    }
+
+    @Test("A mismatched confirmation fails closed and keeps the package key empty")
+    func mismatchedConfirmationsFailClosed() async throws {
+        let expected = PortableLibraryID(rawValue: UUID())
+        let store = MobileSyncStore(
+            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            identityPreview: { _ in PortableIdentityPreview(proposedID: expected, relativePath: "id", alreadyExists: false) },
+            snapshotProvider: { _, _ in .empty(libraryID: expected) }
+        )
+        await store.preview()
+        store.confirmIdentity(PortableLibraryID(rawValue: UUID()))
+        #expect(store.phase == .failed)
+        #expect(store.oneTimeQRPayload == nil)
+        #expect(!store.canExport)
+    }
+
+    @Test("Cancellation invalidates stale preview work")
+    func cancellationWinsOverStaleAsyncResult() async throws {
+        let id = PortableLibraryID(rawValue: UUID())
+        let store = MobileSyncStore(
+            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in
+                try await Task.sleep(for: .milliseconds(40))
+                return .empty(libraryID: id)
+            }
+        )
+        let task = Task { await store.preview() }
+        await Task.yield()
+        store.cancel()
+        await task.value
+        #expect(store.phase == .idle)
+        #expect(store.preview == nil)
+    }
+
+    @Test("Export failure and existing destination are visible recovery states")
+    func exportFailuresAreVisible() async throws {
+        let id = PortableLibraryID(rawValue: UUID())
+        let store = MobileSyncStore(
+            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in .empty(libraryID: id) },
+            packageExport: { _, _, _ in throw MobilePackageError.destinationExists }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.snapshotSummary)
+        #expect(store.canExport)
+        await store.export(to: URL(fileURLWithPath: "/tmp/existing.astroMobile"))
+        #expect(store.phase == .failed)
+        #expect(store.errorMessage?.localizedCaseInsensitiveContains("already") == true)
+        #expect(store.oneTimeQRPayload == nil)
+    }
+
+    @Test("A confirmed summary follows the export state machine and reset clears the one-time code")
+    func exportStateMachineAndReset() async throws {
+        let id = PortableLibraryID(rawValue: UUID())
+        let store = MobileSyncStore(
+            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in .empty(libraryID: id) },
+            packageExport: { _, _, key in
+                #expect(!key.qrPayload.isEmpty)
+                return MobileSyncExportResult(packageID: UUID(), createdAt: Date(), encryptedByteCount: 64)
+            }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.snapshotSummary)
+        await store.export(to: URL(fileURLWithPath: "/tmp/new-package.astroMobile"))
+        #expect(store.phase == .exported)
+        #expect(store.oneTimeQRPayload != nil)
+        store.reset()
+        #expect(store.phase == .idle)
+        #expect(store.oneTimeQRPayload == nil)
+    }
+
+    @Test("Missing libraries and wrong unlock codes fail closed")
+    func missingLibraryAndWrongKeyFailClosed() async throws {
+        let missing = MobileSyncStore(rootURL: nil)
+        await missing.preview()
+        #expect(missing.phase == .failed)
+        #expect(missing.failure == .missingLibrary)
+
+        let imported = MobileSyncStore(
+            rootURL: nil,
+            packageImportPreview: { _, _ in throw MobilePackageError.authenticationFailed }
+        )
+        await imported.previewIncomingPackage(from: URL(fileURLWithPath: "/tmp/package"), qrPayload: OneTimePackageKey().qrPayload)
+        #expect(imported.phase == .failed)
+        #expect(imported.failure == .importFailed)
+        #expect(imported.incomingPreview == nil)
+    }
+
+    @Test("Incoming package preview authenticates without applying changes")
+    func incomingPreviewStopsBeforeApply() async throws {
+        let imported = MobilePackageImportPreview(
+            packageID: UUID(),
+            snapshotSummary: .init(projectCount: 2, nightCount: 1, captureCount: 4, briefingCount: 1, noteCount: 2),
+            incomingChanges: [],
+            encryptedByteCount: 128
+        )
+        let store = MobileSyncStore(
+            rootURL: nil,
+            packageImportPreview: { _, _ in imported }
+        )
+        await store.previewIncomingPackage(from: URL(fileURLWithPath: "/tmp/package"), qrPayload: OneTimePackageKey().qrPayload)
+        #expect(store.phase == .importPreviewReady)
+        #expect(store.incomingPreview == imported)
+        #expect(store.didApplyIncomingChanges == false)
+    }
+}
+
+private final class WriteCounter: @unchecked Sendable {
+    var value = 0
+}
+
+private extension MobileLibrarySnapshot {
+    static func empty(libraryID: PortableLibraryID) -> MobileLibrarySnapshot {
+        MobileLibrarySnapshot(
+            schemaVersion: 1,
+            libraryID: libraryID,
+            snapshotID: UUID(),
+            revision: 0,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            projects: [], nights: [], captures: [], briefings: [], notes: []
+        )
+    }
+
+    var summary: MobileSnapshotSummary {
+        .init(projectCount: projects.count, nightCount: nights.count, captureCount: captures.count, briefingCount: briefings.count, noteCount: notes.count)
+    }
+}

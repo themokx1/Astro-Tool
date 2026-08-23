@@ -351,6 +351,7 @@ private struct V2Shell: View {
     @Binding var libraryPreparationError: String?
     let retryLibraryPreparation: () -> Void
     @State private var showsSearch = false
+    @State private var isMobileSyncPresented = false
     @State private var globalSearch = GlobalSearchStore()
     @State private var newProjectInitialQuery = ""
     /// W3-10: the "New Session" sheet's own prefill -- `nil` for the Nights
@@ -407,6 +408,14 @@ private struct V2Shell: View {
 
     private var libraryAccessMode: LibraryAccessMode {
         enableWriteOperations ? .mutationEnabled : .readOnly
+    }
+
+    private var mobileSnapshotProvider: MobileSyncStore.SnapshotProvider {
+        MobileSyncStore.metadataSnapshotProvider(
+            metadataStore: projectsStore.metadataStore,
+            applicationSupport: uiTestApplicationSupport,
+            caches: uiTestCaches
+        )
     }
 
     /// W4-4 item 1: whether the `.inspector()` column below is actually
@@ -681,6 +690,14 @@ private struct V2Shell: View {
                     )
                 }
 
+                Button {
+                    isMobileSyncPresented = true
+                } label: {
+                    Label("iPhone Sync", systemImage: "iphone")
+                }
+                .help("Review and send a safe library summary to iPhone")
+                .accessibilityIdentifier("v5.mobile-sync.open")
+
                 Button(action: {
                     newProjectInitialQuery = ""
                     router.present(.newProject)
@@ -899,6 +916,13 @@ private struct V2Shell: View {
             libraryHealthStore.onLibraryFindingsChanged = refreshSidebarBadges
         }
         .onChange(of: nightsStore.nights) { _, _ in refreshSidebarBadges() }
+        .sheet(isPresented: $isMobileSyncPresented) {
+            MobileSyncView(
+                rootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
+                snapshotProvider: mobileSnapshotProvider
+            )
+                .frame(minWidth: 720, minHeight: 620)
+        }
     }
 
     /// W3-10: the ONE place that opens the "New Session" sheet -- Project
