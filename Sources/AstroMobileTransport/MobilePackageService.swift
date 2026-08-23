@@ -19,6 +19,7 @@ private struct SystemStagingDirectoryProvider: MobilePackageStagingDirectoryProv
 }
 
 enum MobilePackageExportTestStep: Sendable {
+    case afterProvisionalIdentity
     case beforeFirstFile
     case beforeSecondFile
     case beforePublication
@@ -155,7 +156,7 @@ public actor MobilePackageService {
         let staging: PrivateStaging
         do {
             let replacementDirectory = try stagingDirectoryProvider.replacementDirectory(appropriateFor: destination)
-            staging = try Self.createPrivateStaging(in: replacementDirectory)
+            staging = try Self.createPrivateStaging(in: replacementDirectory, testingExportStep: testingExportStep)
         } catch let error as MobilePackageError {
             throw error
         } catch {
@@ -1045,7 +1046,10 @@ public actor MobilePackageService {
         return identity.type == .typeDirectory
     }
 
-    private static func createPrivateStaging(in replacementDirectory: URL) throws -> PrivateStaging {
+    private static func createPrivateStaging(
+        in replacementDirectory: URL,
+        testingExportStep: @Sendable (MobilePackageExportTestStep, URL) -> Void
+    ) throws -> PrivateStaging {
         let replacementRoot = replacementDirectory.path
         let parentDescriptor = replacementRoot.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
         guard parentDescriptor >= 0 else { throw MobilePackageError.stagingFailed }
@@ -1071,8 +1075,12 @@ public actor MobilePackageService {
                 Darwin.close(parentDescriptor)
             }
         }
+        testingExportStep(.afterProvisionalIdentity, url)
         descriptor = name.withCString { Darwin.openat(parentDescriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
-        guard descriptor >= 0, let identity = identity(ofFD: descriptor), identity.type == .typeDirectory else {
+        guard descriptor >= 0,
+              let identity = identity(ofFD: descriptor),
+              identity.type == .typeDirectory,
+              sameStableIdentity(provisionalIdentity, identity) else {
             throw MobilePackageError.stagingFailed
         }
         guard Darwin.fchmod(descriptor, 0o700) == 0 else {

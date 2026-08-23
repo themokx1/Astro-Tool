@@ -466,6 +466,7 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
 @Test func fdopendirFailureClosesTheDuplicatedDescriptor() throws {
     let root = try TemporaryPackageDirectory()
     let directoryFD = root.url.path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
+    try #require(directoryFD >= 0)
     defer { Darwin.close(directoryFD) }
     let duplicate = Int32Store()
     #expect(throws: MobilePackageError.malformedPackage) {
@@ -475,7 +476,31 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
             opening: { _ in nil }
         )
     }
+    try #require(duplicate.value >= 0)
+    errno = 0
     #expect(Darwin.fcntl(duplicate.value, F_GETFD) == -1)
+    #expect(errno == EBADF)
+}
+
+@Test func provisionalStagingReplacementIsNeverAdoptedOrDeleted() async throws {
+    let root = try TemporaryPackageDirectory()
+    let replacementRoot = root.url.appendingPathComponent("replacement-root", isDirectory: true)
+    try FileManager.default.createDirectory(at: replacementRoot, withIntermediateDirectories: false)
+    let stagingURL = URLStore()
+    let service = MobilePackageService(stagingDirectoryProvider: TestStagingProvider(root: replacementRoot), testingExportStep: { step, url in
+        guard step == .afterProvisionalIdentity else { return }
+        stagingURL.value = url
+        try? FileManager.default.removeItem(at: url)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        try? Data("replacement".utf8).write(to: url.appendingPathComponent("sentinel"))
+    })
+    let destination = root.url.appendingPathComponent("replacement.astromobile")
+    let error = await errorFrom { try await service.export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .stagingFailed)
+    let replacement = try #require(stagingURL.value)
+    #expect(try Data(contentsOf: replacement.appendingPathComponent("sentinel")) == Data("replacement".utf8))
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+    try FileManager.default.removeItem(at: replacement)
 }
 
 @Test func postRenameFailureNeverCleansThePublishedOrReplacementEntry() async throws {

@@ -267,6 +267,42 @@ The diff check was clean.
 
 ✅
 
+## Security fix round 7 — provisional identity/open binding
+
+### RED/GREEN evidence
+
+#### RED
+
+The new `provisionalStagingReplacementIsNeverAdoptedOrDeleted` regression requires an export hook immediately after the provisional `fstatat` identity capture. Before the hook/binding existed, the test did not compile because there was no boundary at which to deterministically replace the stage before `openat`.
+
+#### GREEN
+
+- `createPrivateStaging` now invokes the test-only boundary after its provisional identity capture and, immediately after `openat`, fstats the opened directory and requires device/inode/type equality with that provisional identity before `fchmod`, ownership transfer, file writes, or publication.
+- A replacement between those operations is closed and rejected. Provisional cleanup sees that the replacement has a different identity and preserves it; the replacement test proves it is neither populated, published, nor deleted.
+- The `fdopendir` cleanup proof now requires both the source and duplicated descriptors to be valid, then verifies forced adoption failure leaves `fcntl(F_GETFD) == -1` with `errno == EBADF`.
+
+The focused service set is now 33 tests.
+
+### Final verification
+
+```text
+swift test --filter MobilePackageServiceTests
+Test run with 33 tests in 0 suites passed after 0.245 seconds.
+
+swift test --filter MobilePackageCryptoTests
+Test run with 9 tests in 0 suites passed after 0.001 seconds.
+
+swift test --filter MobilePackage
+Test run with 42 tests in 0 suites passed after 0.245 seconds.
+
+swift test --no-parallel
+Test run with 3427 tests in 216 suites passed after 98.041 seconds.
+```
+
+`git diff --check` is clean.
+
+✅
+
 ## Security fix round 6 — escaping and provisional-stage remediation
 
 ### RED/GREEN evidence
