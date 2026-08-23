@@ -38,10 +38,6 @@ struct AstroToolMobileApp: App {
         let accessed = url.startAccessingSecurityScopedResource()
         Task {
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            guard accessed else {
-                await MainActor.run { intakeMessage = "AstroTool could not open that package. In Files, try sharing it with AstroTool again." }
-                return
-            }
             do {
                 _ = try await store.receive(source: url)
                 let current = await store.stagedPackageURL
@@ -50,7 +46,7 @@ struct AstroToolMobileApp: App {
                 let current = await store.stagedPackageURL
                 await MainActor.run {
                     stagedPackageURL = current
-                    intakeMessage = "AstroTool could not copy that mobile package safely. Send it from your Mac again and try once more."
+                    intakeMessage = accessed ? "AstroTool could not copy that mobile package safely. Send it from your Mac again and try once more." : "AstroTool could not open that package. In Files, try sharing it with AstroTool again."
                 }
             }
         }
@@ -60,8 +56,7 @@ struct AstroToolMobileApp: App {
 private enum MobileLaunchFixture {
     static func makeStore(mode: String?) -> MobileLibraryStore {
         guard mode == "imported" else { return MobileLibraryStore() }
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AstroToolMobileUIFixture", isDirectory: true)
-        try? FileManager.default.removeItem(at: root)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("AstroToolMobileUIFixture-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)", isDirectory: true)
         let active = root.appendingPathComponent("active", isDirectory: true)
         try? FileManager.default.createDirectory(at: active, withIntermediateDirectories: true)
         let projectID = UUID(), nightID = UUID(), briefingID = UUID()

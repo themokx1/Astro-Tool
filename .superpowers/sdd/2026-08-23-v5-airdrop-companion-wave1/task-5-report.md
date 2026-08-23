@@ -110,3 +110,13 @@ swift test --filter MobilePackageServiceTests --no-parallel       # 39 tests pas
 ```
 
 The iOS runtime remains unavailable on this host, so the new iOS store/UI tests are compiled but not claimed as runtime-executed here. The retained concern is unchanged: run the focused mobile unit/UI journeys on an installed iOS 26.5 simulator or a Personal-Team device.
+
+## Replacement fix round 1
+
+- Document intake now always attempts the app-owned copy even when security-scope acquisition reports false; only a successful acquisition is balanced with `stopAccessingSecurityScopedResource`. Errors are surfaced at the root UI with a localized dismiss/retry instruction.
+- The import API now accepts only the store's current private staged package. Replacing or discarding staged input clears the matched preview capability, preventing a caller-supplied URL from superseding private staging.
+- A `.state-durability` app-owned journal is written and synced as `pending` before every authoritative state replacement (including migration), and overwritten to `clear` only after replacement plus parent sync. Bootstrap treats `pending` as durability uncertainty while keeping valid committed state active.
+- Queued changes must now be owned by the authoritative persisted device ID. A decodable foreign-device queue locks recovery rather than being silently accepted.
+- The imported fixture root is unique for every process/launch and no longer fabricates a package-update surface; UI coverage checks the real persisted revision/project library state.
+
+Build/test execution after this round is pending renewed tool authorization: the host rejected Xcode execution because the account usage limit was reached. `git diff --check` and staged status should be rerun with the normal build gates once access resumes.

@@ -9,7 +9,7 @@ import Testing
     let store = fixture.store
 
     await #expect(throws: MobilePackageError.self) {
-        try await store.importPackage(from: fixture.corruptPackageURL, keyPayload: "astrotool-mobile-key:v1:bad")
+        try await store.importCurrentStagedPackage(keyPayload: "astrotool-mobile-key:v1:bad")
     }
 
     #expect(await store.activeSnapshot?.revision == 1)
@@ -21,7 +21,7 @@ import Testing
     let key = OneTimePackageKey()
 
     await #expect(throws: MobilePackageError.self) {
-        try await fixture.store.importPackage(from: fixture.corruptPackageURL, keyPayload: key.qrPayload)
+        try await fixture.store.importCurrentStagedPackage(keyPayload: key.qrPayload)
     }
 
     #expect(await fixture.store.activeSnapshot?.revision == 1)
@@ -111,7 +111,7 @@ import Testing
     _ = try await MobilePackageService().export(envelope, to: packageURL, wrapping: key)
 
     let staged = try await fixture.store.stagePackage(from: packageURL)
-    try await fixture.store.importPackage(from: staged, key: key, removeStagedSource: true)
+    try await fixture.store.importCurrentStagedPackage(key: key)
 
     #expect(await fixture.store.activeSnapshot?.revision == 2)
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
@@ -130,7 +130,7 @@ import Testing
     let staged = try await fixture.store.stagePackage(from: packageURL)
 
     await #expect(throws: MobilePackageError.authenticationFailed) {
-        try await fixture.store.importPackage(from: staged, key: OneTimePackageKey(), removeStagedSource: true)
+        try await fixture.store.importCurrentStagedPackage(key: OneTimePackageKey())
     }
     #expect(await fixture.store.activeSnapshot?.revision == 1)
     #expect(await fixture.store.queuedChanges.isEmpty)
@@ -150,7 +150,7 @@ import Testing
     let staged = try await fixture.store.stagePackage(from: packageURL)
 
     await #expect(throws: MobileLibraryStoreError.revisionNotMonotonic) {
-        try await fixture.store.importPackage(from: staged, key: key)
+        try await fixture.store.importCurrentStagedPackage(key: key)
     }
     #expect(await fixture.store.activeSnapshot?.revision == 1)
 }
@@ -175,12 +175,12 @@ import Testing
     let staged = try await store.stagePackage(from: packageURL)
 
     await #expect(throws: MobileLibraryStoreError.persistenceFailed) {
-        try await store.importPackage(from: staged, key: key)
+        try await store.importCurrentStagedPackage(key: key)
     }
     #expect(await store.activeSnapshot?.revision == 1)
     #expect(FileManager.default.fileExists(atPath: staged.path))
 
-    try await store.importPackage(from: staged, key: key, removeStagedSource: true)
+    try await store.importCurrentStagedPackage(key: key)
     #expect(await store.activeSnapshot?.revision == 2)
     #expect(!FileManager.default.fileExists(atPath: staged.path))
 }
@@ -228,7 +228,7 @@ import Testing
     )
 
     let staged = try await fixture.store.stagePackage(from: packageURL)
-    try await fixture.store.importPackage(from: staged, key: key, removeStagedSource: true)
+    try await fixture.store.importCurrentStagedPackage(key: key)
 
     #expect(await fixture.store.activeSnapshot?.revision == 2)
     #expect(await fixture.store.queuedChanges == queueBefore)

@@ -42,6 +42,14 @@ struct MobileRootView: View {
                 }
             }
             .safeAreaInset(edge: .top) {
+                VStack(spacing: 6) {
+                if let intakeMessage {
+                    HStack {
+                        Text(LocalizedStringKey(intakeMessage)).font(.footnote)
+                        Spacer()
+                        Button("Dismiss") { self.intakeMessage = nil; message = nil }
+                    }.padding(10).background(.red.opacity(0.15)).accessibilityIdentifier("mobile-intake-error")
+                }
                 if durabilityWarning {
                     Label("The latest change was saved, but iPhone storage needs attention. Keep the app open and make a backup before the next import.", systemImage: "externaldrive.badge.exclamationmark")
                         .font(.footnote)
@@ -49,6 +57,7 @@ struct MobileRootView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(.yellow.opacity(0.2))
                         .accessibilityIdentifier("mobile-durability-warning")
+                }
                 }
             }
             .navigationTitle("AstroTool")
@@ -131,7 +140,7 @@ struct MobileRootView: View {
 
     private var importSection: some View {
         Group {
-            if stagedPackageURL != nil || fixtureMode == "imported" {
+            if stagedPackageURL != nil {
                 VStack(alignment: .leading, spacing: 12) {
                     Text(LocalizedStringKey(snapshot == nil && fixtureMode != "imported" ? "Package received. Scan the one-time key from your Mac to unlock it." : "Import newer package. AirDrop the update from your Mac, then scan its one-time key to unlock it."))
                         .font(.headline)
@@ -173,13 +182,14 @@ struct MobileRootView: View {
             Section("Latest library") {
                 LabeledContent("Revision", value: "\(snapshot.revision)")
                 LabeledContent("Projects", value: "\(snapshot.projects.count)")
+                if let project = snapshot.projects.first { LabeledContent("Current project", value: project.displayName) }
                 LabeledContent("Queued changes", value: "\(queuedChangeCount)")
             }
             Section {
                 Text("Original photos stay on your Mac or external drive.")
                     .foregroundStyle(.secondary)
             }
-            if stagedPackageURL != nil || fixtureMode == "imported" {
+            if stagedPackageURL != nil {
                 Section { importSection }
             }
         }
@@ -195,13 +205,13 @@ struct MobileRootView: View {
     }
 
     private func importPackage() {
-        guard let stagedPackageURL, !keyPayload.isEmpty else { return }
+        guard stagedPackageURL != nil, !keyPayload.isEmpty else { return }
         let payload = keyPayload
         keyPayload = ""
         importTask = Task {
             do {
                 try Task.checkCancellation()
-                try await store.importPackage(from: stagedPackageURL, keyPayload: payload, removeStagedSource: true)
+                try await store.importCurrentStagedPackage(keyPayload: payload)
                 let current = await store.stagedPackageURL
                 await MainActor.run {
                     self.stagedPackageURL = current

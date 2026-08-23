@@ -80,6 +80,7 @@ public actor MobileLibraryStore {
     private var deviceURL: URL { applicationSupportURL.appendingPathComponent("device-id") }
     private var consumedURL: URL { receiptsDirectory.appendingPathComponent("consumed.json") }
     private var stateURL: URL { applicationSupportURL.appendingPathComponent("state.json") }
+    private var durabilityURL: URL { applicationSupportURL.appendingPathComponent(".state-durability") }
     private var keyURL: URL { receiptsDirectory.appendingPathComponent("keys.json") }
 
     public init(applicationSupportURL: URL? = nil, packageService: MobilePackageService = MobilePackageService()) {
@@ -309,29 +310,35 @@ public actor MobileLibraryStore {
         return StagingIdentity(device: UInt64(info.st_dev), inode: UInt64(info.st_ino), size: Int64(info.st_size))
     }
 
-    public func importPackage(from source: URL, keyPayload: String, removeStagedSource: Bool = false) async throws {
+    /// Imports only the package this store copied into its private staging
+    /// area. Callers never get to nominate a source URL at commit time.
+    public func importCurrentStagedPackage(keyPayload: String) async throws {
         let key: OneTimePackageKey
         do {
             key = try OneTimePackageKey(scanning: keyPayload)
         } catch {
             throw error
         }
-        try await performImport(from: source, key: key, removeStagedSource: removeStagedSource)
+        try await performImport(key: key)
     }
 
-    public func importPackage(from source: URL, key: OneTimePackageKey, removeStagedSource: Bool = false) async throws {
-        try await performImport(from: source, key: key, removeStagedSource: removeStagedSource)
+    func importCurrentStagedPackage(key: OneTimePackageKey) async throws {
+        try await performImport(key: key)
     }
 
-    private func performImport(from source: URL, key: OneTimePackageKey, removeStagedSource: Bool) async throws {
+    private func performImport(key: OneTimePackageKey) async throws {
         try ensureWritable()
         try Task.checkCancellation()
+        guard let current = currentStagedPackage,
+              let sourceIdentity = try? stagingIdentity(of: current.url), sourceIdentity == current.identity else {
+            throw MobileLibraryStoreError.invalidPackage
+        }
+        let source = current.url
         let fingerprint = SHA256.hash(data: Data(key.qrPayload.utf8)).map { String(format: "%02x", $0) }.joined()
         if keyFingerprints[fingerprint] != nil {
             await discardCurrentStagedPackageIfMatching(source)
             throw MobileLibraryStoreError.packageAlreadyConsumed
         }
-        let sourceIdentity = try? stagingIdentity(of: source)
         let token: MobilePackagePreviewToken
         let preview: MobilePackageImportPreview
         if let pendingImport,
@@ -411,9 +418,7 @@ public actor MobileLibraryStore {
             }
             throw error
         }
-        if removeStagedSource || currentStagedPackage?.url == source {
-            await discardCurrentStagedPackageIfMatching(source)
-        }
+        await discardCurrentStagedPackageIfMatching(source)
     }
 
     private func discardCurrentStagedPackageIfMatching(_ source: URL) async {
@@ -570,7 +575,7 @@ public actor MobileLibraryStore {
             }
             cleanupOwnedStagingDirectory(stagingDirectory, fileManager: fileManager)
             var deviceID: UUID? = fallbackDeviceID
-            var durabilityWarning = false
+            var durabilityWarning = (try? String(contentsOf: applicationSupportURL.appendingPathComponent(".state-durability"), encoding: .utf8)) == "pending"
             var deviceError = false
             if fileManager.fileExists(atPath: stateURL.path) {
                 do {
@@ -579,7 +584,7 @@ public actor MobileLibraryStore {
                     // state.json is the sole authoritative contract once it
                     // exists. Legacy mirrors are never consulted, so a valid
                     // state can never be paired with silently stale files.
-                    let queueValid = (try? validateQueue(state.queue)) != nil
+                    let queueValid = (try? validateQueue(state.queue, deviceID: state.deviceID)) != nil
                     let receiptsValid = Set(state.consumedPackageIDs).count == state.consumedPackageIDs.count
                     let fingerprintsValid = (try? validateKeyFingerprints(state.keyFingerprints, boundTo: Set(state.consumedPackageIDs))) != nil
                     let recovery: MobileLibraryStoreRecoveryState
@@ -623,7 +628,7 @@ public actor MobileLibraryStore {
             if fileManager.fileExists(atPath: queueURL.path) {
                 do {
                     let decoded = try MobileJSON.decoder.decode([MobileChange].self, from: Data(contentsOf: queueURL))
-                    try validateQueue(decoded)
+                    try validateQueue(decoded, deviceID: deviceID)
                     queue = decoded
                 } catch { queueError = true }
             }
@@ -646,7 +651,10 @@ public actor MobileLibraryStore {
             let result = BootstrapState(snapshot: snapshot, queue: queue, deviceID: deviceError ? nil : deviceID, recoveryState: recovery, consumedPackageIDs: consumed, keyFingerprints: keys)
             if !fileManager.fileExists(atPath: stateURL.path), recovery == .empty || recovery == .ready,
                let deviceID, let encoded = try? MobileJSON.encoder.encode(PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: consumed.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keys, durabilityWarning: durabilityWarning)) {
-                durabilityWarning = (try durableWrite(encoded, to: stateURL)) || durabilityWarning
+                _ = try durableWrite(Data("pending".utf8), to: applicationSupportURL.appendingPathComponent(".state-durability"))
+                let uncertain = try durableWrite(encoded, to: stateURL)
+                if !uncertain { _ = try durableWrite(Data("clear".utf8), to: applicationSupportURL.appendingPathComponent(".state-durability")) }
+                durabilityWarning = uncertain || durabilityWarning
             }
             return BootstrapState(snapshot: result.snapshot, queue: result.queue, deviceID: result.deviceID, recoveryState: result.recoveryState, consumedPackageIDs: result.consumedPackageIDs, keyFingerprints: result.keyFingerprints, durabilityWarning: durabilityWarning)
         } catch let error as MobileLibraryStoreError {
@@ -729,17 +737,18 @@ public actor MobileLibraryStore {
     /// Queue records may outlive the snapshot record they originally edited.
     /// Task 7 resolves those conflicts when returning changes to the Mac; at
     /// rest we validate only the change's own shape and bounds.
-    private static func validateQueue(_ queue: [MobileChange]) throws {
+    private static func validateQueue(_ queue: [MobileChange], deviceID: UUID?) throws {
         guard queue.count <= MobilePackageService.maximumCollectionCount,
-              Set(queue.map(changeID)).count == queue.count else { throw MobileLibraryStoreError.invalidQueue }
+              Set(queue.map(changeID)).count == queue.count,
+              let deviceID else { throw MobileLibraryStoreError.invalidQueue }
         for change in queue {
             switch change {
             case .noteRevision(let value):
                 guard validString(value.noteID), validString(value.ownerID), validString(value.text), isSafeRevision(value.baseRevision), value.createdAt.timeIntervalSince1970.isFinite,
-                      value.changeID != value.deviceID else { throw MobileLibraryStoreError.invalidQueue }
+                      value.deviceID == deviceID else { throw MobileLibraryStoreError.invalidQueue }
             case .checklistCompletion(let value):
                 guard validString(value.itemID), isSafeRevision(value.baseRevision), value.createdAt.timeIntervalSince1970.isFinite,
-                      value.changeID != value.deviceID else { throw MobileLibraryStoreError.invalidQueue }
+                      value.deviceID == deviceID else { throw MobileLibraryStoreError.invalidQueue }
             }
         }
     }
@@ -808,7 +817,7 @@ public actor MobileLibraryStore {
     }
 
     private func commitState(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], receipts: Set<UUID>, keyFingerprints: [String: UUID]) throws {
-        try Self.validateQueue(queue)
+        try Self.validateQueue(queue, deviceID: deviceID)
         guard let deviceID else { throw MobileLibraryStoreError.invalidDeviceID }
         try Self.validateKeyFingerprints(keyFingerprints, boundTo: receipts)
         let state = PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: receipts.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keyFingerprints, durabilityWarning: durabilityWarning)
@@ -832,6 +841,13 @@ public actor MobileLibraryStore {
 
     private func writeRaw(_ data: Data, to destination: URL) throws -> Bool {
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let tracksDurability = destination == stateURL
+        if tracksDurability {
+            // This operation-owned journal makes a post-rename parent-sync
+            // uncertainty survive process death. It is overwritten, never
+            // deleted, only after the replacement is fully synced.
+            _ = try Self.durableWrite(Data("pending".utf8), to: durabilityURL)
+        }
         let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
         let descriptor = temporary.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR) }
         guard descriptor >= 0 else { throw MobileLibraryStoreError.persistenceFailed }
@@ -855,7 +871,11 @@ public actor MobileLibraryStore {
             guard parentDescriptor >= 0 else { return true }
             let syncFailed = Darwin.fsync(parentDescriptor) != 0
             let closeFailed = Darwin.close(parentDescriptor) != 0
-            return syncFailed || closeFailed
+            let uncertain = syncFailed || closeFailed
+            if tracksDurability && !uncertain {
+                _ = try Self.durableWrite(Data("clear".utf8), to: durabilityURL)
+            }
+            return uncertain
         } catch {
             Darwin.close(descriptor)
             try? fileManager.removeItem(at: temporary)

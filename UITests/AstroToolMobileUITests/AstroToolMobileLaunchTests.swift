@@ -19,12 +19,13 @@ final class AstroToolMobileLaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Az eredeti fotók a Macen vagy a külső meghajtón maradnak."].exists)
     }
 
-    func testExistingLibraryFixtureSurfacesNewerPackageImport() {
+    func testExistingLibraryFixtureLoadsAnAuthoritativeLibrary() {
         let app = XCUIApplication()
         app.launchArguments = ["--astrotool-mobile-ui-fixture", "imported"]
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["Import newer package"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["mobile-discard-action"].exists)
+        XCTAssertTrue(app.otherElements["mobile-imported-state"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["1"].exists)
+        XCTAssertTrue(app.staticTexts["M31"].exists)
     }
 }
