@@ -3,11 +3,21 @@ import SwiftUI
 @main
 struct AstroToolMobileApp: App {
     private let store = MobileLibraryStore()
+    private let fixtureMode: String?
     @State private var stagedPackageURL: URL?
+
+    init() {
+        let arguments = ProcessInfo.processInfo.arguments
+        if let index = arguments.firstIndex(of: "--astrotool-mobile-ui-fixture"), arguments.indices.contains(index + 1) {
+            fixtureMode = arguments[index + 1]
+        } else {
+            fixtureMode = nil
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
-            MobileRootView(store: store, stagedPackageURL: $stagedPackageURL, fixtureQRPayload: launchQRPayload)
+            MobileRootView(store: store, stagedPackageURL: $stagedPackageURL, fixtureMode: fixtureMode, fixtureQRPayload: launchQRPayload)
                 .onOpenURL { url in
                     receive(url)
                 }
@@ -25,11 +35,7 @@ struct AstroToolMobileApp: App {
         Task {
             defer { if accessed { url.stopAccessingSecurityScopedResource() } }
             do {
-                if let previous = stagedPackageURL {
-                    await store.discardStagedPackage(at: previous)
-                    await MainActor.run { stagedPackageURL = nil }
-                }
-                let staged = try await store.stagePackage(from: url)
+                let staged = try await store.replaceStagedPackage(previous: stagedPackageURL, from: url)
                 await MainActor.run { stagedPackageURL = staged }
             } catch {
                 await MainActor.run { stagedPackageURL = nil }

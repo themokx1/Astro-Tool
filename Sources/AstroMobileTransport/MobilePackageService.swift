@@ -212,7 +212,8 @@ public actor MobilePackageService {
 
     public func importPreview(
         from source: URL,
-        wrapping: MobilePackageKeyWrapping
+        wrapping: MobilePackageKeyWrapping,
+        allowExistingPreview: Bool = false
     ) throws -> MobilePackageImportPreview {
         let fileManager = FileManager.default
         guard Self.isDirectory(source, fileManager: fileManager) else {
@@ -252,8 +253,12 @@ public actor MobilePackageService {
             throw MobilePackageError.invalidManifest
         }
         try Self.validateManifest(manifest)
-        guard !consumedPackageIDs.contains(manifest.packageID), stagedImports[manifest.packageID] == nil else {
+        guard !consumedPackageIDs.contains(manifest.packageID) else {
             throw MobilePackageError.duplicatePackageID
+        }
+        if let existing = stagedImports[manifest.packageID] {
+            guard allowExistingPreview else { throw MobilePackageError.duplicatePackageID }
+            return existing.preview
         }
 
         do {
@@ -342,6 +347,12 @@ public actor MobilePackageService {
     /// one-time package receipt. Consumers must validate local policy before
     /// calling `commitImport`.
     public func previewEnvelope(packageID: UUID) throws -> MobilePackageEnvelope? {
+        stagedImports[packageID]?.envelope
+    }
+
+    /// Returns the authenticated envelope without consuming the service
+    /// preview. Store-level durable state must commit before acknowledgement.
+    public func validatedEnvelope(packageID: UUID) throws -> MobilePackageEnvelope? {
         stagedImports[packageID]?.envelope
     }
 

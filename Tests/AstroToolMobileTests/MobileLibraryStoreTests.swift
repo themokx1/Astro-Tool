@@ -16,6 +16,18 @@ import Testing
     #expect(await store.queuedChanges.isEmpty)
 }
 
+@Test func malformedPackageWithCanonicalKeyReachesTransportAndPreservesState() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let key = OneTimePackageKey()
+
+    await #expect(throws: MobilePackageError.self) {
+        try await fixture.store.importPackage(from: fixture.corruptPackageURL, keyPayload: key.qrPayload)
+    }
+
+    #expect(await fixture.store.activeSnapshot?.revision == 1)
+    #expect(await fixture.store.queuedChanges.isEmpty)
+}
+
 @Test func noteEditAppendsChangeWithoutMutatingSnapshot() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let store = fixture.store
@@ -90,8 +102,9 @@ import Testing
 }
 
 @Test func validImportCommitsSnapshotAndReceiptAcrossRelaunch() async throws {
-    let fixture = try MobileStoreFixture(snapshotRevision: 1)
-    let sourceFixture = try MobileStoreFixture(snapshotRevision: 2)
+    let libraryID = UUID()
+    let fixture = try MobileStoreFixture(snapshotRevision: 1, libraryID: libraryID)
+    let sourceFixture = try MobileStoreFixture(snapshotRevision: 2, libraryID: libraryID)
     let key = OneTimePackageKey()
     let packageURL = fixture.rootURL.appendingPathComponent("valid.astromobile", isDirectory: true)
     let envelope = MobilePackageEnvelope(snapshot: sourceFixture.snapshot, changes: [], acknowledgedChangeIDs: [])
@@ -107,8 +120,9 @@ import Testing
 }
 
 @Test func validPackageWithWrongKeyDoesNotReachCommit() async throws {
-    let fixture = try MobileStoreFixture(snapshotRevision: 1)
-    let sourceFixture = try MobileStoreFixture(snapshotRevision: 2)
+    let libraryID = UUID()
+    let fixture = try MobileStoreFixture(snapshotRevision: 1, libraryID: libraryID)
+    let sourceFixture = try MobileStoreFixture(snapshotRevision: 2, libraryID: libraryID)
     let packageKey = OneTimePackageKey()
     let packageURL = fixture.rootURL.appendingPathComponent("wrong-key.astromobile", isDirectory: true)
     let envelope = MobilePackageEnvelope(snapshot: sourceFixture.snapshot, changes: [], acknowledgedChangeIDs: [])
@@ -122,6 +136,73 @@ import Testing
     #expect(await fixture.store.queuedChanges.isEmpty)
 }
 
+@Test func absurdRevisionIsRejectedWithoutOverflow() async throws {
+    let libraryID = UUID()
+    let fixture = try MobileStoreFixture(snapshotRevision: 1, libraryID: libraryID)
+    let sourceFixture = try MobileStoreFixture(snapshotRevision: Int.max, libraryID: libraryID)
+    let key = OneTimePackageKey()
+    let packageURL = fixture.rootURL.appendingPathComponent("absurd-revision.astromobile", isDirectory: true)
+    _ = try await MobilePackageService().export(
+        MobilePackageEnvelope(snapshot: sourceFixture.snapshot, changes: [], acknowledgedChangeIDs: []),
+        to: packageURL,
+        wrapping: key
+    )
+    let staged = try await fixture.store.stagePackage(from: packageURL)
+
+    await #expect(throws: MobileLibraryStoreError.revisionNotMonotonic) {
+        try await fixture.store.importPackage(from: staged, key: key)
+    }
+    #expect(await fixture.store.activeSnapshot?.revision == 1)
+}
+
+@Test func stateWriteFailureLeavesAuthenticatedPreviewRetryable() async throws {
+    let libraryID = UUID()
+    let fixture = try MobileStoreFixture(snapshotRevision: 1, libraryID: libraryID)
+    let sourceFixture = try MobileStoreFixture(snapshotRevision: 2, libraryID: libraryID)
+    let key = OneTimePackageKey()
+    let packageURL = fixture.rootURL.appendingPathComponent("retry.astromobile", isDirectory: true)
+    _ = try await MobilePackageService().export(
+        MobilePackageEnvelope(snapshot: sourceFixture.snapshot, changes: [], acknowledgedChangeIDs: []),
+        to: packageURL,
+        wrapping: key
+    )
+    let failure = StateCommitFailure(failuresRemaining: 1)
+    let store = MobileLibraryStore(
+        applicationSupportURL: fixture.rootURL,
+        packageService: MobilePackageService(),
+        testingBeforeStateCommit: { try failure.check() }
+    )
+    let staged = try await store.stagePackage(from: packageURL)
+
+    await #expect(throws: MobileLibraryStoreError.persistenceFailed) {
+        try await store.importPackage(from: staged, key: key)
+    }
+    #expect(await store.activeSnapshot?.revision == 1)
+    #expect(FileManager.default.fileExists(atPath: staged.path))
+
+    try await store.importPackage(from: staged, key: key, removeStagedSource: true)
+    #expect(await store.activeSnapshot?.revision == 2)
+    #expect(!FileManager.default.fileExists(atPath: staged.path))
+}
+
+@Test func corruptFingerprintReceiptLocksImportsButPreservesSnapshot() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    var object = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
+    object["keyFingerprints"] = ["orphan": UUID().uuidString]
+    try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: stateURL, options: .atomic)
+
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidReceipts)
+    #expect(await relaunched.activeSnapshot?.revision == 1)
+    do {
+        try await relaunched.editNote(id: "night-note", text: "blocked")
+        Issue.record("Corrupt fingerprint receipt did not lock mutations")
+    } catch let error as MobileLibraryStoreError {
+        #expect(error == .recoveryRequired)
+    }
+}
+
 private final class MobileStoreFixture {
     let rootURL: URL
     let corruptPackageURL: URL
@@ -129,7 +210,7 @@ private final class MobileStoreFixture {
     let snapshot: MobileLibrarySnapshot
     let store: MobileLibraryStore
 
-    init(snapshotRevision: Int) throws {
+    init(snapshotRevision: Int, libraryID: UUID? = nil) throws {
         rootURL = FileManager.default.temporaryDirectory.appendingPathComponent("AstroToolMobileStore-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
 
@@ -139,7 +220,7 @@ private final class MobileStoreFixture {
         let noteID = "night-note"
         let snapshot = MobileLibrarySnapshot(
             schemaVersion: MobileLibrarySnapshot.currentSchemaVersion,
-            libraryID: PortableLibraryID(rawValue: UUID()),
+            libraryID: PortableLibraryID(rawValue: libraryID ?? UUID()),
             snapshotID: UUID(),
             revision: snapshotRevision,
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
@@ -170,4 +251,19 @@ private final class MobileStoreFixture {
     }
 
     deinit { try? FileManager.default.removeItem(at: rootURL) }
+}
+
+private final class StateCommitFailure: @unchecked Sendable {
+    private var failuresRemaining: Int
+
+    init(failuresRemaining: Int) {
+        self.failuresRemaining = failuresRemaining
+    }
+
+    func check() throws {
+        if failuresRemaining > 0 {
+            failuresRemaining -= 1
+            throw MobileLibraryStoreError.persistenceFailed
+        }
+    }
 }

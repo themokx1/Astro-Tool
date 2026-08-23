@@ -15,3 +15,8 @@
 "Cancel" = "Cancel";
 "Camera access is unavailable. Try again on an iPhone with camera access." = "Camera access is unavailable. Try again on an iPhone with camera access.";
 "The package could not be imported. Check the key and try again." = "The package could not be imported. Check the key and try again.";
+"Import newer package. AirDrop the update from your Mac, then scan its one-time key to unlock it." = "Import newer package. AirDrop the update from your Mac, then scan its one-time key to unlock it.";
+"Your current library stays available until the newer package passes validation." = "Your current library stays available until the newer package passes validation.";
+"Import newer package" = "Import newer package";
+"Discard package" = "Discard package";
+"The scanned key is not valid. Scan the one-time key shown on your Mac." = "The scanned key is not valid. Scan the one-time key shown on your Mac.";

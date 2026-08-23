@@ -28,7 +28,7 @@ The iOS 26.5 SDK is installed and the direct app and unit-test target builds pas
 ## Implementation
 
 - `MobileLibraryStore` is an injected-root actor with stable per-install device ID, last-good active snapshot, append-only typed queue, consumed-package/key-fingerprint receipts, and explicit recovery state. Corrupt device IDs and receipt mirrors lock all mutations/imports without regeneration, deletion, or silent reset; the UI gives recovery guidance.
-- Snapshot, queue, device ID, receipts, and metadata are represented by one durable state document. The writer uses unique operation-private siblings, exclusive create, complete writes, `fsync`, close, exact-byte reopen/decode validation, atomic rename, and parent-directory sync. Mirror files are best-effort compatibility copies; the state document is the transaction authority, so an import cannot report failure after a snapshot-only commit.
+- Snapshot, queue, device ID, receipts, and metadata are represented by one durable state document. The writer uses unique operation-private siblings, exclusive create, complete writes, `fsync`, close, exact-byte reopen/decode validation, atomic rename, and parent-directory sync. Once present, the state document is the sole authority, so an import cannot report failure after a snapshot-only commit.
 - Recovery preserves valid snapshot/queue/device bytes when another component is corrupt and reports `.invalidSnapshot`, `.invalidQueue`, `.invalidDeviceID`, or `.invalidReceipts` without deleting user data. Tests cover relaunch and byte preservation for mutation attempts.
 - Imports parse the exact `astrotool-mobile-key:v1:` payload, preview/authenticate through `MobilePackageService`, validate public manifest/package structure before unlock UI, validate snapshot/library/schema/revision before commit, reject cross-library/non-increasing/over-cap revisions, bind one-time key fingerprints to package IDs, preserve the queue, and install atomically. Valid-import and wrong-key tests reach the transport path.
 - App-owned staging copies enumerate hidden entries, enforce exactly the two public children, use no-follow regular-file descriptors and size/link checks, verify copied bytes, and discard only an operation-owned URL whose recorded device/inode identity still matches. Generic public staged-package deletion is no longer exposed.
@@ -45,5 +45,28 @@ English and Hungarian tables include the empty state, AirDrop guidance, safety p
 
 - Original files and incoming source URLs never enter persisted mobile state; source security-scoped access is released immediately after the app-owned copy completes.
 - Symlinked package roots/children and unexpected package members are rejected before staging. The transport service performs the authenticated package and schema validation.
-- Failed decode, wrong key, replay receipt, cross-library package, downgrade, and failed atomic write leave the previous snapshot and queue untouched.
+- Failed decode, wrong key, replay receipt, cross-library package, downgrade, and failed atomic write leave the previous snapshot and queue untouched; legacy mirrors are not consulted once the state contract exists.
 - Remaining concern: iOS unit/UI execution and runtime QR-camera validation require a usable CoreSimulator runtime; the host's iOS 26.4 device is rejected by the scheme while iOS 26.5 has no installed runtime. The next device gate should run the focused store suite plus English/Hungarian launch journeys on an iOS 26.5 simulator or Personal-Team device.
+
+## Fix round 2 — retryable staged update and durable contract
+
+- Existing-library updates are now first-class UI: a newly staged package remains visible above the current library with “Import newer package”, AirDrop/unlock guidance, a primary import action, and an explicit discard action. Staging replacement is serialized inside the store actor, and restart cleanup removes only UUID-named operation-owned staging children.
+- Authenticated package previews are peekable through `validatedEnvelope(packageID:)` and remain staged until the durable state document commits. A state-write failure leaves the exact staged preview/source retryable in the same process; service acknowledgement occurs afterward and durable receipts make acknowledgement failure idempotent.
+- `state.json` is now the explicit sole authoritative persisted contract once present. Snapshot, queue, receipts, device identity, and key fingerprints are committed together; stale legacy mirrors are not consulted. Initial state creation uses the same durable writer, including checked parent-directory `fsync`.
+- Imports enforce an absolute revision ceiling and bounded delta without arithmetic overflow, including first import. Fingerprint receipts validate lowercase SHA-256 shape, unique package mapping, and reload assignment; semantic receipt corruption preserves the snapshot while locking mutations/imports.
+- Source staging opens the package root with `O_DIRECTORY|O_NOFOLLOW`, enumerates through the duplicated root descriptor, uses `openat` for fixed children, verifies root identity between reads, validates exact manifest schema/key mode/date/count/hash/canonical wrapped-key data before scanner presentation, and verifies copied payload bytes.
+- The scanner is injected through `MobileQRScanner` (including session and payload seam), canonical QR payload validation happens before dismissing the scanner, cancellation clears payload and cancels the import task, and URL replacement is serialized. Dynamic error/prompt keys are rendered through `LocalizedStringKey`; English/Hungarian tables and imported/update fixture identifiers are included.
+- Signing keeps Automatic iOS signing with an empty team and inherited identity; `CODE_SIGNING_ALLOWED=NO` is used only on simulator CLI verification, while `CODE_SIGNING_REQUIRED=NO` remains scoped to the macOS app target for existing regression compatibility.
+- Regression coverage now includes same-library valid imports, canonical-key malformed packages reaching transport, retry after injected state-write failure, semantically orphaned fingerprint receipts, and absurd revision overflow/cap rejection; the mobile UI test consumes empty/imported fixture launch arguments.
+
+Round-2 verification:
+
+```text
+xcodegen generate                                      # passed
+xcodebuild build -target AstroToolMobile ...           # BUILD SUCCEEDED, arm64+x86_64, iphonesimulator26.5
+xcodebuild build -target AstroToolMobileTests ...      # BUILD SUCCEEDED, arm64+x86_64, testability enabled
+swift test --no-parallel                               # 3452 tests in 218 suites passed
+git diff --check                                       # passed
+```
+
+The focused iOS XCTest invocation was attempted again and remains blocked by CoreSimulator: the available iOS 26.4 device is reported ineligible because the scheme's iOS 26.5 platform/runtime is not installed. No runtime result is claimed.

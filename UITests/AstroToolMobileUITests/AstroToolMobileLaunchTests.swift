@@ -18,4 +18,13 @@ final class AstroToolMobileLaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Még nincs AstroTool-könyvtár ezen az iPhone-on."].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Az eredeti fotók a Macen vagy a külső meghajtón maradnak."].exists)
     }
+
+    func testExistingLibraryFixtureSurfacesNewerPackageImport() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--astrotool-mobile-ui-fixture", "imported"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Import newer package"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["mobile-discard-action"].exists)
+    }
 }

@@ -5,7 +5,7 @@ import SwiftUI
 import UIKit
 
 struct CameraQRScannerView: UIViewRepresentable {
-    let scanner: CameraQRScanner
+    let scanner: any MobileQRScanner
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
@@ -32,13 +32,15 @@ struct CameraQRScannerView: UIViewRepresentable {
 #elseif canImport(SwiftUI)
 import SwiftUI
 struct CameraQRScannerView: View {
-    let scanner: CameraQRScanner
+    let scanner: any MobileQRScanner
     var body: some View { Color.black.frame(minHeight: 220) }
 }
 #endif
 
 @MainActor
 public protocol MobileQRScanner: AnyObject {
+    var session: AVCaptureSession { get }
+    var onPayload: ((String) -> Void)? { get set }
     func start() throws
     func stop()
 }

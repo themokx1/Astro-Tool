@@ -15,3 +15,8 @@
 "Cancel" = "Mégse";
 "Camera access is unavailable. Try again on an iPhone with camera access." = "A kamera nem érhető el. Próbáld újra kamerával rendelkező iPhone-on.";
 "The package could not be imported. Check the key and try again." = "A csomag importálása nem sikerült. Ellenőrizd a kulcsot, majd próbáld újra.";
+"Import newer package. AirDrop the update from your Mac, then scan its one-time key to unlock it." = "Újabb csomag importálása. Küldd át a frissítést a Macről AirDroppal, majd olvasd be az egyszer használatos kulcsát.";
+"Your current library stays available until the newer package passes validation." = "A jelenlegi könyvtár elérhető marad, amíg az újabb csomag ellenőrzése be nem fejeződik.";
+"Import newer package" = "Újabb csomag importálása";
+"Discard package" = "Csomag elvetése";
+"The scanned key is not valid. Scan the one-time key shown on your Mac." = "A beolvasott kulcs érvénytelen. Olvasd be a Macen látható egyszer használatos kulcsot.";

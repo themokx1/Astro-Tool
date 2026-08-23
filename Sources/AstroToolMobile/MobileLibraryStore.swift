@@ -63,10 +63,12 @@ public actor MobileLibraryStore {
     public private(set) var recoveryState: MobileLibraryStoreRecoveryState
 
     private let packageService: MobilePackageService
+    private let testingBeforeStateCommit: @Sendable () throws -> Void
     private let fileManager = FileManager.default
     private var consumedPackageIDs: Set<UUID>
     private var keyFingerprints: [String: UUID]
     private var ownedStaging: [URL: StagingIdentity]
+    private var pendingImport: PendingImport?
 
     private var activeDirectory: URL { applicationSupportURL.appendingPathComponent("active", isDirectory: true) }
     private var changesDirectory: URL { applicationSupportURL.appendingPathComponent("changes", isDirectory: true) }
@@ -82,6 +84,7 @@ public actor MobileLibraryStore {
     public init(applicationSupportURL: URL? = nil, packageService: MobilePackageService = MobilePackageService()) {
         self.applicationSupportURL = applicationSupportURL ?? Self.defaultApplicationSupportURL()
         self.packageService = packageService
+        self.testingBeforeStateCommit = {}
         self.activeSnapshot = nil
         self.queuedChanges = []
         self.deviceID = UUID()
@@ -89,7 +92,29 @@ public actor MobileLibraryStore {
         self.consumedPackageIDs = []
         self.keyFingerprints = [:]
         self.ownedStaging = [:]
+        self.pendingImport = nil
         let initial = Self.bootstrap(applicationSupportURL: self.applicationSupportURL, fallbackDeviceID: self.deviceID)
+        self.activeSnapshot = initial.snapshot
+        self.queuedChanges = initial.queue
+        self.deviceID = initial.deviceID
+        self.recoveryState = initial.recoveryState
+        self.consumedPackageIDs = initial.consumedPackageIDs
+        self.keyFingerprints = initial.keyFingerprints
+    }
+
+    init(applicationSupportURL: URL, packageService: MobilePackageService, testingBeforeStateCommit: @escaping @Sendable () throws -> Void) {
+        self.applicationSupportURL = applicationSupportURL
+        self.packageService = packageService
+        self.testingBeforeStateCommit = testingBeforeStateCommit
+        self.activeSnapshot = nil
+        self.queuedChanges = []
+        self.deviceID = UUID()
+        self.recoveryState = .empty
+        self.consumedPackageIDs = []
+        self.keyFingerprints = [:]
+        self.ownedStaging = [:]
+        self.pendingImport = nil
+        let initial = Self.bootstrap(applicationSupportURL: applicationSupportURL, fallbackDeviceID: self.deviceID)
         self.activeSnapshot = initial.snapshot
         self.queuedChanges = initial.queue
         self.deviceID = initial.deviceID
@@ -122,16 +147,20 @@ public actor MobileLibraryStore {
         let destination = stagingDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: false)
         do {
-            let children = try fileManager.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: [])
-            guard Set(children.map(\.lastPathComponent)) == [MobilePackageService.manifestFileName, MobilePackageService.encryptedPayloadFileName] else {
+            let sourceFD = source.path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+            guard sourceFD >= 0 else { throw MobilePackageError.malformedPackage }
+            defer { Darwin.close(sourceFD) }
+            let sourceIdentity = try directoryIdentity(fd: sourceFD)
+            let children = try directoryEntries(fd: sourceFD)
+            guard Set(children) == [MobilePackageService.manifestFileName, MobilePackageService.encryptedPayloadFileName],
+                  !children.contains(where: { $0 == "." || $0 == ".." || $0.contains("/") }) else {
                 throw MobilePackageError.malformedPackage
             }
-            for child in children {
-                let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-                guard values.isSymbolicLink != true, values.isDirectory != true else { throw MobilePackageError.malformedPackage }
-                let target = destination.appendingPathComponent(child.lastPathComponent)
+            for name in children {
+                let target = destination.appendingPathComponent(name)
                 guard !fileManager.fileExists(atPath: target.path) else { throw MobilePackageError.stagingFailed }
-                try copyRegularFile(from: child, to: target)
+                try copyRegularFile(from: sourceFD, name: name, to: target)
+                guard try directoryIdentity(fd: sourceFD) == sourceIdentity else { throw MobilePackageError.malformedPackage }
             }
             // The public manifest is inspected only after the operation-owned
             // copy is complete, so unlock UI never sees an unvalidated package.
@@ -144,6 +173,13 @@ public actor MobileLibraryStore {
         }
     }
 
+    /// Serializes replacement of the operation-owned staged child inside the
+    /// store actor, so two incoming document URLs cannot strand a hidden copy.
+    public func replaceStagedPackage(previous: URL?, from source: URL) throws -> URL {
+        if let previous { discardStagedPackage(at: previous) }
+        return try stagePackage(from: source)
+    }
+
     func discardStagedPackage(at url: URL) {
         guard let expected = ownedStaging.removeValue(forKey: url),
               let current = try? stagingIdentity(of: url), current == expected else { return }
@@ -152,21 +188,37 @@ public actor MobileLibraryStore {
 
     private func validatePublicManifest(at package: URL) throws {
         let manifestURL = package.appendingPathComponent(MobilePackageService.manifestFileName)
+        let payloadURL = package.appendingPathComponent(MobilePackageService.encryptedPayloadFileName)
         let values = try manifestURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
         guard values.isRegularFile == true, values.isSymbolicLink != true else { throw MobilePackageError.malformedPackage }
         let data = try Data(contentsOf: manifestURL)
         guard data.count <= MobilePackageService.maximumManifestByteCount else { throw MobilePackageError.invalidManifest }
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              Set(object.keys) == ["formatVersion", "packageID", "createdAt", "encryptedByteCount", "ciphertextSHA256", "keyMode", "wrappedContentKeyBase64"] else {
+            throw MobilePackageError.invalidManifest
+        }
         let manifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: data)
         guard manifest.formatVersion == MobilePackageService.currentFormatVersion,
               manifest.keyMode == .oneTimeQR,
-              manifest.encryptedByteCount > 0,
-              manifest.encryptedByteCount <= MobilePackageService.maximumEncryptedByteCount else {
+              manifest.createdAt.timeIntervalSince1970.isFinite,
+              manifest.encryptedByteCount >= 28,
+              manifest.encryptedByteCount <= MobilePackageService.maximumEncryptedByteCount,
+              manifest.ciphertextSHA256.count == 64,
+              manifest.ciphertextSHA256.allSatisfy({ $0.isNumber || ($0 >= "a" && $0 <= "f") }),
+              let wrapped = manifest.wrappedContentKeyBase64,
+              let wrappedData = Data(base64Encoded: wrapped),
+              !wrappedData.isEmpty,
+              wrappedData.count <= MobilePackageService.maximumWrappedKeyByteCount,
+              wrappedData.base64EncodedString() == wrapped else {
             throw MobilePackageError.unsupportedFormatVersion
         }
+        let payload = try Data(contentsOf: payloadURL)
+        guard Int64(payload.count) == manifest.encryptedByteCount,
+              sha256Hex(payload) == manifest.ciphertextSHA256 else { throw MobilePackageError.manifestHashMismatch }
     }
 
-    private func copyRegularFile(from source: URL, to destination: URL) throws {
-        let fd = source.path.withCString { Darwin.open($0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
+    private func copyRegularFile(from rootFD: Int32, name: String, to destination: URL) throws {
+        let fd = name.withCString { Darwin.openat(rootFD, $0, O_RDONLY | O_NOFOLLOW | O_CLOEXEC) }
         guard fd >= 0 else { throw MobilePackageError.malformedPackage }
         defer { Darwin.close(fd) }
         var info = Darwin.stat()
@@ -187,6 +239,36 @@ public actor MobileLibraryStore {
         try data.write(to: destination, options: .withoutOverwriting)
     }
 
+    private func directoryIdentity(fd: Int32) throws -> StagingIdentity {
+        var info = Darwin.stat()
+        guard Darwin.fstat(fd, &info) == 0, info.st_mode & S_IFMT == S_IFDIR else { throw MobilePackageError.malformedPackage }
+        return StagingIdentity(device: UInt64(info.st_dev), inode: UInt64(info.st_ino), size: Int64(info.st_size))
+    }
+
+    private func directoryEntries(fd: Int32) throws -> [String] {
+        let duplicate = Darwin.dup(fd)
+        guard duplicate >= 0, let stream = Darwin.fdopendir(duplicate) else {
+            if duplicate >= 0 { _ = Darwin.close(duplicate) }
+            throw MobilePackageError.malformedPackage
+        }
+        defer { Darwin.closedir(stream) }
+        var names: [String] = []
+        errno = 0
+        while let entry = Darwin.readdir(stream) {
+            let name = withUnsafePointer(to: entry.pointee.d_name) { pointer in
+                pointer.withMemoryRebound(to: CChar.self, capacity: Int(MAXNAMLEN) + 1) { String(cString: $0) }
+            }
+            if name != "." && name != ".." { names.append(name) }
+            if names.count > 2 { throw MobilePackageError.malformedPackage }
+        }
+        guard errno == 0 else { throw MobilePackageError.malformedPackage }
+        return names
+    }
+
+    private func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     private struct StagingIdentity: Equatable {
         let device: UInt64
         let inode: UInt64
@@ -205,7 +287,6 @@ public actor MobileLibraryStore {
         do {
             key = try OneTimePackageKey(scanning: keyPayload)
         } catch {
-            if removeStagedSource { discardStagedPackage(at: source) }
             throw error
         }
         try await performImport(from: source, key: key, removeStagedSource: removeStagedSource)
@@ -217,47 +298,65 @@ public actor MobileLibraryStore {
 
     private func performImport(from source: URL, key: OneTimePackageKey, removeStagedSource: Bool) async throws {
         try ensureWritable()
+        try Task.checkCancellation()
         let fingerprint = SHA256.hash(data: Data(key.qrPayload.utf8)).map { String(format: "%02x", $0) }.joined()
         if keyFingerprints[fingerprint] != nil {
             if removeStagedSource { discardStagedPackage(at: source) }
             throw MobileLibraryStoreError.packageAlreadyConsumed
         }
         let preview: MobilePackageImportPreview
-        do {
+        if let pendingImport, pendingImport.source == source, pendingImport.fingerprint == fingerprint {
+            preview = pendingImport.preview
+        } else {
             preview = try await packageService.importPreview(from: source, wrapping: key)
-        } catch {
-            if removeStagedSource { discardStagedPackage(at: source) }
-            throw error
         }
         guard !consumedPackageIDs.contains(preview.packageID) else {
             await packageService.discardImportPreview(packageID: preview.packageID)
-            if removeStagedSource { discardStagedPackage(at: source) }
             throw MobileLibraryStoreError.packageAlreadyConsumed
         }
+        let envelope: MobilePackageEnvelope
         do {
-            guard let envelope = try await packageService.previewEnvelope(packageID: preview.packageID), let candidate = envelope.snapshot else {
-                await packageService.discardImportPreview(packageID: preview.packageID)
+            guard let validated = try await packageService.validatedEnvelope(packageID: preview.packageID) else {
                 throw MobileLibraryStoreError.invalidPackage
             }
+            envelope = validated
+        } catch {
+            if pendingImport?.packageID == preview.packageID { pendingImport = nil }
+            throw error
+        }
+        do {
+            guard let candidate = envelope.snapshot else { throw MobileLibraryStoreError.invalidPackage }
+            guard Self.isSafeRevision(candidate.revision) else { throw MobileLibraryStoreError.revisionNotMonotonic }
             try Self.validate(candidate)
             if let current = activeSnapshot {
                 guard current.libraryID == candidate.libraryID else { throw MobileLibraryStoreError.libraryMismatch }
-                guard candidate.revision > current.revision, candidate.revision < current.revision + 1_000_000 else { throw MobileLibraryStoreError.revisionNotMonotonic }
+                guard Self.isSafeRevision(candidate.revision), candidate.revision > current.revision,
+                      candidate.revision - current.revision <= Self.maximumRevisionDelta else {
+                    throw MobileLibraryStoreError.revisionNotMonotonic
+                }
+            } else {
+                guard Self.isSafeRevision(candidate.revision) else { throw MobileLibraryStoreError.revisionNotMonotonic }
             }
-            let committed = try await packageService.commitImport(packageID: preview.packageID)
-            guard let snapshot = committed.snapshot else { throw MobileLibraryStoreError.invalidPackage }
+            try Task.checkCancellation()
+            guard let snapshot = envelope.snapshot else { throw MobileLibraryStoreError.invalidPackage }
             var nextReceipts = consumedPackageIDs
             nextReceipts.insert(preview.packageID)
             var nextKeys = keyFingerprints
             nextKeys[fingerprint] = preview.packageID
+            try Self.validateKeyFingerprints(nextKeys)
             try commitState(snapshot: snapshot, queue: queuedChanges, receipts: nextReceipts, keyFingerprints: nextKeys)
             consumedPackageIDs = nextReceipts
             keyFingerprints = nextKeys
             activeSnapshot = snapshot
             recoveryState = .ready
+            pendingImport = nil
+            // A service acknowledgement is deliberately after the durable
+            // store commit. If it fails, the durable receipt is authoritative.
+            _ = try? await packageService.commitImport(packageID: preview.packageID)
         } catch {
-            await packageService.discardImportPreview(packageID: preview.packageID)
-            if removeStagedSource { discardStagedPackage(at: source) }
+            if (try? await packageService.validatedEnvelope(packageID: preview.packageID)) != nil {
+                pendingImport = PendingImport(source: source, packageID: preview.packageID, fingerprint: fingerprint, preview: preview)
+            }
             throw error
         }
         if removeStagedSource { discardStagedPackage(at: source) }
@@ -330,6 +429,7 @@ public actor MobileLibraryStore {
         deviceID = state.deviceID
         recoveryState = state.recoveryState
         consumedPackageIDs = state.consumedPackageIDs
+        keyFingerprints = state.keyFingerprints
     }
 
     private struct BootstrapState {
@@ -349,6 +449,16 @@ public actor MobileLibraryStore {
         let keyFingerprints: [String: UUID]
     }
 
+    private struct PendingImport {
+        let source: URL
+        let packageID: UUID
+        let fingerprint: String
+        let preview: MobilePackageImportPreview
+    }
+
+    private static let maximumRevision = 1_000_000_000
+    private static let maximumRevisionDelta = 1_000_000
+
     private static func bootstrap(applicationSupportURL: URL, fallbackDeviceID: UUID?) -> BootstrapState {
         let fileManager = FileManager.default
         let activeDirectory = applicationSupportURL.appendingPathComponent("active", isDirectory: true)
@@ -359,11 +469,12 @@ public actor MobileLibraryStore {
         let queueURL = changesDirectory.appendingPathComponent("queue.json")
         let deviceURL = applicationSupportURL.appendingPathComponent("device-id")
         let consumedURL = receiptsDirectory.appendingPathComponent("consumed.json")
-        let keyURL = receiptsDirectory.appendingPathComponent("keys.json")
+        let stateURL = applicationSupportURL.appendingPathComponent("state.json")
         do {
             for url in [applicationSupportURL, activeDirectory, changesDirectory, stagingDirectory, receiptsDirectory] {
                 try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
             }
+            cleanupOwnedStagingDirectory(stagingDirectory, fileManager: fileManager)
             var deviceID: UUID? = fallbackDeviceID
             var deviceError = false
             if fileManager.fileExists(atPath: deviceURL.path), let text = try? String(contentsOf: deviceURL, encoding: .utf8), let id = UUID(uuidString: text.trimmingCharacters(in: .whitespacesAndNewlines)) {
@@ -378,23 +489,24 @@ public actor MobileLibraryStore {
                 do {
                     let state = try MobileJSON.decoder.decode(PersistedState.self, from: Data(contentsOf: applicationSupportURL.appendingPathComponent("state.json")))
                     if let snapshot = state.snapshot { try validate(snapshot) }
-                    guard Set(state.queue.map(changeID)).count == state.queue.count,
-                          Set(state.consumedPackageIDs).count == state.consumedPackageIDs.count,
-                          state.deviceID != nil else { throw MobileLibraryStoreError.recoveryRequired }
-                    let mirrorSnapshotCorrupt: Bool = {
-                        guard fileManager.fileExists(atPath: snapshotURL.path) else { return false }
-                        guard let data = try? Data(contentsOf: snapshotURL), let value = try? MobileJSON.decoder.decode(MobileLibrarySnapshot.self, from: data) else { return true }
-                        return (try? validate(value)) == nil
-                    }()
-                    let mirrorQueueCorrupt: Bool = {
-                        guard fileManager.fileExists(atPath: queueURL.path) else { return false }
-                        guard let data = try? Data(contentsOf: queueURL), let value = try? MobileJSON.decoder.decode([MobileChange].self, from: data) else { return true }
-                        return Set(value.map(changeID)).count != value.count
-                    }()
-                    let mirrorReceiptsCorrupt = fileManager.fileExists(atPath: consumedURL.path) && (try? JSONDecoder().decode([UUID].self, from: Data(contentsOf: consumedURL))) == nil
-                    let mirrorKeysCorrupt = fileManager.fileExists(atPath: keyURL.path) && (try? JSONDecoder().decode([String: UUID].self, from: Data(contentsOf: keyURL))) == nil
-                    let recovery: MobileLibraryStoreRecoveryState = deviceError ? .invalidDeviceID : (mirrorSnapshotCorrupt ? .invalidSnapshot : (mirrorQueueCorrupt ? .invalidQueue : ((mirrorReceiptsCorrupt || mirrorKeysCorrupt) ? .invalidReceipts : .ready)))
-                    return BootstrapState(snapshot: state.snapshot, queue: state.queue, deviceID: deviceError ? nil : state.deviceID, recoveryState: recovery, consumedPackageIDs: Set(state.consumedPackageIDs), keyFingerprints: state.keyFingerprints)
+                    // state.json is the sole authoritative contract once it
+                    // exists. Legacy mirrors are never consulted, so a valid
+                    // state can never be paired with silently stale files.
+                    let queueValid = Set(state.queue.map(changeID)).count == state.queue.count
+                    let receiptsValid = Set(state.consumedPackageIDs).count == state.consumedPackageIDs.count
+                    let fingerprintsValid = (try? validateKeyFingerprints(state.keyFingerprints, boundTo: Set(state.consumedPackageIDs))) != nil
+                    let recovery: MobileLibraryStoreRecoveryState
+                    let queue = queueValid ? state.queue : []
+                    if deviceError || state.deviceID == nil {
+                        recovery = .invalidDeviceID
+                    } else if !queueValid {
+                        recovery = .invalidQueue
+                    } else if !receiptsValid || !fingerprintsValid {
+                        recovery = .invalidReceipts
+                    } else {
+                        recovery = .ready
+                    }
+                    return BootstrapState(snapshot: state.snapshot, queue: queue, deviceID: deviceError ? nil : state.deviceID, recoveryState: recovery, consumedPackageIDs: receiptsValid ? Set(state.consumedPackageIDs) : [], keyFingerprints: fingerprintsValid ? state.keyFingerprints : [:])
                 } catch {
                     return BootstrapState(snapshot: nil, queue: [], deviceID: nil, recoveryState: .invalidSnapshot, consumedPackageIDs: [], keyFingerprints: [:])
                 }
@@ -431,8 +543,14 @@ public actor MobileLibraryStore {
                 do { keys = try JSONDecoder().decode([String: UUID].self, from: Data(contentsOf: applicationSupportURL.appendingPathComponent("receipts/keys.json"))) }
                 catch { receiptsError = true }
             }
+            if (try? validateKeyFingerprints(keys, boundTo: consumed)) == nil { receiptsError = true }
             let recovery: MobileLibraryStoreRecoveryState = deviceError ? .invalidDeviceID : (receiptsError ? .invalidReceipts : (snapshotError ? .invalidSnapshot : (queueError ? .invalidQueue : (snapshot == nil ? .empty : .ready))))
-            return BootstrapState(snapshot: snapshot, queue: queue, deviceID: deviceError ? nil : deviceID, recoveryState: recovery, consumedPackageIDs: consumed, keyFingerprints: keys)
+            let result = BootstrapState(snapshot: snapshot, queue: queue, deviceID: deviceError ? nil : deviceID, recoveryState: recovery, consumedPackageIDs: consumed, keyFingerprints: keys)
+            if !fileManager.fileExists(atPath: stateURL.path), recovery == .empty || recovery == .ready,
+               let deviceID, let encoded = try? MobileJSON.encoder.encode(PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: consumed.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keys)) {
+                try durableWrite(encoded, to: stateURL)
+            }
+            return result
         } catch let error as MobileLibraryStoreError {
             return BootstrapState(snapshot: nil, queue: [], deviceID: fallbackDeviceID, recoveryState: error == .invalidSnapshot ? .invalidSnapshot : .invalidQueue, consumedPackageIDs: [], keyFingerprints: [:])
         } catch {
@@ -449,7 +567,7 @@ public actor MobileLibraryStore {
     }
 
     private static func validate(_ snapshot: MobileLibrarySnapshot) throws {
-        guard snapshot.schemaVersion == MobileLibrarySnapshot.currentSchemaVersion, snapshot.revision >= 0,
+        guard snapshot.schemaVersion == MobileLibrarySnapshot.currentSchemaVersion, isSafeRevision(snapshot.revision),
               snapshot.createdAt.timeIntervalSince1970.isFinite else { throw MobileLibraryStoreError.invalidSnapshot }
         guard Set(snapshot.projects.map(\.id)).count == snapshot.projects.count,
               Set(snapshot.nights.map(\.id)).count == snapshot.nights.count,
@@ -460,6 +578,31 @@ public actor MobileLibraryStore {
         for briefing in snapshot.briefings {
             guard let note = noteMap[briefing.noteID], note.scope == .briefing, note.ownerID == briefing.id.uuidString else { throw MobileLibraryStoreError.invalidSnapshot }
             guard Set(briefing.checklist.flatMap(\.items).map(\.id)).count == briefing.checklist.flatMap(\.items).count else { throw MobileLibraryStoreError.invalidSnapshot }
+        }
+    }
+
+    private static func cleanupOwnedStagingDirectory(_ directory: URL, fileManager: FileManager) {
+        guard let children = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey], options: []) else { return }
+        for child in children {
+            let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            guard values?.isDirectory == true, values?.isSymbolicLink != true, UUID(uuidString: child.lastPathComponent) != nil else { continue }
+            try? fileManager.removeItem(at: child)
+        }
+    }
+
+    private static func isSafeRevision(_ revision: Int?) -> Bool {
+        guard let revision else { return true }
+        return revision >= 0 && revision <= maximumRevision
+    }
+
+    private static func validateKeyFingerprints(_ values: [String: UUID], boundTo receipts: Set<UUID>? = nil) throws {
+        guard values.values.count == Set(values.values).count else { throw MobileLibraryStoreError.invalidReceipts }
+        if let receipts { guard values.values.allSatisfy(receipts.contains) else { throw MobileLibraryStoreError.invalidReceipts } }
+        for (fingerprint, _) in values {
+            guard fingerprint.count == 64,
+                  fingerprint.allSatisfy({ $0.isNumber || ($0 >= "a" && $0 <= "f") }) else {
+                throw MobileLibraryStoreError.invalidReceipts
+            }
         }
     }
 
@@ -487,6 +630,13 @@ public actor MobileLibraryStore {
             guard Darwin.close(descriptor) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
             guard try Data(contentsOf: temporary) == data else { throw MobileLibraryStoreError.persistenceFailed }
             guard Darwin.rename(temporary.path, destination.path) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
+            let parentDescriptor = destination.deletingLastPathComponent().path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
+            guard parentDescriptor >= 0 else { throw MobileLibraryStoreError.persistenceFailed }
+            guard Darwin.fsync(parentDescriptor) == 0 else {
+                _ = Darwin.close(parentDescriptor)
+                throw MobileLibraryStoreError.persistenceFailed
+            }
+            guard Darwin.close(parentDescriptor) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
         } catch {
             _ = Darwin.close(descriptor)
             try? FileManager.default.removeItem(at: temporary)
@@ -497,15 +647,10 @@ public actor MobileLibraryStore {
     private func commitState(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], receipts: Set<UUID>, keyFingerprints: [String: UUID]) throws {
         guard Set(queue.map(Self.changeID)).count == queue.count else { throw MobileLibraryStoreError.invalidQueue }
         guard let deviceID else { throw MobileLibraryStoreError.invalidDeviceID }
+        try Self.validateKeyFingerprints(keyFingerprints)
         let state = PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: receipts.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keyFingerprints)
+        try testingBeforeStateCommit()
         try atomicWrite(state, to: stateURL)
-        // state.json is the transaction authority. These mirrors are only for
-        // compatibility/inspection; a mirror failure cannot report a failed
-        // transaction after the durable state commit.
-        try? atomicWrite(queue, to: queueURL)
-        try? atomicWrite(Array(receipts).sorted { $0.uuidString < $1.uuidString }, to: consumedURL)
-        try? atomicWrite(keyFingerprints, to: keyURL)
-        if let snapshot { try? atomicWrite(snapshot, to: snapshotURL, validate: Self.validate) }
     }
 
     private func atomicWrite<T: Codable>(_ value: T, to destination: URL, validate: ((T) throws -> Void)? = nil) throws {
@@ -537,7 +682,12 @@ public actor MobileLibraryStore {
             guard persisted == data else { throw MobileLibraryStoreError.persistenceFailed }
             guard Darwin.rename(temporary.path, destination.path) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
             let parentDescriptor = destination.deletingLastPathComponent().path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
-            if parentDescriptor >= 0 { _ = Darwin.fsync(parentDescriptor); _ = Darwin.close(parentDescriptor) }
+            guard parentDescriptor >= 0 else { throw MobileLibraryStoreError.persistenceFailed }
+            guard Darwin.fsync(parentDescriptor) == 0 else {
+                _ = Darwin.close(parentDescriptor)
+                throw MobileLibraryStoreError.persistenceFailed
+            }
+            guard Darwin.close(parentDescriptor) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
         } catch {
             Darwin.close(descriptor)
             try? fileManager.removeItem(at: temporary)

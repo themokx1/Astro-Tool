@@ -13,7 +13,6 @@ packages:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    CODE_SIGNING_REQUIRED: NO
     CODE_SIGN_STYLE: Automatic
 
 targets:
@@ -34,6 +33,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.astrotool.app
         PRODUCT_NAME: AstroTool
         CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: NO
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: AstroTool
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
@@ -65,7 +65,9 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.astrotool.mobile
         PRODUCT_NAME: AstroToolMobile
-        CODE_SIGN_IDENTITY: ""
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_IDENTITY: "$(inherited)"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: AstroTool
     info:

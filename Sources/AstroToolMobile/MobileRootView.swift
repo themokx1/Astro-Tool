@@ -1,5 +1,6 @@
 import SwiftUI
 import AstroMobileDomain
+import AstroMobileTransport
 
 struct MobileRootView: View {
     let store: MobileLibraryStore
@@ -10,21 +11,26 @@ struct MobileRootView: View {
     @State private var keyPayload = ""
     @State private var message: String?
     @State private var showingScanner = false
-    private let scanner: CameraQRScanner
+    private let scanner: any MobileQRScanner
+    private let fixtureMode: String?
     private let fixtureQRPayload: String?
+    @State private var importTask: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
-    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), scanner: CameraQRScanner = CameraQRScanner(), fixtureQRPayload: String? = nil) {
+    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), scanner: any MobileQRScanner = CameraQRScanner(), fixtureMode: String? = nil, fixtureQRPayload: String? = nil) {
         self.store = store
         _stagedPackageURL = stagedPackageURL
         self.scanner = scanner
+        self.fixtureMode = fixtureMode
         self.fixtureQRPayload = fixtureQRPayload
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if recoveryState != .empty && recoveryState != .ready {
+                if fixtureMode == "empty" {
+                    emptyState
+                } else if recoveryState != .empty && recoveryState != .ready {
                     recoveryStateView
                 } else if let snapshot {
                     libraryState(snapshot)
@@ -36,7 +42,13 @@ struct MobileRootView: View {
             .task { await refresh(); if let fixtureQRPayload { keyPayload = fixtureQRPayload } }
             .onChange(of: stagedPackageURL) { _, _ in }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { keyPayload = ""; scanner.stop() }
+                if phase != .active {
+                    keyPayload = ""
+                    scanner.stop()
+                    importTask?.cancel()
+                    importTask = nil
+                    showingScanner = false
+                }
             }
             .sheet(isPresented: $showingScanner, onDismiss: { scanner.stop() }) {
                 VStack {
@@ -47,8 +59,14 @@ struct MobileRootView: View {
                 .accessibilityIdentifier("mobile-unlocking-scanner")
                 .task {
                     scanner.onPayload = { value in
-                        keyPayload = value
-                        showingScanner = false
+                        do {
+                            _ = try OneTimePackageKey(scanning: value)
+                            keyPayload = value
+                            showingScanner = false
+                            scanner.stop()
+                        } catch {
+                            message = "The scanned key is not valid. Scan the one-time key shown on your Mac."
+                        }
                     }
                     do { try scanner.start() } catch { message = "Camera access is unavailable. Try again on an iPhone with camera access." }
                 }
@@ -91,26 +109,36 @@ struct MobileRootView: View {
 
     private var importSection: some View {
         Group {
-            if stagedPackageURL != nil {
+            if stagedPackageURL != nil || fixtureMode == "imported" {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Package received. Scan the one-time key from your Mac to unlock it.")
+                    Text(LocalizedStringKey(snapshot == nil && fixtureMode != "imported" ? "Package received. Scan the one-time key from your Mac to unlock it." : "Import newer package. AirDrop the update from your Mac, then scan its one-time key to unlock it."))
                         .font(.headline)
                         .accessibilityIdentifier("mobile-unlocking-state")
+                    if snapshot != nil {
+                        Text(LocalizedStringKey("Your current library stays available until the newer package passes validation."))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                     Button("Scan one-time key") { showingScanner = true }
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("mobile-package-scan")
-                    Button("Import package") {
+                    Button(LocalizedStringKey(snapshot == nil && fixtureMode != "imported" ? "Import package" : "Import newer package")) {
                         importPackage()
                     }
                     .buttonStyle(.bordered)
                     .disabled(keyPayload.isEmpty)
                     .accessibilityIdentifier("mobile-import-action")
+                    Button("Discard package") {
+                        discardStagedPackage()
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("mobile-discard-action")
                 }
                 .padding()
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
             }
             if let message {
-                Text(message)
+                Text(LocalizedStringKey(message))
                     .foregroundStyle(.red)
                     .font(.callout)
                     .accessibilityIdentifier("mobile-import-error")
@@ -129,6 +157,9 @@ struct MobileRootView: View {
                 Text("Original photos stay on your Mac or external drive.")
                     .foregroundStyle(.secondary)
             }
+            if stagedPackageURL != nil || fixtureMode == "imported" {
+                Section { importSection }
+            }
         }
         .accessibilityIdentifier("mobile-imported-state")
     }
@@ -143,16 +174,36 @@ struct MobileRootView: View {
         guard let stagedPackageURL, !keyPayload.isEmpty else { return }
         let payload = keyPayload
         keyPayload = ""
-        Task {
+        importTask = Task {
             do {
+                try Task.checkCancellation()
                 try await store.importPackage(from: stagedPackageURL, keyPayload: payload, removeStagedSource: true)
+                try Task.checkCancellation()
                 await MainActor.run {
                     self.stagedPackageURL = nil
                     self.message = nil
+                    self.importTask = nil
                 }
                 await refresh()
             } catch {
-                await MainActor.run { self.message = "The package could not be imported. Check the key and try again." }
+                await MainActor.run {
+                    guard !Task.isCancelled else { return }
+                    self.message = "The package could not be imported. Check the key and try again."
+                    self.importTask = nil
+                }
+            }
+        }
+    }
+
+    private func discardStagedPackage() {
+        guard let stagedPackageURL else { return }
+        importTask?.cancel()
+        Task {
+            await store.discardStagedPackage(at: stagedPackageURL)
+            await MainActor.run {
+                self.stagedPackageURL = nil
+                self.keyPayload = ""
+                self.message = nil
             }
         }
     }
