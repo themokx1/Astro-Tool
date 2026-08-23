@@ -499,6 +499,9 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(error as? MobilePackageError == .stagingFailed)
     let replacement = try #require(stagingURL.value)
     #expect(try Data(contentsOf: replacement.appendingPathComponent("sentinel")) == Data("replacement".utf8))
+    #expect(try Set(FileManager.default.contentsOfDirectory(atPath: replacement.path)) == ["sentinel"])
+    #expect(!FileManager.default.fileExists(atPath: replacement.appendingPathComponent(MobilePackageService.manifestFileName).path))
+    #expect(!FileManager.default.fileExists(atPath: replacement.appendingPathComponent(MobilePackageService.encryptedPayloadFileName).path))
     #expect(!FileManager.default.fileExists(atPath: destination.path))
     try FileManager.default.removeItem(at: replacement)
 }

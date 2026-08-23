@@ -88,6 +88,27 @@ Clean.
 
 None within Task 3 scope. Paired-device key wrapping remains an injected interface for later pairing work; only the one-time QR wrapper is implemented in this wave, as required.
 
+## Reviewer closure — replacement-race child absence assertion
+
+Addressed the reviewer Minor by strengthening `provisionalStagingReplacementIsNeverAdoptedOrDeleted`: after the staging entry is replaced, the test now asserts that the replacement directory contains exactly `sentinel` and explicitly has neither `manifest.json` nor `encrypted-payload.bin`. Production code was unchanged.
+
+Fresh verification:
+
+```text
+swift test --filter MobilePackageServiceTests
+Test run with 33 tests in 0 suites passed after 0.298 seconds.
+
+swift test --filter MobilePackage
+Test run with 42 tests in 0 suites passed after 0.250 seconds.
+
+swift test --no-parallel
+Test run with 3427 tests in 216 suites passed after 93.083 seconds.
+
+git diff --check
+```
+
+The diff check was clean.
+
 ## Security fix round 1 — threat-model remediation
 
 ### RED evidence
