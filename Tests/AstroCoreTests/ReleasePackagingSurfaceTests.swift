@@ -159,13 +159,13 @@ struct ReleasePackagingSurfaceTests {
 
     @Test("Stable V4 hotfix has matching final release notes and changelog")
     func stableV4Documentation() throws {
-        let notes = try source("docs/releases/v4.0.1.md")
+        let notes = try source("docs/releases/v4.0.2.md")
         let changelog = try source("CHANGELOG.md")
-        #expect(notes.contains("# AstroTool 4.0.1"))
+        #expect(notes.contains("# AstroTool 4.0.2"))
         #expect(notes.contains("képkönyvtár"))
         #expect(notes.contains("mappaválasztó"))
         #expect(!notes.lowercased().contains("prerelease"))
         #expect(!notes.lowercased().contains("béta-korlát"))
-        #expect(changelog.contains("## [4.0.1] - 2026-08-23"))
+        #expect(changelog.contains("## [4.0.2] - 2026-08-23"))
     }
 }

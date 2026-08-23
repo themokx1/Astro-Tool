@@ -8,6 +8,16 @@ történik.
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-08-23
+
+### Javítva
+
+- A natív mappaválasztó után újranyitott első-beolvasási lap most már
+  megbízhatóan bezáródik a „Tovább a könyvtárhoz” gombbal. Az új lap csak az
+  előző modális lap bezárásának teljes befejezése után jelenik meg.
+- A közvetlen könyvtárbelépés elmenti az onboarding befejezett állapotát, így
+  a következő indításkor nem tér vissza fölöslegesen az első lépésekhez.
+
 ## [4.0.1] - 2026-08-23
 
 ### Javítva
