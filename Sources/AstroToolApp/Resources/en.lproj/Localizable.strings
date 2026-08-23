@@ -119,6 +119,7 @@
 "Check the exact summary before anything is created." = "Check the exact summary before anything is created.";
 "Snapshot" = "Snapshot";
 "Freshness" = "Freshness";
+"Updated %@" = "Updated %@";
 "This Mac already has a confirmed library identity." = "This Mac already has a confirmed library identity.";
 "The first send will create one small identity for this library after you confirm it." = "The first send will create one small identity for this library after you confirm it.";
 "The destination must be new; an existing package is never replaced." = "The destination must be new; an existing package is never replaced.";
@@ -156,6 +157,20 @@
 "Something needs attention." = "Something needs attention.";
 "Try again" = "Try again";
 "Review a safe summary and create a package for your iPhone. Original photos stay on the Mac." = "Review a safe summary and create a package for your iPhone. Original photos stay on the Mac.";
+"Open an image library on the Mac before sending anything." = "Open an image library on the Mac before sending anything.";
+"The library identity changed. Review it again, then confirm the exact identity." = "The library identity changed. Review it again, then confirm the exact identity.";
+"The saved library identity did not match the identity you confirmed. Review it again." = "The saved library identity did not match the identity you confirmed. Review it again.";
+"AstroTool could not save the library identity. Nothing was sent." = "AstroTool could not save the library identity. Nothing was sent.";
+"The summary changed. Review the latest counts before sending." = "The summary changed. Review the latest counts before sending.";
+"AstroTool could not prepare a safe preview." = "AstroTool could not prepare a safe preview.";
+"The package was not sent. Choose a new destination and try again." = "The package was not sent. Choose a new destination and try again.";
+"This package could not be opened. Check the package and scan its code again." = "This package could not be opened. Check the package and scan its code again.";
+"The package is being published safely. Please wait." = "The package is being published safely. Please wait.";
+"Choose a new package name. Existing packages are never replaced." = "Choose a new package name. Existing packages are never replaced.";
+"Finishing the sealed package…" = "Finishing the sealed package…";
+"That destination already exists. Choose a new name; AstroTool never overwrites it." = "That destination already exists. Choose a new name; AstroTool never overwrites it.";
+"This package could not be unlocked. Check the package and scan its code again." = "This package could not be unlocked. Check the package and scan its code again.";
+"This package is damaged or incomplete. Ask for a fresh package and try again." = "This package is damaged or incomplete. Ask for a fresh package and try again.";
 
 /* V4 entry points outside the editor. */
 "Készülj fel a következő éjszakára" = "Prepare for your next night";

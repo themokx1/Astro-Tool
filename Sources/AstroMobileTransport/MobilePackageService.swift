@@ -9,12 +9,19 @@ protocol MobilePackageStagingDirectoryProvider: Sendable {
 
 private struct SystemStagingDirectoryProvider: MobilePackageStagingDirectoryProvider {
     func replacementDirectory(appropriateFor destination: URL) throws -> URL {
-        try FileManager.default.url(
-            for: .itemReplacementDirectory,
-            in: .userDomainMask,
-            appropriateFor: destination,
-            create: true
-        )
+        // `itemReplacementDirectory` is an exporter-oriented API: its
+        // relationship with a final URL is platform-dependent and SwiftUI
+        // may already have materialized that URL before this service runs.
+        // Anchor staging to the existing destination parent instead. The
+        // secure mkdtemp/openat path below creates a private child on the
+        // same volume without ever touching the final package name.
+        let parent = destination.deletingLastPathComponent().standardizedFileURL
+        var info: Darwin.stat = .init()
+        let result = parent.path.withCString { Darwin.lstat($0, &info) }
+        guard result == 0, info.st_mode & S_IFMT == S_IFDIR else {
+            throw MobilePackageError.stagingFailed
+        }
+        return parent
     }
 }
 
@@ -311,6 +318,13 @@ public actor MobilePackageService {
         stagedImports[manifest.packageID] = StagedImport(envelope: envelope, preview: preview)
         stagedImportBytes += manifest.encryptedByteCount
         return preview
+    }
+
+    /// Drops authenticated preview material staged only for review. The
+    /// package remains eligible for a later re-preview with the same key.
+    public func discardImportPreview(packageID: UUID) {
+        guard let staged = stagedImports.removeValue(forKey: packageID) else { return }
+        stagedImportBytes = max(0, stagedImportBytes - staged.preview.encryptedByteCount)
     }
 
     public func commitImport(packageID: UUID) throws -> MobilePackageEnvelope {

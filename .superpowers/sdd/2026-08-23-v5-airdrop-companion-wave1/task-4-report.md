@@ -86,3 +86,44 @@ Final full-suite verification after the follow-up changes:
 swift test --no-parallel
 Test run with 3442 tests in 218 suites passed after 95.863 seconds.
 ```
+
+## Review follow-up (round 2), Phase 1 root-cause evidence
+
+The failing publication path was reproduced before implementation changes:
+
+```text
+swift test --filter exporterPlaceholderReproducesDestinationFailure
+✘ An exporter-created empty final path currently blocks the exclusive package publication
+  error = The destination already exists.
+```
+
+This is the exact boundary failure: a zero-byte file at the final package URL is treated as an occupied destination, so Task 3's `renameatx_np(..., RENAME_EXCL)` correctly refuses publication. The existing fresh destination round-trip passes when no placeholder is present.
+
+The required Foundation probe was added as `replacementDirectoryProbeDoesNotGuess`. On this macOS 26.5 test runtime, `FileManager.url(for: .itemReplacementDirectory, appropriateFor: <absent final URL>, create: true)` returned a private replacement directory while `finalExists=false`; it did not itself materialize the final path. The separately reproduced failing condition is the SwiftUI exporter-created empty final path. This distinguishes the Foundation staging-directory lookup from the exporter placeholder write and avoids claiming an unobserved API behavior.
+
+Data-flow evidence: `MobilePackageService.export` → `SystemStagingDirectoryProvider.replacementDirectory` → private staging write → `publishExclusively` → `renameatx_np(RENAME_EXCL)`. The failure occurs only after the final URL has already been materialized, and the destination bytes are never replaced. No implementation change was made before this evidence and the red regression were recorded.
+
+## Review follow-up (round 2), Phase 2 RED/GREEN
+
+The root-cause fix anchors system staging to the already-existing destination parent, validates that parent without creating the final name, and retains the existing private `mkdtemp`/`openat`/0700 staging and same-volume exclusive rename path. The transport regressions prove a fresh destination remains absent until publication, a round trip succeeds, the injected volume-local provider remains supported, and a zero-byte exporter placeholder is reported as occupied without changing its bytes.
+
+Lifecycle follow-up adds an explicit `.finishing` phase. Cancelling an in-flight export no longer presents idle while encryption/publication continues; Cancel, dismiss, and reset are disabled during that phase, and a late success keeps the actual manifest metadata and one-time QR. Import cancellation invalidates stale results and discards any late authenticated staging. Incoming failures retain source/code only for an incoming retry; retry re-enters incoming preview, and cancel/done/dismiss clear the source and code. Exporter failures now surface a localized choose-new-name recovery message, while user cancellation remains silent.
+
+The metadata revision is a deterministic FNV digest over the complete typed metadata inputs used by the snapshot (including mutable record fields, frame decisions, integration totals, annotations, and briefings), constrained to a nonzero value. The review shows both an absolute timestamp and a localized relative freshness phrase. Store fallback/error strings are explicitly present in both localization tables; the coverage extractor reports zero missing keys.
+
+Focused verification after Phase 2:
+
+```text
+swift test --filter MobileSyncStoreTests          # 13 tests passed
+swift test --filter MobileSyncSurfaceTests        # 4 tests passed
+swift test --filter MobilePackageServiceTests     # 37 tests passed
+swift test --filter LocalizationCoverageTests     # 15 tests passed
+git diff --check                                  # clean
+```
+
+Final full verification after Phase 2:
+
+```text
+swift test --no-parallel
+Test run with 3448 tests in 218 suites passed after 100.311 seconds.
+```

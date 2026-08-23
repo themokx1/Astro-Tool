@@ -184,10 +184,91 @@ struct MobileSyncStoreTests {
         let task = Task { await store.export(to: URL(fileURLWithPath: "/tmp/new-package.astroMobile")) }
         await Task.yield()
         store.cancel()
+        #expect(store.phase == .finishing)
+        store.reset()
+        store.dismiss()
+        #expect(store.phase == .finishing)
         gate.open()
         await task.value
         #expect(store.phase == .exported)
         #expect(store.oneTimeQRPayload != nil)
+    }
+
+    @Test("A cancelled import discards a late authenticated preview")
+    func cancellationDiscardsLateImportPreview() async throws {
+        let imported = MobilePackageImportPreview(
+            packageID: UUID(),
+            snapshotSummary: .init(projectCount: 1, nightCount: 1, captureCount: 1, briefingCount: 0, noteCount: 0),
+            incomingChanges: [],
+            encryptedByteCount: 32
+        )
+        let gate = AsyncGate()
+        let discarded = ValueCounter()
+        let store = MobileSyncStore(
+            rootURL: nil,
+            packageImportPreview: { _, _ in
+                await gate.wait()
+                return imported
+            },
+            packageImportDiscard: { packageID in
+                if packageID == imported.packageID { discarded.value += 1 }
+            }
+        )
+        let task = Task {
+            await store.previewIncomingPackage(from: URL(fileURLWithPath: "/tmp/package"), qrPayload: OneTimePackageKey().qrPayload)
+        }
+        await Task.yield()
+        store.cancel()
+        gate.open()
+        await task.value
+        #expect(store.phase == .idle)
+        #expect(store.incomingPreview == nil)
+        #expect(discarded.value == 1)
+    }
+
+    @Test("Incoming retry repeats the incoming preview context")
+    func incomingRetryKeepsIncomingContext() async throws {
+        let imported = MobilePackageImportPreview(
+            packageID: UUID(),
+            snapshotSummary: .init(projectCount: 1, nightCount: 1, captureCount: 1, briefingCount: 0, noteCount: 0),
+            incomingChanges: [],
+            encryptedByteCount: 32
+        )
+        let calls = ValueCounter()
+        let store = MobileSyncStore(
+            rootURL: nil,
+            packageImportPreview: { _, _ in
+                calls.value += 1
+                if calls.value == 1 { throw MobilePackageError.authenticationFailed }
+                return imported
+            }
+        )
+        let source = URL(fileURLWithPath: "/tmp/package")
+        let code = OneTimePackageKey().qrPayload
+        await store.previewIncomingPackage(from: source, qrPayload: code)
+        #expect(store.phase == .failed)
+        await store.retry()
+        #expect(store.phase == .importPreviewReady)
+        #expect(store.incomingPreview == imported)
+        #expect(calls.value == 2)
+    }
+
+    @Test("Metadata revision is stable, nonzero, and changes when content changes")
+    func metadataRevisionTracksContent() {
+        let projectID = UUID()
+        let project = ProjectRecord(id: projectID, catalogID: "m31", displayName: "M31", phase: .planned)
+        let base = MobileSyncStore.revisionForTesting(
+            projects: [project], nights: [], captures: [], annotations: [], briefings: [], decisions: [], integrationSecondsByCaptureID: [:]
+        )
+        let same = MobileSyncStore.revisionForTesting(
+            projects: [project], nights: [], captures: [], annotations: [], briefings: [], decisions: [], integrationSecondsByCaptureID: [:]
+        )
+        let changed = MobileSyncStore.revisionForTesting(
+            projects: [ProjectRecord(id: projectID, catalogID: "m31", displayName: "M31 revised", phase: .planned)], nights: [], captures: [], annotations: [], briefings: [], decisions: [], integrationSecondsByCaptureID: [:]
+        )
+        #expect(base > 0)
+        #expect(base == same)
+        #expect(base != changed)
     }
 
     @Test("Destination preparation never removes an existing package")
@@ -207,6 +288,10 @@ struct MobileSyncStoreTests {
 }
 
 private final class WriteCounter: @unchecked Sendable {
+    var value = 0
+}
+
+private final class ValueCounter: @unchecked Sendable {
     var value = 0
 }
 

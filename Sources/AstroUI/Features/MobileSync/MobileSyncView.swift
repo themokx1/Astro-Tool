@@ -43,8 +43,14 @@ public struct MobileSyncView: View {
             contentType: .astroMobile,
             defaultFilename: "AstroTool-iPhone"
         ) { result in
-            guard case .success(let url) = result else { return }
-            store.startExport(to: url)
+            switch result {
+            case .success(let url):
+                store.startExport(to: url)
+            case .failure(let error):
+                let nsError = error as NSError
+                guard nsError.code != NSUserCancelledError else { return }
+                store.recordExporterFailure()
+            }
         }
         .fileImporter(
             isPresented: $showsImporter,
@@ -129,7 +135,7 @@ public struct MobileSyncView: View {
             .frame(maxWidth: .infinity, minHeight: 180)
         case .ready:
             readyContent
-        case .exporting:
+        case .exporting, .finishing:
             exportingContent
         case .exported:
             exportedContent
@@ -223,6 +229,9 @@ public struct MobileSyncView: View {
             Text("Check the exact summary before anything is created.").astroBody().foregroundStyle(AstroTokens.Color.inkDim)
             summaryGrid(preview.snapshotSummary)
             LabeledContent("Freshness", value: preview.snapshot.createdAt.formatted(date: .abbreviated, time: .shortened))
+            Text(String(localized: "Updated \(preview.snapshot.createdAt.formatted(.relative(presentation: .named)))"))
+                .font(.caption)
+                .foregroundStyle(AstroTokens.Color.inkDim)
             if preview.identity.alreadyExists {
                 Label("This Mac already has a confirmed library identity.", systemImage: "checkmark.shield")
             } else {
@@ -253,11 +262,16 @@ public struct MobileSyncView: View {
 
     private var exportingContent: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
-            ProgressView("Creating the sealed package…")
+            ProgressView(store.phase == .finishing ? "Finishing the sealed package…" : "Creating the sealed package…")
             Text("The original photos remain on the Mac while this package is prepared.")
                 .font(.callout).foregroundStyle(AstroTokens.Color.inkDim)
-            Button("Cancel", role: .cancel) { store.cancel() }
-                .accessibilityIdentifier("v5.mobile-sync.cancel")
+            if store.phase == .exporting {
+                Button("Cancel", role: .cancel) { store.cancel() }
+                    .accessibilityIdentifier("v5.mobile-sync.cancel")
+            } else {
+                Label("The package is being published safely. Please wait.", systemImage: "lock.shield")
+                    .foregroundStyle(AstroTokens.Color.attention)
+            }
         }
         .astroRaisedSurface()
     }

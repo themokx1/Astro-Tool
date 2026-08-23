@@ -56,6 +56,7 @@ public enum MobileSyncPhase: String, Equatable, Sendable {
     case previewing
     case ready
     case exporting
+    case finishing
     case exported
     case importing
     case importPreviewReady
@@ -82,6 +83,7 @@ public final class MobileSyncStore {
     public typealias SnapshotProvider = @Sendable (URL, PortableLibraryID) async throws -> MobileLibrarySnapshot
     public typealias PackageExport = @Sendable (MobilePackageEnvelope, URL, OneTimePackageKey) async throws -> MobileSyncExportResult
     public typealias PackageImportPreview = @Sendable (URL, OneTimePackageKey) async throws -> MobilePackageImportPreview
+    public typealias PackageImportDiscard = @Sendable (UUID) async -> Void
     public typealias DestinationPreparation = @Sendable (URL) throws -> Void
 
     public private(set) var phase: MobileSyncPhase = .idle
@@ -106,10 +108,13 @@ public final class MobileSyncStore {
     private let snapshotProvider: SnapshotProvider
     private let packageExport: PackageExport
     private let packageImportPreview: PackageImportPreview
+    private let packageImportDiscard: PackageImportDiscard
     private let prepareDestination: DestinationPreparation
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var cancellationRequested = false
     @ObservationIgnored private var operationTask: Task<Void, Never>?
+    @ObservationIgnored private var incomingSource: URL?
+    @ObservationIgnored private var incomingQRPayload: String?
 
     public init(
         rootURL: URL?,
@@ -118,6 +123,7 @@ public final class MobileSyncStore {
         snapshotProvider: SnapshotProvider? = nil,
         packageExport: PackageExport? = nil,
         packageImportPreview: PackageImportPreview? = nil,
+        packageImportDiscard: PackageImportDiscard? = nil,
         destinationToken: String = UUID().uuidString.lowercased(),
         prepareDestination: DestinationPreparation? = nil,
         packageService: MobilePackageService = MobilePackageService()
@@ -146,6 +152,9 @@ public final class MobileSyncStore {
                 try await packageService.importPreview(from: source, wrapping: key)
             }
         }
+        self.packageImportDiscard = packageImportDiscard ?? { packageID in
+            await packageService.discardImportPreview(packageID: packageID)
+        }
     }
 
     public var canExport: Bool {
@@ -153,7 +162,7 @@ public final class MobileSyncStore {
     }
 
     public var isBusy: Bool {
-        phase == .previewing || phase == .exporting || phase == .importing
+        phase == .previewing || phase == .exporting || phase == .finishing || phase == .importing
     }
 
     public func startPreview() {
@@ -194,13 +203,15 @@ public final class MobileSyncStore {
             let nights = try await metadataStore.nights()
             var captures: [SeriesRecord] = []
             var totals: [UUID: Double] = [:]
+            var decisions: [FrameDecisionRecord] = []
             for night in nights {
                 let series = try await metadataStore.series(nightID: night.id)
                 captures.append(contentsOf: series)
                 for capture in series {
-                    let decisions = try await metadataStore.frameDecisions(seriesID: capture.id)
-                    let usable = decisions.filter { !$0.logicallyExcluded && $0.verdict != .rejected }.count
+                    let frameDecisions = try await metadataStore.frameDecisions(seriesID: capture.id)
+                    let usable = frameDecisions.filter { !$0.logicallyExcluded && $0.verdict != .rejected }.count
                     totals[capture.id] = Double(usable) * capture.exposureSeconds
+                    decisions.append(contentsOf: frameDecisions)
                 }
             }
             var annotations: [ProjectAnnotationRecord] = []
@@ -216,7 +227,7 @@ public final class MobileSyncStore {
             )
             let input = MobileSnapshotComposer.Input(
                 libraryID: id,
-                revision: Self.metadataRevision(projects: projects, nights: nights, captures: captures, annotations: annotations, briefings: briefings),
+                revision: Self.metadataRevision(projects: projects, nights: nights, captures: captures, annotations: annotations, briefings: briefings, decisions: decisions, integrationSecondsByCaptureID: totals),
                 projects: projects,
                 nights: nights,
                 captures: captures,
@@ -256,7 +267,7 @@ public final class MobileSyncStore {
             phase = .ready
         } catch {
             guard token == generation else { return }
-            fail(.exportFailed, message: Self.userMessage(for: error, fallback: "AstroTool could not prepare a safe preview."))
+            fail(.exportFailed, message: Self.userMessage(for: error, fallback: String(localized: "AstroTool could not prepare a safe preview.")))
         }
     }
 
@@ -272,7 +283,11 @@ public final class MobileSyncStore {
             return
         }
         do {
-            _ = try identityCommit(rootURL, confirmedID)
+            let committedID = try identityCommit(rootURL, confirmedID)
+            guard committedID == confirmedID else {
+                fail(.identityMismatch, message: String(localized: "The saved library identity did not match the identity you confirmed. Review it again."))
+                return
+            }
             isIdentityConfirmed = true
             errorMessage = nil
             failure = nil
@@ -290,6 +305,11 @@ public final class MobileSyncStore {
         isSummaryConfirmed = true
         errorMessage = nil
         failure = nil
+    }
+
+    public func recordExporterFailure() {
+        guard phase == .ready else { return }
+        fail(.destinationExists, message: String(localized: "Choose a new package name. Existing packages are never replaced."))
     }
 
     @discardableResult
@@ -316,7 +336,7 @@ public final class MobileSyncStore {
         do {
             try prepareDestination(destination)
             let result = try await packageExport(envelope, destination, key)
-            guard token == generation, (phase == .exporting || (phase == .idle && cancellationRequested)) else { return }
+            guard token == generation, (phase == .exporting || phase == .finishing) else { return }
             packageID = result.packageID
             exportedAt = result.createdAt
             encryptedByteCount = result.encryptedByteCount
@@ -330,18 +350,27 @@ public final class MobileSyncStore {
             let destinationExists = (error as? MobilePackageError) == .destinationExists
             fail(
                 destinationExists ? .destinationExists : .exportFailed,
-                message: Self.userMessage(for: error, fallback: "The package was not sent. Choose a new destination and try again.")
+                message: Self.userMessage(for: error, fallback: String(localized: "The package was not sent. Choose a new destination and try again."))
             )
         }
     }
 
     public func previewIncomingPackage(from source: URL, qrPayload: String) async {
+        await discardIncomingPreviewNow()
+        incomingSource = source
+        incomingQRPayload = qrPayload
         beginNewOperation(.importing)
         let token = generation
         do {
             let key = try OneTimePackageKey(scanning: qrPayload)
             let imported = try await packageImportPreview(source, key)
-            guard token == generation, phase == .importing else { return }
+            guard token == generation, phase == .importing else {
+                // An importer may finish after the user cancelled or left
+                // the sheet. Drop the authenticated preview immediately so
+                // a stale task cannot leave staged plaintext in the service.
+                await packageImportDiscard(imported.packageID)
+                return
+            }
             incomingPreview = imported
             didApplyIncomingChanges = false
             errorMessage = nil
@@ -350,16 +379,18 @@ public final class MobileSyncStore {
         } catch {
             guard token == generation else { return }
             let isKeyError = (error as? MobilePackageError) == .invalidKeyPayload
-            fail(isKeyError ? .invalidKey : .importFailed, message: Self.userMessage(for: error, fallback: "This package could not be opened. Check the package and scan its code again."))
+            fail(isKeyError ? .invalidKey : .importFailed, message: Self.userMessage(for: error, fallback: String(localized: "This package could not be opened. Check the package and scan its code again.")))
         }
     }
 
     public func cancel() {
         if phase == .exporting {
             cancellationRequested = true
-            phase = .idle
+            phase = .finishing
             return
         }
+        if phase == .finishing { return }
+        discardIncomingPreview()
         operationTask?.cancel()
         operationTask = nil
         generation += 1
@@ -377,11 +408,18 @@ public final class MobileSyncStore {
         isSummaryConfirmed = false
         didApplyIncomingChanges = false
         cancellationRequested = false
+        incomingSource = nil
+        incomingQRPayload = nil
     }
 
-    public func reset() { dismiss() }
+    public func reset() {
+        guard phase != .finishing else { return }
+        dismiss()
+    }
 
     public func dismiss() {
+        guard phase != .finishing else { return }
+        discardIncomingPreview()
         generation += 1
         operationTask?.cancel()
         operationTask = nil
@@ -399,10 +437,16 @@ public final class MobileSyncStore {
         isSummaryConfirmed = false
         didApplyIncomingChanges = false
         cancellationRequested = false
+        incomingSource = nil
+        incomingQRPayload = nil
     }
 
     public func retry() async {
         guard failure != nil else { return }
+        if let incomingSource, let incomingQRPayload {
+            await previewIncomingPackage(from: incomingSource, qrPayload: incomingQRPayload)
+            return
+        }
         await preview()
     }
 
@@ -414,6 +458,7 @@ public final class MobileSyncStore {
         phase = next
         cancellationRequested = false
         if next != .importing {
+            discardIncomingPreview()
             preview = nil
             incomingPreview = nil
             exportedURL = nil
@@ -438,6 +483,18 @@ public final class MobileSyncStore {
         isSummaryConfirmed = false
     }
 
+    private func discardIncomingPreview() {
+        guard let packageID = incomingPreview?.packageID else { return }
+        let discard = packageImportDiscard
+        Task { await discard(packageID) }
+    }
+
+    private func discardIncomingPreviewNow() async {
+        guard let packageID = incomingPreview?.packageID else { return }
+        await packageImportDiscard(packageID)
+        incomingPreview = nil
+    }
+
     private static func summary(for snapshot: MobileLibrarySnapshot) -> MobileSnapshotSummary {
         MobileSnapshotSummary(
             projectCount: snapshot.projects.count,
@@ -450,12 +507,46 @@ public final class MobileSyncStore {
     }
 
     nonisolated private static func metadataRevision(
-        projects: [ProjectRecord], nights: [NightRecord], captures: [SeriesRecord], annotations: [ProjectAnnotationRecord], briefings: [NightBriefingDraft]
+        projects: [ProjectRecord], nights: [NightRecord], captures: [SeriesRecord], annotations: [ProjectAnnotationRecord], briefings: [NightBriefingDraft], decisions: [FrameDecisionRecord], integrationSecondsByCaptureID: [UUID: Double]
     ) -> Int {
         var hash: UInt64 = 1469598103934665603
-        let text = (projects.map { $0.id.uuidString } + nights.map { $0.id.uuidString } + captures.map { $0.id.uuidString } + annotations.map { $0.projectID.uuidString } + briefings.map { "\($0.id.uuidString):\($0.revision):\($0.savedAt.timeIntervalSince1970)" }).sorted().joined(separator: "|") + "|\(projects.count)|\(nights.count)|\(captures.count)|\(annotations.count)|\(briefings.count)"
+        let projectText = projects.sorted { $0.id.uuidString < $1.id.uuidString }.map(Self.stableEncoding)
+        let nightText = nights.sorted { $0.id.uuidString < $1.id.uuidString }.map(Self.stableEncoding)
+        let captureText = captures.sorted { $0.id.uuidString < $1.id.uuidString }.map(Self.stableEncoding)
+        let annotationText = annotations.sorted { $0.projectID.uuidString < $1.projectID.uuidString }.map(Self.stableEncoding)
+        let decisionText = decisions.sorted { $0.id.uuidString < $1.id.uuidString }.map(Self.stableEncoding)
+        let totalText = integrationSecondsByCaptureID.keys.sorted { $0.uuidString < $1.uuidString }.map { "\($0.uuidString):\(integrationSecondsByCaptureID[$0] ?? 0)" }
+        let briefingText = Self.stableEncoding(briefings.sorted { $0.id.uuidString < $1.id.uuidString })
+        let text = (projectText + nightText + captureText + annotationText + decisionText + totalText + [briefingText]).joined(separator: "|")
         for byte in text.utf8 { hash ^= UInt64(byte); hash &*= 1099511628211 }
-        return Int(hash & 0x7fff_ffff_ffff_ffff)
+        return max(1, Int(hash & 0x7fff_ffff_ffff_ffff))
+    }
+
+    nonisolated private static func stableEncoding<T: Encodable>(_ value: T) -> String {
+        guard let data = try? MobileJSON.encoder.encode(value) else { return "<encoding-failed>" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    // Kept internal for deterministic revision regression tests. Production
+    // callers use metadataSnapshotProvider, which supplies these same values.
+    nonisolated static func revisionForTesting(
+        projects: [ProjectRecord],
+        nights: [NightRecord],
+        captures: [SeriesRecord],
+        annotations: [ProjectAnnotationRecord],
+        briefings: [NightBriefingDraft],
+        decisions: [FrameDecisionRecord],
+        integrationSecondsByCaptureID: [UUID: Double]
+    ) -> Int {
+        metadataRevision(
+            projects: projects,
+            nights: nights,
+            captures: captures,
+            annotations: annotations,
+            briefings: briefings,
+            decisions: decisions,
+            integrationSecondsByCaptureID: integrationSecondsByCaptureID
+        )
     }
 
     private static func emptySnapshot(root: URL, id: PortableLibraryID) async throws -> MobileLibrarySnapshot {

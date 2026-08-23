@@ -44,6 +44,56 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(result.encryptedByteCount > 0)
 }
 
+@Test("Foundation replacement-directory probe records whether an absent final URL is materialized")
+func replacementDirectoryProbeDoesNotGuess() throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("probe.astromobile")
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+    let replacement = try FileManager.default.url(
+        for: .itemReplacementDirectory,
+        in: .userDomainMask,
+        appropriateFor: destination,
+        create: true
+    )
+    let finalExistsAfterLookup = FileManager.default.fileExists(atPath: destination.path)
+    print("replacement-probe destination=\(destination.path) replacement=\(replacement.path) finalExists=\(finalExistsAfterLookup)")
+    #expect(!finalExistsAfterLookup)
+}
+
+@Test("System staging is parent-anchored, fresh export publishes, and destination is absent before rename")
+func systemStagingUsesExistingParentAnchor() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("anchored.astromobile")
+    let stagingURL = URLStore()
+    let service = MobilePackageService(testingBeforePublication: { url in
+        stagingURL.value = url
+        #expect(!FileManager.default.fileExists(atPath: destination.path))
+    })
+    try await service.export(
+        MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []),
+        to: destination,
+        wrapping: DeterministicWrapper()
+    )
+    #expect(stagingURL.value?.deletingLastPathComponent() == root.url)
+    #expect(FileManager.default.fileExists(atPath: destination.path))
+}
+
+@Test("An exporter-created empty final path remains protected as an occupied destination")
+func exporterPlaceholderRemainsUntouched() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("placeholder.astromobile")
+    try Data().write(to: destination)
+    let error = await errorFrom {
+        _ = try await MobilePackageService().export(
+            MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []),
+            to: destination,
+            wrapping: DeterministicWrapper()
+        )
+    }
+    #expect(error as? MobilePackageError == .destinationExists)
+    #expect(try Data(contentsOf: destination) == Data())
+}
+
 @Test func composedSnapshotWithOmittedOptionalFieldsRoundTrips() async throws {
     let root = try TemporaryPackageDirectory()
     let destination = root.url.appendingPathComponent("composed.astromobile")
