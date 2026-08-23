@@ -363,6 +363,19 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(countError as? MobilePackageError == .invalidEnvelope)
 }
 
+@Test func slashDenseWarningsAreRejectedBeforeSharedEncoderExpansion() async throws {
+    let root = try TemporaryPackageDirectory()
+    let briefingID = UUID()
+    let note = MobileNote(id: "note", scope: .briefing, ownerID: briefingID.uuidString, text: "", baseRevision: 0, updatedAt: Date(), isEditableOnPhone: true)
+    let target = MobileBriefingTarget(id: UUID(), name: "target", role: "role", start: Date(), end: Date(), warnings: Array(repeating: String(repeating: "/", count: 700), count: MobilePackageService.maximumCollectionCount))
+    let briefing = MobileBriefing(id: briefingID, revision: 0, savedAt: Date(), nightDate: nil, readiness: "ready", targets: [target], checklist: [], noteID: note.id)
+    let snapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 0, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [briefing], notes: [note])
+    let destination = root.url.appendingPathComponent("slashes.astromobile")
+    let error = await errorFrom { try await MobilePackageService().export(MobilePackageEnvelope(snapshot: snapshot, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper()) }
+    #expect(error as? MobilePackageError == .invalidEnvelope)
+    #expect(!FileManager.default.fileExists(atPath: destination.path))
+}
+
 @Test func fiveThousandShortCapturesExportAndImportWithinActualPayloadLimit() async throws {
     let root = try TemporaryPackageDirectory()
     let projectID = UUID()
@@ -450,6 +463,21 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(error as? MobilePackageError == .malformedPackage)
 }
 
+@Test func fdopendirFailureClosesTheDuplicatedDescriptor() throws {
+    let root = try TemporaryPackageDirectory()
+    let directoryFD = root.url.path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
+    defer { Darwin.close(directoryFD) }
+    let duplicate = Int32Store()
+    #expect(throws: MobilePackageError.malformedPackage) {
+        try MobilePackageService.directoryEntriesForTesting(
+            directoryFD,
+            duplicating: { descriptor in let copy = Darwin.dup(descriptor); duplicate.value = copy; return copy },
+            opening: { _ in nil }
+        )
+    }
+    #expect(Darwin.fcntl(duplicate.value, F_GETFD) == -1)
+}
+
 @Test func postRenameFailureNeverCleansThePublishedOrReplacementEntry() async throws {
     let root = try TemporaryPackageDirectory()
     let replacementRoot = root.url.appendingPathComponent("replacement-root", isDirectory: true)
@@ -488,6 +516,15 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     try rewriteAuthenticatedPayloadRaw(at: destination, plaintext: Data("{\"\(escapedKey)\":null}".utf8))
     let escapedError = await errorFrom { _ = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper()) }
     #expect(escapedError as? MobilePackageError == .invalidEnvelope)
+}
+
+@Test func lexicalPreflightAcceptsDecoded128ByteKeyAndRejects129Independently() throws {
+    let key128 = String(repeating: "\\u0061", count: 128)
+    try MobilePackageService.preflightJSONForTesting(Data("{\"\(key128)\":null}".utf8))
+    let key129 = String(repeating: "\\u0061", count: 129)
+    #expect(throws: MobilePackageError.invalidEnvelope) {
+        try MobilePackageService.preflightJSONForTesting(Data("{\"\(key129)\":null}".utf8))
+    }
 }
 
 @Test func hardlinkedChildrenAreRejected() async throws {
@@ -642,6 +679,10 @@ private func decodableNonCanonicalBase64(_ canonical: String) -> String? {
 
 private final class URLStore: @unchecked Sendable {
     var value: URL?
+}
+
+private final class Int32Store: @unchecked Sendable {
+    var value: Int32 = -1
 }
 
 private final class TestStagingProvider: @unchecked Sendable, MobilePackageStagingDirectoryProvider {

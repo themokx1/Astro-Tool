@@ -454,6 +454,10 @@ public actor MobilePackageService {
     /// Lexically bounds untrusted JSON before Foundation builds an object graph.
     /// This deliberately rejects malformed input early and caps both nesting and
     /// token/node work for the phone importer.
+    static func preflightJSONForTesting(_ data: Data) throws {
+        try preflightJSON(data)
+    }
+
     private static func preflightJSON(_ data: Data) throws {
         guard data.count <= Int(maximumEncryptedByteCount) else { throw MobilePackageError.invalidEnvelope }
         var scanner = JSONPreflightScanner(bytes: Array(data))
@@ -822,7 +826,7 @@ public actor MobilePackageService {
                 let cost: Int64
                 switch byte {
                 case 0x00...0x1F: cost = 6
-                case 0x22, 0x5C: cost = 2
+                case 0x22, 0x5C, 0x2F: cost = 2
                 default: cost = 1
                 }
                 let (next, overflow) = escapedByteCount.addingReportingOverflow(cost)
@@ -941,10 +945,22 @@ public actor MobilePackageService {
         return FileIdentity(device: UInt64(status.st_dev), inode: UInt64(status.st_ino), size: Int64(status.st_size), type: type)
     }
 
-    private static func directoryEntries(_ directoryFD: Int32, duplicating: @Sendable (Int32) -> Int32) throws -> Set<String> {
+    static func directoryEntriesForTesting(
+        _ directoryFD: Int32,
+        duplicating: @Sendable (Int32) -> Int32,
+        opening: @Sendable (Int32) -> UnsafeMutablePointer<DIR>?
+    ) throws -> Set<String> {
+        try directoryEntries(directoryFD, duplicating: duplicating, opening: opening)
+    }
+
+    private static func directoryEntries(
+        _ directoryFD: Int32,
+        duplicating: @Sendable (Int32) -> Int32,
+        opening: @Sendable (Int32) -> UnsafeMutablePointer<DIR>? = { Darwin.fdopendir($0) }
+    ) throws -> Set<String> {
         let duplicate = duplicating(directoryFD)
         guard duplicate >= 0 else { throw MobilePackageError.malformedPackage }
-        guard let stream = Darwin.fdopendir(duplicate) else {
+        guard let stream = opening(duplicate) else {
             Darwin.close(duplicate)
             throw MobilePackageError.malformedPackage
         }
@@ -1040,17 +1056,29 @@ public actor MobilePackageService {
         }
         let url = URL(fileURLWithPath: String(cString: path), isDirectory: true)
         let name = url.lastPathComponent
-        let descriptor = name.withCString { Darwin.openat(parentDescriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
-        guard descriptor >= 0, let identity = identity(ofFD: descriptor), identity.type == .typeDirectory else {
-            if descriptor >= 0 { Darwin.close(descriptor) }
+        guard let provisionalIdentity = identity(at: parentDescriptor, name: name), provisionalIdentity.type == .typeDirectory else {
             Darwin.close(parentDescriptor)
+            throw MobilePackageError.stagingFailed
+        }
+        var descriptor: Int32 = -1
+        var transferredOwnership = false
+        defer {
+            if !transferredOwnership {
+                if descriptor >= 0 { Darwin.close(descriptor) }
+                if sameStableIdentity(provisionalIdentity, identity(at: parentDescriptor, name: name)) {
+                    _ = name.withCString { Darwin.unlinkat(parentDescriptor, $0, AT_REMOVEDIR) }
+                }
+                Darwin.close(parentDescriptor)
+            }
+        }
+        descriptor = name.withCString { Darwin.openat(parentDescriptor, $0, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) }
+        guard descriptor >= 0, let identity = identity(ofFD: descriptor), identity.type == .typeDirectory else {
             throw MobilePackageError.stagingFailed
         }
         guard Darwin.fchmod(descriptor, 0o700) == 0 else {
-            Darwin.close(descriptor)
-            Darwin.close(parentDescriptor)
             throw MobilePackageError.stagingFailed
         }
+        transferredOwnership = true
         return PrivateStaging(parentDescriptor: parentDescriptor, name: name, url: url, descriptor: descriptor, identity: identity)
     }
 

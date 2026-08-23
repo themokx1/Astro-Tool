@@ -267,6 +267,43 @@ The diff check was clean.
 
 ✅
 
+## Security fix round 6 — escaping and provisional-stage remediation
+
+### RED/GREEN evidence
+
+#### RED
+
+`slashDenseWarningsAreRejectedBeforeSharedEncoderExpansion` used 10,000 700-byte slash-only warnings. The prior estimator charged each slash as one byte, while the shared `MobileJSON.encoder` emitted `\/`; export completed and published the package although encoded output exceeded the 8 MiB pre-encode budget.
+
+#### GREEN
+
+- Export encoding accounting now charges all shared-encoder JSON escapes exactly for byte-oriented strings: controls cost six bytes; quote, backslash, and slash cost two; all other UTF-8 bytes cost one, plus quotes. This preserves the real 5,000-capture boundary while rejecting slash-dense payloads before `JSONEncoder` allocation.
+- The private-stage creator now records an identity immediately after `mkdtemp` and arms provisional cleanup before `openat`, identity, or `fchmod` setup can fail. Its deferred cleanup reclaims only a still-matching trusted replacement-root entry and closes all held descriptors.
+- `preflightJSONForTesting` is an internal-only narrow wrapper; direct tests prove a decoded escaped 128-byte key is lexically accepted and 129 bytes is rejected before schema validation.
+- `directoryEntriesForTesting` supplies an internal-only `fdopendir` seam. The test duplicates a real descriptor, forces `fdopendir` to fail, and verifies `fcntl(F_GETFD)` reports it closed.
+
+The focused service set is now 32 tests.
+
+### Final verification
+
+```text
+swift test --filter MobilePackageServiceTests
+Test run with 32 tests in 0 suites passed after 0.269 seconds.
+
+swift test --filter MobilePackageCryptoTests
+Test run with 9 tests in 0 suites passed after 0.001 seconds.
+
+swift test --filter MobilePackage
+Test run with 41 tests in 0 suites passed after 0.341 seconds.
+
+swift test --no-parallel
+Test run with 3426 tests in 216 suites passed after 95.021 seconds.
+```
+
+`git diff --check` is clean.
+
+✅
+
 ## Security fix round 5 — ownership and volume-local replacement staging
 
 ### RED/GREEN evidence
