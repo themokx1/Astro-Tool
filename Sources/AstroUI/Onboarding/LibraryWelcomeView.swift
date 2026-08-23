@@ -1,5 +1,6 @@
 import AstroApplication
 import AstroCore
+import AppKit
 import Foundation
 import Observation
 import SwiftUI
@@ -605,9 +606,9 @@ public struct LibraryWelcomeView: View {
     @Bindable private var store: OnboardingStore
     private let onContinue: () -> Void
     private let onPersonalize: () -> Void
+    private let requestLibraryPicker: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
-    @State private var isChoosingLibrary = false
     @State private var scanTask: Task<Void, Never>?
     @State private var scanOperationID: UUID?
     @State private var isDropTargeted = false
@@ -615,11 +616,13 @@ public struct LibraryWelcomeView: View {
     public init(
         store: OnboardingStore,
         onContinue: @escaping () -> Void,
-        onPersonalize: @escaping () -> Void
+        onPersonalize: @escaping () -> Void,
+        requestLibraryPicker: (() -> Void)? = nil
     ) {
         _store = Bindable(store)
         self.onContinue = onContinue
         self.onPersonalize = onPersonalize
+        self.requestLibraryPicker = requestLibraryPicker
     }
 
     public var body: some View {
@@ -657,14 +660,6 @@ public struct LibraryWelcomeView: View {
         // under the same rule: a page root paints `ground` at full opacity,
         // never a partial tint over whatever happens to be behind it.
         .background(AstroTokens.Color.ground)
-        .fileImporter(
-            isPresented: $isChoosingLibrary,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            guard case .success(let urls) = result, let root = urls.first else { return }
-            beginScan(root)
-        }
         .onDisappear {
             cancelScan()
         }
@@ -735,10 +730,11 @@ public struct LibraryWelcomeView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Choose Image Library…") {
-                    isChoosingLibrary = true
+                    chooseLibrary()
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .accessibilityIdentifier("v3.onboarding.choose-library")
             }
         }
         .padding(AstroTokens.Spacing.spacious)
@@ -805,7 +801,23 @@ public struct LibraryWelcomeView: View {
 
     private func chooseAnotherLibrary() {
         store.returnToLibraryChoice()
-        isChoosingLibrary = true
+        chooseLibrary()
+    }
+
+    private func chooseLibrary() {
+        if let requestLibraryPicker {
+            requestLibraryPicker()
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.begin { response in
+            guard response == .OK, let root = panel.url else { return }
+            Task { @MainActor in beginScan(root) }
+        }
     }
 
     /// Re-runs the scan against the SAME root that just failed -- the point

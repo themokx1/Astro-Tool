@@ -63,4 +63,15 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(root.contains("FirstSuccessOnboardingView("))
         #expect(root.contains("uiTestFixture != nil"))
     }
+
+    @Test("The native folder picker starts only after the onboarding sheet has closed")
+    func folderPickerDoesNotNestModalPresentation() throws {
+        let root = try source("Sources/AstroUI/App/V2RootView.swift")
+        let welcome = try source("Sources/AstroUI/Onboarding/LibraryWelcomeView.swift")
+
+        #expect(root.contains("onDismiss: finishOnboardingDismissal"))
+        #expect(root.contains("pendingLibraryPicker = true"))
+        #expect(root.contains("panel.runModal()"))
+        #expect(welcome.contains("requestLibraryPicker()"))
+    }
 }

@@ -350,6 +350,8 @@ private struct V2Shell: View {
     @Binding var isOnboardingPresented: Bool
     @Binding var libraryPreparationError: String?
     let retryLibraryPreparation: () -> Void
+    @State private var pendingLibraryPicker = false
+    @State private var showsDirectLibraryWelcome = false
     @State private var showsSearch = false
     @State private var globalSearch = GlobalSearchStore()
     @State private var newProjectInitialQuery = ""
@@ -824,8 +826,8 @@ private struct V2Shell: View {
                 }
             }
         }
-        .sheet(isPresented: $isOnboardingPresented) {
-            if libraryRootFallback != nil {
+        .sheet(isPresented: $isOnboardingPresented, onDismiss: finishOnboardingDismissal) {
+            if libraryRootFallback != nil || showsDirectLibraryWelcome {
                 // The injected UI fixture already supplies a complete,
                 // read-only library and its smoke tests deliberately start
                 // at the scan receipt. Keep that deterministic test-only
@@ -839,7 +841,8 @@ private struct V2Shell: View {
                     onPersonalize: {
                         isOnboardingPresented = false
                         openSettings()
-                    }
+                    },
+                    requestLibraryPicker: requestLibraryPicker
                 )
             } else {
                 FirstSuccessOnboardingView(
@@ -855,7 +858,8 @@ private struct V2Shell: View {
                         router.navigate(to: .library)
                     },
                     runScan: performRescan,
-                    dismiss: { isOnboardingPresented = false }
+                    dismiss: { isOnboardingPresented = false },
+                    requestLibraryPicker: requestLibraryPicker
                 )
             }
         }
@@ -913,7 +917,38 @@ private struct V2Shell: View {
 
     private func presentOnboarding() {
         onboardingStore.returnToLibraryChoice()
+        showsDirectLibraryWelcome = false
         isOnboardingPresented = true
+    }
+
+    private func requestLibraryPicker() {
+        // `NSOpenPanel` cannot reliably present on top of the onboarding
+        // sheet. Close that sheet first; its onDismiss callback launches the
+        // same native picker the original AppState workflow uses.
+        pendingLibraryPicker = true
+        isOnboardingPresented = false
+    }
+
+    private func finishOnboardingDismissal() {
+        guard pendingLibraryPicker else { return }
+        pendingLibraryPicker = false
+
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Kiválasztás"
+        panel.message = "Válaszd ki a képkönyvtár gyökerét"
+
+        guard panel.runModal() == .OK, let root = panel.url else {
+            showsDirectLibraryWelcome = false
+            isOnboardingPresented = true
+            return
+        }
+
+        showsDirectLibraryWelcome = true
+        isOnboardingPresented = true
+        Task { try? await onboardingStore.openAndScan(root) }
     }
 
     /// Backs the access-problem banner's "Retry" action -- re-attempts the
