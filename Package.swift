@@ -4,17 +4,19 @@ import PackageDescription
 let package = Package(
     name: "Astro-Tool",
     defaultLocalization: "en",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v26), .iOS(.v26)],
     products: [
         .library(name: "AstroCore", targets: ["AstroCore"]),
         .library(name: "AstroApplication", targets: ["AstroApplication"]),
+        .library(name: "AstroMobileDomain", targets: ["AstroMobileDomain"]),
         .library(name: "AstroUI", targets: ["AstroUI"]),
         .executable(name: "astrotool", targets: ["astrotool"]),
         .executable(name: "AstroToolApp", targets: ["AstroToolApp"]),
     ],
     targets: [
         .target(name: "AstroCore", linkerSettings: [.linkedLibrary("sqlite3")]),
-        .target(name: "AstroApplication", dependencies: ["AstroCore"]),
+        .target(name: "AstroApplication", dependencies: ["AstroCore", "AstroMobileDomain"]),
+        .target(name: "AstroMobileDomain"),
         .target(
             name: "AstroUI",
             dependencies: ["AstroApplication"],
@@ -35,5 +37,6 @@ let package = Package(
             name: "AstroUITests",
             dependencies: ["AstroUI", "AstroApplication"]
         ),
+        .testTarget(name: "AstroMobileDomainTests", dependencies: ["AstroMobileDomain"]),
     ]
 )
