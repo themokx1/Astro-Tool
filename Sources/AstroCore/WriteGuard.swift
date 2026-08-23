@@ -53,22 +53,40 @@ public struct WriteGuard: Sendable {
         let fileManager = FileManager.default
 
         if fileManager.fileExists(atPath: destination.path) {
-            guard let existingText = try? String(contentsOf: destination, encoding: .utf8),
-                  let existingUUID = UUID(uuidString: existingText.trimmingCharacters(in: .whitespacesAndNewlines))
-            else {
-                throw AstroError.invalidInput("The existing portable library identity is malformed.")
-            }
-            guard existingUUID == uuid else {
-                throw AstroError.invalidInput("The portable library identity cannot be replaced.")
-            }
-            return destination
+            return try Self.validatedPortableLibraryIdentity(
+                at: destination,
+                requestedID: uuid
+            )
         }
 
-        try Self.classifyingPermissionErrors(path: destination.path) {
-            try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try Data(uuid.uuidString.utf8).write(to: destination, options: .withoutOverwriting)
+        do {
+            try Self.classifyingPermissionErrors(path: destination.path) {
+                try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try Data(uuid.uuidString.utf8).write(to: destination, options: .withoutOverwriting)
+            }
+        } catch {
+            // Another caller may have won the no-overwrite race. Re-read the
+            // winner and return it when it contains the same identity; a
+            // malformed or different value remains a hard conflict.
+            guard fileManager.fileExists(atPath: destination.path) else { throw error }
+            return try Self.validatedPortableLibraryIdentity(
+                at: destination,
+                requestedID: uuid
+            )
         }
         return destination
+    }
+
+    private static func validatedPortableLibraryIdentity(at url: URL, requestedID: UUID) throws -> URL {
+        guard let existingText = try? String(contentsOf: url, encoding: .utf8),
+              let existingUUID = UUID(uuidString: existingText.trimmingCharacters(in: .whitespacesAndNewlines))
+        else {
+            throw AstroError.invalidInput("The existing portable library identity is malformed.")
+        }
+        guard existingUUID == requestedID else {
+            throw AstroError.invalidInput("The portable library identity cannot be replaced.")
+        }
+        return url
     }
 
     /// The complete top-level scaffold of a new AstroTool library. The order

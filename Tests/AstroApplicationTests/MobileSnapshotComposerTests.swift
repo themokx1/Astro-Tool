@@ -59,14 +59,24 @@ import Testing
         language: .en
     )
 
-    let input = MobileSnapshotComposer.Input(
-        libraryID: libraryID,
-        revision: 12,
+    let sourceFixture = SensitiveSourceFixture(
         projects: [project],
         nights: [night],
         captures: [capture],
         annotations: [annotation],
         briefings: [briefing]
+    )
+    let input = MobileSnapshotComposer.Input(
+        libraryID: libraryID,
+        revision: 12,
+        projects: sourceFixture.safeProjects,
+        nights: sourceFixture.safeNights,
+        captures: sourceFixture.safeCaptures,
+        annotations: sourceFixture.safeAnnotations,
+        briefings: sourceFixture.safeBriefings,
+        // Query-layer frame decisions: two 300-second frames were usable;
+        // excluded/rejected frames are deliberately absent from this total.
+        integrationSecondsByCaptureID: [seriesID: 600]
     )
     let snapshot = try MobileSnapshotComposer().compose(input: input, now: now)
     let text = String(decoding: try MobileJSON.encoder.encode(snapshot), as: UTF8.self)
@@ -77,21 +87,44 @@ import Testing
     #expect(snapshot.createdAt == now)
     #expect(snapshot.projects.first?.displayName == "Orion Nebula")
     #expect(snapshot.projects.first?.catalogID == "M42")
-    #expect(snapshot.projects.first?.integrationSeconds == 300)
+    #expect(snapshot.projects.first?.integrationSeconds == 600)
     #expect(snapshot.projects.first?.goalHours == 12.5)
     #expect(snapshot.captures.first?.displayName == "ASI2600 / 400mm")
     #expect(snapshot.captures.first?.filterName == "Ha")
+    #expect(snapshot.captures.first?.integrationSeconds == 600)
     #expect(snapshot.briefings.first?.targets.first?.name == "M42")
     #expect(snapshot.briefings.first?.checklist.first?.items.first?.isCompleted == true)
     #expect(snapshot.notes.contains { $0.text == "Field note" })
     #expect(snapshot.notes.contains { $0.text == "Bring dew heater" })
 
-    for forbidden in [
-        "Library Folder Name", "/private/astro/cache", "frame-0001.fits",
-        "securityScopedBookmark", "SIMPLE  =", "DATABASE_OBJECT", "raw-image-bytes"
-    ] {
+    for forbidden in sourceFixture.forbiddenStrings {
         #expect(!text.localizedCaseInsensitiveContains(forbidden))
     }
+}
+
+@Test func composerDropsHiddenChecklistItemsBeforeTheyReachThePhone() throws {
+    let now = Date(timeIntervalSince1970: 1_700_000_000)
+    let briefing = NightBriefingDraft(
+        id: UUID(),
+        revision: 2,
+        savedAt: now,
+        checklist: [BriefingChecklistSection(
+            id: "setup",
+            title: "Setup",
+            items: [
+                BriefingChecklistItem(id: "visible", title: "Visible", isVisible: true),
+                BriefingChecklistItem(id: "hidden", title: "Hidden", isVisible: false)
+            ]
+        )]
+    )
+    let input = MobileSnapshotComposer.Input(
+        libraryID: PortableLibraryID(rawValue: UUID()),
+        revision: 1,
+        projects: [], nights: [], captures: [], annotations: [], briefings: [briefing]
+    )
+
+    let snapshot = try MobileSnapshotComposer().compose(input: input, now: now)
+    #expect(snapshot.briefings[0].checklist[0].items.map(\.id) == ["visible"])
 }
 
 @Test func composerUsesExplicitSnapshotSchemaAndNowValue() throws {
@@ -110,4 +143,77 @@ import Testing
     #expect(snapshot.captures.isEmpty)
     #expect(snapshot.briefings.isEmpty)
     #expect(snapshot.notes.isEmpty)
+}
+
+private struct SensitiveSourceFixture {
+    private struct SourceProject {
+        let record: ProjectRecord
+        let folderName: String
+        let rootURL: String
+    }
+
+    private struct SourceNight {
+        let record: NightRecord
+        let filename: String
+        let bookmark: String
+    }
+
+    private struct SourceCapture {
+        let record: SeriesRecord
+        let fitsHeader: String
+    }
+
+    private struct SourceAnnotation {
+        let record: ProjectAnnotationRecord
+        let databaseObject: String
+    }
+
+    private struct SourceBriefing {
+        let record: NightBriefingDraft
+        let imageContent: String
+    }
+
+    private let sourceProjects: [SourceProject]
+    private let sourceNights: [SourceNight]
+    private let sourceCaptures: [SourceCapture]
+    private let sourceAnnotations: [SourceAnnotation]
+    private let sourceBriefings: [SourceBriefing]
+
+    init(
+        projects: [ProjectRecord],
+        nights: [NightRecord],
+        captures: [SeriesRecord],
+        annotations: [ProjectAnnotationRecord],
+        briefings: [NightBriefingDraft]
+    ) {
+        sourceProjects = projects.map {
+            SourceProject(record: $0, folderName: "Library Folder Name", rootURL: "file:///private/astro/cache")
+        }
+        sourceNights = nights.map {
+            SourceNight(record: $0, filename: "frame-0001.fits", bookmark: "securityScopedBookmark")
+        }
+        sourceCaptures = captures.map {
+            SourceCapture(record: $0, fitsHeader: "SIMPLE  =")
+        }
+        sourceAnnotations = annotations.map {
+            SourceAnnotation(record: $0, databaseObject: "DATABASE_OBJECT")
+        }
+        sourceBriefings = briefings.map {
+            SourceBriefing(record: $0, imageContent: "raw-image-bytes")
+        }
+    }
+
+    var safeProjects: [ProjectRecord] { sourceProjects.map(\.record) }
+    var safeNights: [NightRecord] { sourceNights.map(\.record) }
+    var safeCaptures: [SeriesRecord] { sourceCaptures.map(\.record) }
+    var safeAnnotations: [ProjectAnnotationRecord] { sourceAnnotations.map(\.record) }
+    var safeBriefings: [NightBriefingDraft] { sourceBriefings.map(\.record) }
+
+    var forbiddenStrings: [String] {
+        sourceProjects.flatMap { [$0.folderName, $0.rootURL] }
+            + sourceNights.flatMap { [$0.filename, $0.bookmark] }
+            + sourceCaptures.map(\.fitsHeader)
+            + sourceAnnotations.map(\.databaseObject)
+            + sourceBriefings.map(\.imageContent)
+    }
 }

@@ -37,6 +37,23 @@ import Testing
     #expect(try store.loadOrCreate(root: root, confirmedID: existing.proposedID) == preview.proposedID)
 }
 
+@Test func loadOrCreateRejectsAConfirmationThatDoesNotMatchAFreshRootPreview() throws {
+    let root = try temporaryLibraryRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let store = PortableLibraryIdentityStore()
+    let preview = try store.preview(root: root)
+    let unrelatedID = PortableLibraryID(rawValue: UUID())
+
+    #expect(unrelatedID != preview.proposedID)
+    #expect(throws: AstroError.self) {
+        try store.loadOrCreate(root: root, confirmedID: unrelatedID)
+    }
+    #expect(FileManager.default.fileExists(
+        atPath: root.appendingPathComponent(PortableLibraryIdentityStore.relativePath).path
+    ) == false)
+}
+
 private func temporaryLibraryRoot() throws -> URL {
     let root = FileManager.default.temporaryDirectory.appendingPathComponent(
         "astro-tool-portable-id-store-\(UUID().uuidString)", isDirectory: true

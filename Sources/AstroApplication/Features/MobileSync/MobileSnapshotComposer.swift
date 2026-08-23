@@ -11,6 +11,11 @@ public struct MobileSnapshotComposer: Sendable {
         public let projects: [ProjectRecord]
         public let nights: [NightRecord]
         public let captures: [SeriesRecord]
+        /// Integration totals calculated by the query layer after frame
+        /// acceptance/rejection decisions. A missing entry falls back to the
+        /// record's single-frame exposure for callers that have no frame
+        /// decisions to apply.
+        public let integrationSecondsByCaptureID: [UUID: Double]
         public let annotations: [ProjectAnnotationRecord]
         public let briefings: [NightBriefingDraft]
 
@@ -21,13 +26,15 @@ public struct MobileSnapshotComposer: Sendable {
             nights: [NightRecord],
             captures: [SeriesRecord],
             annotations: [ProjectAnnotationRecord],
-            briefings: [NightBriefingDraft]
+            briefings: [NightBriefingDraft],
+            integrationSecondsByCaptureID: [UUID: Double] = [:]
         ) {
             self.libraryID = libraryID
             self.revision = revision
             self.projects = projects
             self.nights = nights
             self.captures = captures
+            self.integrationSecondsByCaptureID = integrationSecondsByCaptureID
             self.annotations = annotations
             self.briefings = briefings
         }
@@ -37,8 +44,11 @@ public struct MobileSnapshotComposer: Sendable {
 
     public func compose(input: Input, now: Date) throws -> MobileLibrarySnapshot {
         let annotationsByProject = Dictionary(uniqueKeysWithValues: input.annotations.map { ($0.projectID, $0) })
+        let integrationByCapture = input.captures.reduce(into: [UUID: Double]()) { totals, capture in
+            totals[capture.id] = input.integrationSecondsByCaptureID[capture.id] ?? capture.exposureSeconds
+        }
         let integrationByProject = Dictionary(grouping: input.captures, by: \.projectID)
-            .mapValues { $0.reduce(0) { $0 + $1.exposureSeconds } }
+            .mapValues { $0.reduce(0) { $0 + (integrationByCapture[$1.id] ?? 0) } }
 
         let projects = input.projects.map { project in
             let annotation = annotationsByProject[project.id]
@@ -60,7 +70,7 @@ public struct MobileSnapshotComposer: Sendable {
                 displayName: capture.setupDescriptor,
                 filterName: capture.filterName,
                 exposureSeconds: capture.exposureSeconds,
-                integrationSeconds: capture.exposureSeconds
+                integrationSeconds: integrationByCapture[capture.id] ?? capture.exposureSeconds
             )
         }
 
@@ -80,7 +90,7 @@ public struct MobileSnapshotComposer: Sendable {
                 MobileChecklistSection(
                     id: section.id,
                     title: section.title,
-                    items: section.items.map {
+                    items: section.items.filter(\.isVisible).map {
                         MobileChecklistItem(
                             id: $0.id,
                             title: $0.title,
