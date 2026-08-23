@@ -8,6 +8,36 @@ történik.
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-08-21
+
+A V4 az otthon, Macen elkészíthető teljes megfigyelési tervet teszi
+hordozhatóvá. Az Éjszakai briefing öt emberi lépésben gyűjti össze azt,
+amire a terepen szükség van, majd önállóan olvasható PDF-et és opcionális
+telefonos PNG-oldalakat készít.
+
+### Hozzáadva
+
+- **Éjszakai briefing** három kezdő választással: a ma esti terv, egy másik
+  dátum vagy egy korábbi briefing folytatása.
+- **Ötlépéses éjszakai útvonal**: alapok, célpontok és időrend, capture-terv,
+  checklist és B terv, majd ellenőrzés és export.
+- **Őszinte readiness**: csak a dátum és az érvénytelen célpont-időablak
+  blokkolja az exportot; minden más hiány jól láthatóan benne marad.
+- **Offline A4 PDF** beágyazott stílussal és választható, oldalonkénti
+  **144 DPI PNG-exporttal** a telefonos használathoz.
+- **Változatmegőrző mentés**: minden mentés új revízió, a korábbi tervet nem
+  írja felül.
+- Új, reszponzív **Első lépések** webes útmutató, benne a könyvtárkezdéssel
+  és a hordozható briefing teljes folyamatával.
+
+### Biztonság
+
+- A briefing nem ír az asztrofotós képkönyvtárba és nem módosít fotót.
+- Az export csak új fájlt vagy új oldalmappát készít; létező célt nem ír
+  felül.
+- Az alkalmazás továbbra sem kínál önálló törlést. Létrehozás, másolás és
+  külön jóváhagyott mozgatás lehetséges.
+
 ## [3.0.0] - 2026-08-20
 
 A végleges V3 kiadás a stackelés előtti munkafolyamatot egy teljesen új,

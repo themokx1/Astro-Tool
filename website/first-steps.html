@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Az AstroTool első lépései: képkönyvtár létrehozása, meglévő fotók biztonságos bemásolása és hordozható éjszakai briefing készítése.">
+  <title>Első lépések – AstroTool</title>
+  <style>
+    :root {
+      --ground:#F5F5F7; --surface:#FFFFFF; --ink:#1D1D1F; --muted:#6E6E73;
+      --hairline:rgba(29,29,31,.11); --accent:#3E8E96; --cta:#0071E3;
+      --ok:#1E8464; --attention:#B87B0C;
+      --shadow:0 18px 44px -28px rgba(29,29,31,.35),0 1px 2px rgba(29,29,31,.05);
+    }
+    @media(prefers-color-scheme:dark){:root{--ground:#0B0B0D;--surface:#1C1C1F;--ink:#F5F5F7;--muted:#98989E;--hairline:rgba(245,245,247,.14);--accent:#5FB8C0;--cta:#0A84FF;--ok:#3FB58F;--attention:#F0B429;--shadow:0 22px 52px -28px rgba(0,0,0,.85)}}
+    *{box-sizing:border-box;margin:0;padding:0}
+    html{scroll-behavior:smooth}
+    body{background:var(--ground);color:var(--ink);font:17px/1.58 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+    .wrap{max-width:1020px;margin:auto;padding:0 24px}
+    nav{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--ground) 82%,transparent);backdrop-filter:blur(18px);border-bottom:1px solid var(--hairline)}
+    nav .wrap{height:52px;display:flex;align-items:center;justify-content:space-between}
+    .brand{display:flex;align-items:center;gap:10px;color:var(--ink);text-decoration:none;font-weight:650}
+    .mark{width:22px;height:22px;border-radius:6px;background:var(--accent);position:relative}
+    .mark:after{content:"";position:absolute;left:62%;top:26%;width:4px;height:4px;border-radius:50%;background:white}
+    nav span{font-size:14px;color:var(--muted)}
+    header{text-align:center;padding:92px 0 58px}
+    .eyebrow{font-size:13px;font-weight:700;letter-spacing:.09em;color:var(--accent);text-transform:uppercase;margin-bottom:16px}
+    h1{font-size:clamp(40px,7vw,68px);letter-spacing:-.025em;line-height:1.04;max-width:15ch;margin:auto;text-wrap:balance}
+    .sub{font-size:clamp(18px,2.4vw,22px);color:var(--muted);max-width:38em;margin:22px auto 0;text-wrap:balance}
+    .safety{display:flex;gap:12px;align-items:flex-start;max-width:760px;margin:34px auto 0;padding:18px 20px;border:1px solid color-mix(in srgb,var(--ok) 38%,var(--hairline));border-radius:16px;text-align:left;background:color-mix(in srgb,var(--ok) 7%,var(--surface))}
+    .safety strong{color:var(--ok)}
+    section{padding:74px 0;border-top:1px solid var(--hairline)}
+    h2{font-size:clamp(28px,4vw,40px);line-height:1.12;letter-spacing:-.018em;text-align:center;max-width:25ch;margin:0 auto 14px;text-wrap:balance}
+    .lede{text-align:center;color:var(--muted);max-width:40em;margin:0 auto 42px}
+    .choices{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+    .choice,.step,.folder,.briefing{background:var(--surface);border:1px solid var(--hairline);border-radius:18px;box-shadow:var(--shadow)}
+    .choice{padding:26px}
+    .number{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--accent);color:var(--ground);font-weight:750;margin-bottom:18px}
+    h3{font-size:20px;line-height:1.25;letter-spacing:-.01em;margin-bottom:8px}
+    p{color:var(--muted)}
+    .route{display:grid;grid-template-columns:210px 1fr;gap:24px;align-items:start}
+    .rail{position:sticky;top:80px;padding:8px 0}
+    .rail a{display:block;color:var(--muted);text-decoration:none;padding:9px 12px;border-left:2px solid var(--hairline)}
+    .rail a:hover,.rail a:focus-visible{color:var(--ink);border-color:var(--accent)}
+    .steps{display:grid;gap:18px}
+    .step{padding:30px}
+    .step-head{display:flex;gap:14px;align-items:center;margin-bottom:15px}
+    .step-head .number{margin:0;flex:none}
+    .plain-list{padding-left:21px;color:var(--muted)}
+    .plain-list li+li{margin-top:8px}
+    .note{margin-top:16px;padding:14px 16px;border-left:3px solid var(--attention);background:color-mix(in srgb,var(--attention) 7%,transparent);color:var(--muted)}
+    .tree{font:15px/1.75 ui-monospace,"SF Mono",Menlo,monospace;white-space:pre-wrap;color:var(--ink);padding:24px;background:color-mix(in srgb,var(--ground) 70%,var(--surface));border-radius:14px}
+    .folder{padding:30px;max-width:760px;margin:auto}
+    .briefing{padding:32px;display:grid;grid-template-columns:1fr 1.15fr;gap:30px;align-items:center}
+    .night-rail{display:grid;gap:0}
+    .night-row{display:grid;grid-template-columns:34px 1fr;gap:12px;min-height:58px}
+    .night-dot{width:28px;height:28px;border-radius:50%;background:var(--accent);color:var(--ground);display:grid;place-items:center;font-size:13px;font-weight:750;position:relative}
+    .night-row:not(:last-child) .night-dot:after{content:"";position:absolute;top:28px;width:2px;height:30px;background:var(--hairline)}
+    .night-row b{display:block}.night-row small{color:var(--muted)}
+    .cta{text-align:center}
+    .btn{display:inline-block;background:var(--cta);color:white;text-decoration:none;padding:11px 24px;border-radius:980px;font-weight:600}
+    footer{border-top:1px solid var(--hairline);padding:34px 0 50px;color:var(--muted);font-size:13px}
+    footer .wrap{display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    a:focus-visible{outline:2px solid var(--cta);outline-offset:3px}
+    @media(max-width:760px){.choices{grid-template-columns:1fr}.route{grid-template-columns:1fr}.rail{position:static;display:flex;overflow:auto}.rail a{white-space:nowrap;border-left:0;border-bottom:2px solid var(--hairline)}.briefing{grid-template-columns:1fr}header{padding-top:70px}}
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+<nav><div class="wrap"><a class="brand" href="index.html"><span class="mark" aria-hidden="true"></span>AstroTool</a><span>Első lépések</span></div></nav>
+
+<header class="wrap">
+  <div class="eyebrow">Nem kell hozzá informatikusnak lenned</div>
+  <h1>A fotóidból átlátható képkönyvtár.</h1>
+  <p class="sub">Az AstroTool segít létrehozni a helyet, ahová ezután a csillagfotóid kerülnek. Megmutatja, mi mire való, és ha kéred, az első projektet és capture-t is elkészíti veled.</p>
+  <div class="safety"><span aria-hidden="true">●</span><p><strong>A legfontosabb:</strong> az AstroTool önmagában nem töröl fájlt. Íráskor csak új mappát vagy adatot hoz létre, illetve az általad kiválasztott fájlokat másolja vagy mozgatja. Minden ilyen lépés előtt látni fogod, mi fog történni.</p></div>
+</header>
+
+<main>
+<section><div class="wrap">
+  <h2>Három egyszerű választással indulsz.</h2>
+  <p class="lede">Nincs rossz belépési pont. A bemutató később bármikor újra megnyitható az alkalmazás Súgó menüjéből.</p>
+  <div class="choices">
+    <article class="choice"><div class="number">1</div><h3>Új képkönyvtár létrehozása</h3><p>Ha most kezded a rendszerezést. Kiválasztod a helyét, az AstroTool pedig létrehozza a szükséges mappákat.</p></article>
+    <article class="choice"><div class="number">2</div><h3>Már van AstroTool-könyvtáram</h3><p>Ha korábban már használtad. Kiválasztod a gyökérmappát, az AstroTool pedig először csak átnézi.</p></article>
+    <article class="choice"><div class="number">3</div><h3>Előbb szeretném megérteni</h3><p>Rövid, kattintható bemutató a mappákról, a másolásról és arról, mit vár tőled az alkalmazás.</p></article>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Az ajánlott folyamat, lépésről lépésre.</h2>
+  <p class="lede">A projekt létrehozása és az első capture bemásolása egyetlen folyamat. Egyben elvégezhető vagy teljesen kihagyható.</p>
+  <div class="route">
+    <aside class="rail" aria-label="A folyamat lépései"><a href="#hely">1. Hely kiválasztása</a><a href="#mappak">2. Mappák megértése</a><a href="#kepek">3. Fotók kiválasztása</a><a href="#projekt">4. Projekt és capture</a><a href="#ellenorzes">5. Ellenőrzés</a></aside>
+    <div class="steps">
+      <article class="step" id="hely"><div class="step-head"><div class="number">1</div><h3>Válaszd ki, hol legyen a könyvtár</h3></div><p>Lehet a Mac belső tárhelyén vagy egy külső meghajtón. Olyan helyet válassz, amelyet később is elérsz és amelyen van elég szabad hely.</p><div class="note">Az új könyvtár üres mappákkal indul. A régi fotóid addig változatlanul a helyükön maradnak.</div></article>
+      <article class="step" id="mappak"><div class="step-head"><div class="number">2</div><h3>Nézd meg a mappákat, emberi nyelven</h3></div><ul class="plain-list"><li><strong>Projects:</strong> egy égi célpont összes anyaga.</li><li><strong>Captures:</strong> az eredeti, kamerából érkező képek, egy-egy megfigyelési alkalom szerint.</li><li><strong>Calibration:</strong> dark, flat és bias képek, amelyek a feldolgozást segítik.</li><li><strong>Exports:</strong> az elkészült listák és riportok helye, ha ide kéred őket.</li></ul></article>
+      <article class="step" id="kepek"><div class="step-head"><div class="number">3</div><h3>Mutasd meg, hol vannak most a fotók</h3></div><p>Kiválaszthatsz egy másik mappát, memóriakártyát vagy az ASI Air tárhelyét. Az AstroTool előbb összefoglalja, mit talált; te döntöd el, folytatod-e.</p><div class="note"><strong>Másolás:</strong> az eredeti megmarad. <strong>Mozgatás:</strong> az eredeti az új helyre kerül. Mozgatást csak kifejezett választás és megerősítés után végez az app.</div></article>
+      <article class="step" id="projekt"><div class="step-head"><div class="number">4</div><h3>Nevezd el a projektet, a capture-t az AstroTool hozzáteszi</h3></div><p>Például a „Rozetta-köd” lehet a projekt. A kiválasztott képek dátuma és beállításai alapján létrejön benne az első capture. Nem kell kézzel mappaneveket szerkesztened.</p><p class="note">Ha most csak a könyvtárat szeretnéd létrehozni, ezt az egész részt átugorhatod.</p></article>
+      <article class="step" id="ellenorzes"><div class="step-head"><div class="number">5</div><h3>Olvasd el az összefoglalót, aztán engedélyezd</h3></div><p>A végső képernyő külön megmutatja, mi jön létre, mi lesz átmásolva vagy áthelyezve, és mi marad érintetlen. A művelet csak ezután indul el.</p></article>
+    </div>
+  </div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Így néz ki egy rendezett könyvtár.</h2>
+  <p class="lede">A neveket az AstroTool kezeli. Neked a célpontot és a fotókat kell felismerned, nem a technikai mappaszerkezetet.</p>
+  <div class="folder"><div class="tree">AstroTool képkönyvtár
+├── Projects
+│   └── Rozetta-köd
+│       └── Captures
+│           └── 2026-01-18
+├── Calibration
+└── Exports</div></div>
+</div></section>
+
+<section><div class="wrap">
+  <h2>Ezután készíts tervet a következő éjszakára.</h2>
+  <p class="lede">A V4 Éjszakai briefingje a Macen készül, de a végén PDF-ben vagy külön képekként magaddal viheted a telefonodon.</p>
+  <div class="briefing">
+    <div><h3>Nem a terepen kell kitalálnod.</h3><p>Helyszín, időrend, célpontok, capture-beállítások, ellenőrzőlista és B terv kerül egyetlen, offline olvasható dokumentumba. A hiányzó adat hiányzóként látszik; az AstroTool nem talál ki értéket.</p></div>
+    <div class="night-rail" aria-label="Az Éjszakai briefing öt lépése">
+      <div class="night-row"><span class="night-dot">1</span><div><b>Alapok</b><small>Mikor, hol, mivel</small></div></div>
+      <div class="night-row"><span class="night-dot">2</span><div><b>Célpontok</b><small>Mi következik mikor</small></div></div>
+      <div class="night-row"><span class="night-dot">3</span><div><b>Capture-terv</b><small>Mit állíts be</small></div></div>
+      <div class="night-row"><span class="night-dot">4</span><div><b>Checklist és B terv</b><small>Mit vigyél, mi legyen ha…</small></div></div>
+      <div class="night-row"><span class="night-dot">5</span><div><b>Ellenőrzés és export</b><small>PDF és telefonos PNG-oldalak</small></div></div>
+    </div>
+  </div>
+</div></section>
+
+<section class="cta"><div class="wrap"><h2>Készen állsz az első könyvtáradra?</h2><p class="lede">A bemutatót az alkalmazásban bármikor újra előhívhatod.</p><a class="btn" href="https://github.com/themokx1/Astro-Tool/releases/latest" rel="noopener">AstroTool letöltése</a></div></section>
+</main>
+
+<footer><div class="wrap"><span>© 2026 AstroTool</span><span>V4 · macOS · Apple Silicon</span></div></footer>
+</body>
+</html>

@@ -36,6 +36,7 @@ public struct HomeView: View {
     /// per-date "Cloud" column already renders this exact min-max forecast
     /// against.
     private let openNightsCalendar: () -> Void
+    private let openBriefing: () -> Void
     /// Wave 0 seam (V3 pre-stack program, `HomeCardProviding`'s own doc
     /// comment): empty until section 5.1 (Ingest-figyelő) or 5.6 (Élő
     /// éjszaka-mód) registers a provider of its own -- an empty array
@@ -72,6 +73,7 @@ public struct HomeView: View {
         openSensorProfiles: @escaping () -> Void = {},
         openCalibration: @escaping () -> Void = {},
         openNightsCalendar: @escaping () -> Void = {},
+        openBriefing: @escaping () -> Void = {},
         extraCardProviders: [any HomeCardProviding] = []
     ) {
         _store = Bindable(store)
@@ -83,6 +85,7 @@ public struct HomeView: View {
         self.openSensorProfiles = openSensorProfiles
         self.openCalibration = openCalibration
         self.openNightsCalendar = openNightsCalendar
+        self.openBriefing = openBriefing
         self.extraCardProviders = extraCardProviders
     }
 
@@ -105,6 +108,7 @@ public struct HomeView: View {
                     hasLibrary: store.snapshot.libraryName != nil,
                     openNightsCalendar: openNightsCalendar
                 )
+                briefingCard
                 if store.snapshot.libraryName == nil {
                     if isLibraryLoading {
                         openingLibrary
@@ -124,6 +128,24 @@ public struct HomeView: View {
         // -- see the `.background(AstroTokens.Color.ground)` there.
         .navigationTitle("Home")
         .astroSectionMarker("v2.detail.home", label: "Home")
+    }
+
+    private var briefingCard: some View {
+        HStack(spacing: AstroTokens.Spacing.standard) {
+            Image(systemName: "doc.text.image")
+                .font(.title2)
+                .foregroundStyle(AstroTokens.Color.accent)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Készülj fel a következő éjszakára").font(.headline)
+                Text("Rakd össze a teljes tervet, majd vidd magaddal PDF-ben vagy telefonos képeken.")
+                    .font(.callout).foregroundStyle(AstroTokens.Color.inkDim)
+            }
+            Spacer()
+            Button("Briefing készítése", action: openBriefing)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v2.home.open-briefing")
+        }
+        .astroRaisedSurface()
     }
 
     private var libraryOverview: some View {
