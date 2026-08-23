@@ -341,7 +341,7 @@ public struct MobileSyncView: View {
             if let incoming = store.incomingPreview {
                 Text("Package preview").astroSectionTitle()
                 summaryGrid(incoming.snapshotSummary)
-                LabeledContent("Package", value: incoming.packageID.uuidString)
+                packageIDRow(incoming.packageID)
                 LabeledContent("Encrypted size", value: ByteCountFormatter.string(fromByteCount: incoming.encryptedByteCount, countStyle: .file))
                 LabeledContent("Incoming changes", value: incoming.incomingChanges.count.formatted())
                 Text("Applying changes will be confirmed separately. Nothing in the image library has changed.")
@@ -353,6 +353,35 @@ public struct MobileSyncView: View {
                 .accessibilityIdentifier("v5.mobile-sync.cancel")
         }
         .astroRaisedSurface()
+    }
+
+    private func packageIDRow(_ packageID: UUID) -> some View {
+        let value = packageID.uuidString
+        return ViewThatFits(in: .horizontal) {
+            HStack(alignment: .firstTextBaseline, spacing: AstroTokens.Spacing.standard) {
+                Text("Package")
+                Spacer(minLength: AstroTokens.Spacing.compact)
+                packageIDValue(value)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Package")
+                    .font(.caption)
+                    .foregroundStyle(AstroTokens.Color.inkDim)
+                packageIDValue(value)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func packageIDValue(_ value: String) -> some View {
+        Text(verbatim: value)
+            .font(.system(.body, design: .monospaced))
+            .textSelection(.enabled)
+            .accessibilityIdentifier("v5.mobile-sync.package-id")
+            .accessibilityLabel("Package ID")
+            .accessibilityValue(Text(verbatim: value))
     }
 
     private var failedContent: some View {

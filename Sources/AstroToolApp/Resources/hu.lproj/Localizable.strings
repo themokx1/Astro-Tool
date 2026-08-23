@@ -2742,6 +2742,7 @@
 "Preview package" = "Csomag előnézete";
 "Opening the package safely…" = "A csomag biztonságos megnyitása…";
 "Package" = "Csomag";
+"Package ID" = "Csomagazonosító";
 "Encrypted size" = "Titkosított méret";
 "The unlock code image could not be created. Try again." = "A feloldókód képe nem készíthető el. Próbáld újra.";
 "The unlock code image could not be created." = "A feloldókód képe nem készíthető el.";

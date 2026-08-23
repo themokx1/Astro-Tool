@@ -1,6 +1,6 @@
 # Task 4 visual QA — Mac MobileSync sheet
 
-Status: **ISSUES** — one P2 narrow-width defect found. No product code was changed.
+Status: **DONE** — the P2 narrow-width defect was fixed and re-rendered.
 
 ## Scope and method
 
@@ -16,10 +16,13 @@ Status: **ISSUES** — one P2 narrow-width defect found. No product code was cha
 
   ```text
   swift test --filter MobileSyncStoreTests --filter MobileSyncSurfaceTests
-  Test run with 19 tests in 2 suites passed.
+  Test run with 20 tests in 2 suites passed after the responsive package-ID fix.
 
   swift test --filter LocalizationCoverageTests
   Test run with 15 tests in 1 suite passed.
+
+  swift test --no-parallel
+  Test run with 3452 tests in 218 suites passed.
   ```
 
 - The repository XCUITest command built the app/test runner but could not start UI automation in this environment:
@@ -42,6 +45,8 @@ Artifacts are retained outside the repository under `/tmp/astrotool-v5-visual-qa
 - `/tmp/astrotool-v5-visual-qa/mobile-sync-review-narrow.png` — 420×620, English, review.
 - `/tmp/astrotool-v5-visual-qa/mobile-sync-review-accessibility5.png` — 720×620 with `.dynamicTypeSize(.accessibility5)`.
 - `/tmp/astrotool-v5-visual-qa/mobile-sync-incoming-package-narrow.png` — 420×620, deterministic incoming preview with a long package UUID.
+- `/tmp/astrotool-v5-visual-qa/mobile-sync-review-after.png` — 720×620, normal review after the fix.
+- `/tmp/astrotool-v5-visual-qa/mobile-sync-incoming-package-narrow-after.png` — 420×620, the exact deterministic narrow fixture after the fix.
 
 ## Observations
 
@@ -51,14 +56,16 @@ Artifacts are retained outside the repository under `/tmp/astrotool-v5-visual-qa
 - **Accessibility size:** the large-text render keeps the rail and summary columns legible without horizontal clipping in the captured top portion. The lower content requires scrolling at this height. This is a static environment render, not a live macOS accessibility-preference run.
 - **Contrast / typography:** the dark ground, raised surfaces, muted explanatory text, cyan active rail, and white primary copy remain distinguishable. Counts use compact monospaced styling while explanatory copy remains readable.
 - **Localization:** English/Hungarian MobileSync keys, including the exact safety promise and QR explanation, are present; localization coverage passes. Runtime HU screenshot was not possible because the UI automation runner could not start.
-- **Accessibility contract:** source inspection confirms pinned identifiers for open/safety/export/import/confirm/cancel/QR/error-retry and a descriptive QR accessibility label. Runtime VoiceOver order could not be inspected because UI automation timed out.
+- **Accessibility contract:** source inspection confirms pinned identifiers for open/safety/export/import/confirm/cancel/QR/error-retry and a descriptive QR accessibility label. The incoming package UUID is selectable, monospaced, and exposes the complete UUID through its accessibility value. Runtime VoiceOver order could not be inspected because UI automation timed out.
 - **Night Briefing:** surface/source checks confirm the existing PDF, PDF+PNG, and PNG actions remain adjacent to a separate “Send to iPhone” action. A rendered four-button screenshot could not be captured because the live XCUITest runner was unavailable.
 - **QR:** the source uses nearest-neighbor interpolation, no antialiasing, a high-contrast QR background, and a 48 pt outer quiet-zone padding. The injected export render did not reach the exported phase in the static harness, so QR module alignment was not visually signed off.
 
-## Issue
+## Resolution
 
-### P2 — Long incoming package UUID wraps awkwardly at minimum/narrow width
+### P2 — Long incoming package UUID wraps awkwardly at minimum/narrow width — fixed
 
-In `/tmp/astrotool-v5-visual-qa/mobile-sync-incoming-package-narrow.png`, the `Package` row at 420 pt places the UUID beside the label and wraps only the final `C` onto a separate line below the label. The value remains technically present but is visually crowded and easy to misread. The incoming package preview should give the value its own flexible/wrapping column or stack the label and UUID at narrow widths.
+Before: `/tmp/astrotool-v5-visual-qa/mobile-sync-incoming-package-narrow.png` reproduced the defect: at 420 pt, the `Package` row placed the UUID beside the label and wrapped only the final `C` below the label.
 
-No other visual defect was found in the rendered states. This QA task leaves product code untouched; the report is the only repository change.
+The row now uses a responsive horizontal/vertical layout. At narrow widths the label is stacked above a monospaced, selectable full UUID, with an explicit accessibility label and full accessibility value. After: `/tmp/astrotool-v5-visual-qa/mobile-sync-incoming-package-narrow-after.png` shows the exact same fixture with no dangling character and the complete UUID readable. `/tmp/astrotool-v5-visual-qa/mobile-sync-review-after.png` confirms the normal review state remains visually stable.
+
+The regression is covered by `MobileSyncSurfaceTests.incomingPackageIdentityIsResponsive`, which passed after first failing against the unfixed source. The new accessibility label is also covered by the Hungarian localization gate. No other visual defect was found in the rendered states.

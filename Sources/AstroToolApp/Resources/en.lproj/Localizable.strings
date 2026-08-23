@@ -134,6 +134,7 @@
 "Preview package" = "Preview package";
 "Opening the package safely…" = "Opening the package safely…";
 "Package" = "Package";
+"Package ID" = "Package ID";
 "Encrypted size" = "Encrypted size";
 "The unlock code image could not be created. Try again." = "The unlock code image could not be created. Try again.";
 "The unlock code image could not be created." = "The unlock code image could not be created.";

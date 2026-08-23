@@ -71,4 +71,14 @@ struct MobileSyncSurfaceTests {
         #expect(settings.contains("iPhone szinkron"))
         #expect(!settings.contains("transport"))
     }
+
+    @Test("Incoming package identity uses a responsive full-value layout")
+    func incomingPackageIdentityIsResponsive() throws {
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        #expect(view.contains("v5.mobile-sync.package-id"))
+        #expect(view.contains("ViewThatFits(in: .horizontal)"))
+        #expect(view.contains("textSelection(.enabled)"))
+        #expect(view.contains("monospaced"))
+        #expect(view.contains("Package ID"))
+    }
 }
