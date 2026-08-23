@@ -27,5 +27,7 @@ final class AstroToolMobileLaunchTests: XCTestCase {
         XCTAssertTrue(app.otherElements["mobile-imported-state"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["1"].exists)
         XCTAssertTrue(app.staticTexts["M31"].exists)
+        XCTAssertTrue(app.buttons["Import newer package"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["mobile-import-action"].exists)
     }
 }

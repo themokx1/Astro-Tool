@@ -1,11 +1,12 @@
 import SwiftUI
+import Foundation
 import AstroMobileDomain
 import AstroMobileTransport
 
 struct MobileRootView: View {
     let store: MobileLibraryStore
     @Binding private var stagedPackageURL: URL?
-    @Binding private var intakeMessage: String?
+    @Binding private var intakeError: MobileIntakeError?
     @State private var snapshot: MobileLibrarySnapshot?
     @State private var queuedChangeCount = 0
     @State private var recoveryState: MobileLibraryStoreRecoveryState = .empty
@@ -16,16 +17,19 @@ struct MobileRootView: View {
     private let scanner: any MobileQRScanner
     private let fixtureMode: String?
     private let fixtureQRPayload: String?
+    private let fixtureRoot: URL?
     @State private var importTask: Task<Void, Never>?
+    @State private var fixturePrepared = false
     @Environment(\.scenePhase) private var scenePhase
 
-    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), intakeMessage: Binding<String?> = .constant(nil), scanner: any MobileQRScanner = CameraQRScanner(), fixtureMode: String? = nil, fixtureQRPayload: String? = nil) {
+    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), intakeError: Binding<MobileIntakeError?> = .constant(nil), scanner: any MobileQRScanner = CameraQRScanner(), fixtureMode: String? = nil, fixtureQRPayload: String? = nil, fixtureRoot: URL? = nil) {
         self.store = store
         _stagedPackageURL = stagedPackageURL
-        _intakeMessage = intakeMessage
+        _intakeError = intakeError
         self.scanner = scanner
         self.fixtureMode = fixtureMode
         self.fixtureQRPayload = fixtureQRPayload
+        self.fixtureRoot = fixtureRoot
     }
 
     var body: some View {
@@ -43,11 +47,11 @@ struct MobileRootView: View {
             }
             .safeAreaInset(edge: .top) {
                 VStack(spacing: 6) {
-                if let intakeMessage {
+                if let intakeError {
                     HStack {
-                        Text(LocalizedStringKey(intakeMessage)).font(.footnote)
+                        Text(LocalizedStringKey(intakeError.localizedKey)).font(.footnote)
                         Spacer()
-                        Button("Dismiss") { self.intakeMessage = nil; message = nil }
+                        Button("Dismiss") { self.intakeError = nil; message = nil }
                     }.padding(10).background(.red.opacity(0.15)).accessibilityIdentifier("mobile-intake-error")
                 }
                 if durabilityWarning {
@@ -61,8 +65,13 @@ struct MobileRootView: View {
                 }
             }
             .navigationTitle("AstroTool")
-            .task { await refresh(); message = intakeMessage; if let fixtureQRPayload { keyPayload = fixtureQRPayload } }
-            .onChange(of: intakeMessage) { _, next in message = next }
+            .task {
+                await refresh()
+                message = intakeError?.localizedKey
+                if let fixtureQRPayload { keyPayload = fixtureQRPayload }
+                await prepareImportedFixtureIfNeeded()
+            }
+            .onChange(of: intakeError) { _, next in message = next?.localizedKey }
             .onChange(of: stagedPackageURL) { _, _ in }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active {
@@ -202,6 +211,36 @@ struct MobileRootView: View {
         recoveryState = await store.recoveryState
         durabilityWarning = await store.durabilityWarning
         stagedPackageURL = await store.stagedPackageURL
+    }
+
+    private func prepareImportedFixtureIfNeeded() async {
+        guard fixtureMode == "imported", !fixturePrepared, let fixtureRoot else { return }
+        fixturePrepared = true
+        guard await store.stagedPackageURL == nil else { return }
+        do {
+            guard let current = await store.activeSnapshot else { throw MobileLibraryStoreError.invalidSnapshot }
+            let currentData = try MobileJSON.encoder.encode(current)
+            guard var object = try JSONSerialization.jsonObject(with: currentData) as? [String: Any] else {
+                throw MobileLibraryStoreError.invalidSnapshot
+            }
+            object["revision"] = 2
+            let updatedData = try JSONSerialization.data(withJSONObject: object)
+            let update = try MobileJSON.decoder.decode(MobileLibrarySnapshot.self, from: updatedData)
+            let source = fixtureRoot.appendingPathComponent("fixture-update.astromobile", isDirectory: true)
+            let key = OneTimePackageKey()
+            _ = try await MobilePackageService().export(
+                MobilePackageEnvelope(snapshot: update, changes: [], acknowledgedChangeIDs: []),
+                to: source,
+                wrapping: key
+            )
+            _ = try await store.stagePackage(from: source)
+            await refresh()
+        } catch {
+            // A fixture is test infrastructure. If it cannot establish the
+            // real persisted/staged state, fail loudly instead of fabricating
+            // a UI-only imported surface or swallowing setup errors.
+            fatalError("Could not bootstrap the imported mobile UI fixture: \(error)")
+        }
     }
 
     private func importPackage() {

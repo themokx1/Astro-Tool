@@ -119,4 +119,23 @@ The iOS runtime remains unavailable on this host, so the new iOS store/UI tests 
 - Queued changes must now be owned by the authoritative persisted device ID. A decodable foreign-device queue locks recovery rather than being silently accepted.
 - The imported fixture root is unique for every process/launch and no longer fabricates a package-update surface; UI coverage checks the real persisted revision/project library state.
 
-Build/test execution after this round is pending renewed tool authorization: the host rejected Xcode execution because the account usage limit was reached. `git diff --check` and staged status should be rerun with the normal build gates once access resumes.
+The iOS build/runtime gate was intentionally not rerun in this closure pass: the host's Xcode account usage limit blocks that gate, and this pass must not claim an iOS build or XCTest runtime result after `8ccb699`. Source parsing was run locally, and the sandbox-safe package gate below was run with `--disable-sandbox`.
+
+## Replacement closure — proof gaps after round 1
+
+- Added `MobileSecurityScopedAccess`, an injected async seam proving that a readable URL is still copied when `startAccessingSecurityScopedResource()` returns false, while a true result receives exactly one balanced stop call. Production intake uses the same seam and maps failures to typed, localized `MobileIntakeError` messages shown in the root safe-area banner for both empty and existing-library states.
+- Journal recovery now treats `.state-durability = pending` as authoritative even when `state.json` decodes successfully. Journal clear failures never turn a post-rename state replacement into a false failed import; pending is reasserted and the warning remains visible. Parent-directory sync is injectable for the state writer, with tests covering pending-before/clear-after behavior and relaunch warning persistence.
+- Added a foreign-device queue recovery test, staged-source replacement test (including pending authenticated preview cleanup), and separate duplicate target/section/item plus oversized target/section/item/warning/aggregate snapshot tests.
+- The imported UI fixture now has a unique root, fails loudly on setup errors, boots through `MobileLibraryStore`'s authoritative migration, and stages a real encrypted revision-2 package. UI assertions cover revision 1, project M31, and the real “Import newer package” action. No fixture-only update surface is fabricated.
+
+Closure verification:
+
+```text
+swiftc -frontend -parse <changed iOS sources/tests>              # passed
+git diff --check                                                 # passed
+CLANG_MODULE_CACHE_PATH=/tmp/... SWIFT_MODULECACHE_PATH=/tmp/... \
+  swift test --disable-sandbox --filter MobilePackageServiceTests --no-parallel
+                                                                   # 39 tests passed
+```
+
+The focused `AstroToolMobileTests` XCTest runtime/build and imported/empty UI journeys remain unexecuted because they are Xcode-only and the current host gate is unavailable. No iOS build success is claimed for this closure.

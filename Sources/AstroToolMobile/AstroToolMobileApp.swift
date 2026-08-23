@@ -6,8 +6,10 @@ import AstroMobileDomain
 struct AstroToolMobileApp: App {
     private let store: MobileLibraryStore
     private let fixtureMode: String?
+    private let fixtureRoot: URL?
+    private let securityScope: MobileSecurityScopedAccess
     @State private var stagedPackageURL: URL?
-    @State private var intakeMessage: String?
+    @State private var intakeError: MobileIntakeError?
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -16,12 +18,15 @@ struct AstroToolMobileApp: App {
         } else {
             fixtureMode = nil
         }
-        store = MobileLaunchFixture.makeStore(mode: fixtureMode)
+        let fixture = MobileLaunchFixture.make(mode: fixtureMode)
+        store = fixture.store
+        fixtureRoot = fixture.root
+        securityScope = MobileSecurityScopedAccess()
     }
 
     var body: some Scene {
         WindowGroup {
-            MobileRootView(store: store, stagedPackageURL: $stagedPackageURL, intakeMessage: $intakeMessage, fixtureMode: fixtureMode, fixtureQRPayload: launchQRPayload)
+            MobileRootView(store: store, stagedPackageURL: $stagedPackageURL, intakeError: $intakeError, fixtureMode: fixtureMode, fixtureQRPayload: launchQRPayload, fixtureRoot: fixtureRoot)
                 .onOpenURL { url in
                     receive(url)
                 }
@@ -35,18 +40,22 @@ struct AstroToolMobileApp: App {
     }
 
     private func receive(_ url: URL) {
-        let accessed = url.startAccessingSecurityScopedResource()
         Task {
-            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let accessed = securityScope.start(url)
             do {
-                _ = try await store.receive(source: url)
+                // A false scope result is not a proof that the URL cannot be
+                // read. The store still attempts its app-owned copy; only a
+                // true result receives the balanced stop call.
+                _ = try await securityScope.perform(at: url, acquired: accessed) {
+                    try await store.receive(source: url)
+                }
                 let current = await store.stagedPackageURL
-                await MainActor.run { stagedPackageURL = current; intakeMessage = nil }
+                await MainActor.run { stagedPackageURL = current; intakeError = nil }
             } catch {
                 let current = await store.stagedPackageURL
                 await MainActor.run {
                     stagedPackageURL = current
-                    intakeMessage = accessed ? "AstroTool could not copy that mobile package safely. Send it from your Mac again and try once more." : "AstroTool could not open that package. In Files, try sharing it with AstroTool again."
+                    intakeError = accessed ? .copyFailed : .securityScopeUnavailable
                 }
             }
         }
@@ -54,11 +63,20 @@ struct AstroToolMobileApp: App {
 }
 
 private enum MobileLaunchFixture {
-    static func makeStore(mode: String?) -> MobileLibraryStore {
-        guard mode == "imported" else { return MobileLibraryStore() }
+    struct Result {
+        let store: MobileLibraryStore
+        let root: URL?
+    }
+
+    static func make(mode: String?) -> Result {
+        guard mode == "imported" else { return Result(store: MobileLibraryStore(), root: nil) }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("AstroToolMobileUIFixture-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)", isDirectory: true)
         let active = root.appendingPathComponent("active", isDirectory: true)
-        try? FileManager.default.createDirectory(at: active, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: active, withIntermediateDirectories: true)
+        } catch {
+            fatalError("Could not create the imported mobile UI fixture: \(error)")
+        }
         let projectID = UUID(), nightID = UUID(), briefingID = UUID()
         let noteID = "fixture-note"
         let snapshot = MobileLibrarySnapshot(
@@ -70,7 +88,11 @@ private enum MobileLaunchFixture {
             briefings: [MobileBriefing(id: briefingID, revision: 1, savedAt: Date(timeIntervalSince1970: 1_700_000_001), nightDate: nil, readiness: "ready", targets: [], checklist: [], noteID: noteID)],
             notes: [MobileNote(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_700_000_002), isEditableOnPhone: true)]
         )
-        try? MobileJSON.encoder.encode(snapshot).write(to: active.appendingPathComponent("snapshot.json"), options: .atomic)
-        return MobileLibraryStore(applicationSupportURL: root)
+        do {
+            try MobileJSON.encoder.encode(snapshot).write(to: active.appendingPathComponent("snapshot.json"), options: .atomic)
+        } catch {
+            fatalError("Could not write the imported mobile UI fixture: \(error)")
+        }
+        return Result(store: MobileLibraryStore(applicationSupportURL: root), root: root)
     }
 }

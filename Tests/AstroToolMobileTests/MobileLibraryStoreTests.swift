@@ -4,6 +4,33 @@ import Testing
 @testable import AstroMobileDomain
 @testable import AstroMobileTransport
 
+@Test func securityScopeFalseStillAttemptsReadableIntakeWithoutStop() async throws {
+    let calls = SecurityScopeCalls()
+    let access = MobileSecurityScopedAccess(
+        start: { _ in calls.starts += 1; return false },
+        stop: { _ in calls.stops += 1 }
+    )
+
+    let result = try await access.perform(at: URL(fileURLWithPath: "/tmp/readable.astromobile")) { "copied" }
+
+    #expect(result == "copied")
+    #expect(calls.starts == 1)
+    #expect(calls.stops == 0)
+}
+
+@Test func securityScopeTrueBalancesStopAfterReadableIntake() async throws {
+    let calls = SecurityScopeCalls()
+    let access = MobileSecurityScopedAccess(
+        start: { _ in calls.starts += 1; return true },
+        stop: { _ in calls.stops += 1 }
+    )
+
+    _ = try await access.perform(at: URL(fileURLWithPath: "/tmp/scoped.astromobile")) { "copied" }
+
+    #expect(calls.starts == 1)
+    #expect(calls.stops == 1)
+}
+
 @Test func failedImportKeepsPreviousSnapshot() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let store = fixture.store
@@ -84,6 +111,53 @@ import Testing
         #expect(error == .recoveryRequired)
     }
     #expect(try Data(contentsOf: deviceURL) == corrupt)
+}
+
+@Test func foreignDeviceQueueLocksRecoveryWithoutReplacingSnapshot() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
+    // Keep the queued record intact but bind the authoritative state to a
+    // different installation identity. Reload must reject the queue rather
+    // than silently accepting edits from another phone.
+    state["deviceID"] = UUID().uuidString
+    try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stateURL, options: .atomic)
+
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+
+    #expect(await relaunched.recoveryState == .invalidQueue)
+    #expect(await relaunched.activeSnapshot?.revision == 1)
+    #expect(await relaunched.queuedChanges.isEmpty)
+}
+
+@Test func pendingDurabilityJournalSurvivesRelaunchAsVisibleWarning() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let journalURL = fixture.rootURL.appendingPathComponent(".state-durability")
+    try Data("pending".utf8).write(to: journalURL, options: .atomic)
+
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+
+    #expect(await relaunched.durabilityWarning)
+    #expect(await relaunched.activeSnapshot?.revision == 1)
+}
+
+@Test func parentSyncUncertaintyLeavesPendingJournalAndWarningAfterRelaunch() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let sync = ParentSyncFailure(failuresRemaining: 1)
+    let store = MobileLibraryStore(
+        applicationSupportURL: fixture.rootURL,
+        packageService: MobilePackageService(),
+        testingBeforeStateCommit: {},
+        testingParentDirectorySync: { sync.check() }
+    )
+
+    try await store.editNote(id: "night-note", text: "Needs durable warning")
+
+    #expect(await store.durabilityWarning)
+    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "pending")
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.durabilityWarning)
+    #expect(await relaunched.activeSnapshot?.revision == 1)
 }
 
 @Test func queuedChecklistValueIsEffectiveForLaterToggle() async throws {
@@ -185,6 +259,32 @@ import Testing
     #expect(!FileManager.default.fileExists(atPath: staged.path))
 }
 
+@Test func replacingStagedSourceDiscardsPendingAuthenticationAndUsesCurrentOwnedStage() async throws {
+    let libraryID = UUID()
+    let fixture = try MobileStoreFixture(snapshotRevision: 1, libraryID: libraryID)
+    let keyA = OneTimePackageKey()
+    let keyB = OneTimePackageKey()
+    let sourceA = fixture.rootURL.appendingPathComponent("source-a.astromobile", isDirectory: true)
+    let sourceB = fixture.rootURL.appendingPathComponent("source-b.astromobile", isDirectory: true)
+    let incomingA = try MobileStoreFixture(snapshotRevision: 2, libraryID: libraryID)
+    let incomingB = try MobileStoreFixture(snapshotRevision: 3, libraryID: libraryID)
+    _ = try await MobilePackageService().export(MobilePackageEnvelope(snapshot: incomingA.snapshot, changes: [], acknowledgedChangeIDs: []), to: sourceA, wrapping: keyA)
+    _ = try await MobilePackageService().export(MobilePackageEnvelope(snapshot: incomingB.snapshot, changes: [], acknowledgedChangeIDs: []), to: sourceB, wrapping: keyB)
+    let failure = StateCommitFailure(failuresRemaining: 1)
+    let store = MobileLibraryStore(applicationSupportURL: fixture.rootURL, packageService: MobilePackageService(), testingBeforeStateCommit: { try failure.check() })
+    _ = try await store.stagePackage(from: sourceA)
+
+    await #expect(throws: MobileLibraryStoreError.persistenceFailed) { try await store.importCurrentStagedPackage(key: keyA) }
+    let stagedA = await store.stagedPackageURL
+    #expect(stagedA != nil)
+    _ = try await store.stagePackage(from: sourceB)
+    #expect(await store.stagedPackageURL != stagedA)
+    try await store.importCurrentStagedPackage(key: keyB)
+
+    #expect(await store.activeSnapshot?.revision == 3)
+    #expect(await store.stagedPackageURL == nil)
+}
+
 @Test func corruptFingerprintReceiptLocksImportsButPreservesSnapshot() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let stateURL = fixture.rootURL.appendingPathComponent("state.json")
@@ -234,7 +334,7 @@ import Testing
     #expect(await fixture.store.queuedChanges == queueBefore)
 }
 
-@Test func persistedSnapshotRejectsDuplicateTargetsSectionsAndNestedExplosion() async throws {
+@Test func persistedSnapshotRejectsDuplicateTargets() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let stateURL = fixture.rootURL.appendingPathComponent("state.json")
     var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
@@ -253,6 +353,111 @@ import Testing
 
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
     #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
+@Test func persistedSnapshotRejectsDuplicateSections() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try mutatePersistedSnapshot(fixture) { briefing in
+        briefing["checklist"] = [sectionJSON(id: "same-section"), sectionJSON(id: "same-section")]
+    }
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
+@Test func persistedSnapshotRejectsDuplicateItemsAcrossSections() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try mutatePersistedSnapshot(fixture) { briefing in
+        briefing["checklist"] = [
+            sectionJSON(id: "section-a", items: [itemJSON(id: "same-item")]),
+            sectionJSON(id: "section-b", items: [itemJSON(id: "same-item")])
+        ]
+    }
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
+@Test func persistedSnapshotRejectsOversizedTargets() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try mutatePersistedSnapshot(fixture) { briefing in
+        briefing["targets"] = (0...MobilePackageService.maximumCollectionCount).map { targetJSON(id: "target-\($0)") }
+    }
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
+@Test func persistedSnapshotRejectsOversizedSections() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try mutatePersistedSnapshot(fixture) { briefing in
+        briefing["checklist"] = (0...MobilePackageService.maximumCollectionCount).map { sectionJSON(id: "section-\($0)") }
+    }
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
+@Test func persistedSnapshotRejectsOversizedItems() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try mutatePersistedSnapshot(fixture) { briefing in
+        briefing["checklist"] = [sectionJSON(id: "section", items: (0...MobilePackageService.maximumCollectionCount).map { itemJSON(id: "item-\($0)") })]
+    }
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
+@Test func persistedSnapshotRejectsOversizedWarnings() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try mutatePersistedSnapshot(fixture) { briefing in
+        briefing["targets"] = [targetJSON(id: "target", warnings: (0...MobilePackageService.maximumCollectionCount).map { "warning-\($0)" })]
+    }
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
+@Test func persistedSnapshotRejectsOversizedAggregate() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try mutatePersistedSnapshotRoot(fixture) { snapshot in
+        snapshot["projects"] = (0..<MobilePackageService.maximumCollectionCount).map { ["id": UUID().uuidString, "displayName": "M\($0)", "catalogID": "M\($0)", "phase": "ready", "integrationSeconds": 0, "goalHours": NSNull()] }
+        snapshot["nights"] = (0..<MobilePackageService.maximumCollectionCount).map { ["id": UUID().uuidString, "localDate": "2026-08-23", "timeZoneID": "Europe/Budapest"] }
+    }
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.recoveryState == .invalidSnapshot)
+}
+
+private func mutatePersistedSnapshotRoot(_ fixture: MobileStoreFixture, _ mutate: (inout [String: Any]) -> Void) throws {
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
+    var snapshot = state["snapshot"] as! [String: Any]
+    var briefings = snapshot["briefings"] as! [[String: Any]]
+    mutate(&snapshot)
+    var briefing = briefings[0]
+    briefing["targets"] = (0..<MobilePackageService.maximumCollectionCount).map { targetJSON(id: "target-\($0)") }
+    briefing["checklist"] = (0..<MobilePackageService.maximumCollectionCount).map { sectionJSON(id: "section-\($0)", items: [itemJSON(id: "item-\($0)")]) }
+    briefings[0] = briefing
+    snapshot["briefings"] = briefings
+    state["snapshot"] = snapshot
+    try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stateURL, options: .atomic)
+}
+
+private func mutatePersistedSnapshot(_ fixture: MobileStoreFixture, _ mutate: (inout [String: Any]) -> Void) throws {
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
+    var snapshot = state["snapshot"] as! [String: Any]
+    var briefings = snapshot["briefings"] as! [[String: Any]]
+    mutate(&briefings[0])
+    snapshot["briefings"] = briefings
+    state["snapshot"] = snapshot
+    try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys]).write(to: stateURL, options: .atomic)
+}
+
+private func targetJSON(id: String, warnings: [String] = []) -> [String: Any] {
+    ["id": id, "name": "M31", "role": "primary", "start": "2026-08-23T00:00:00.000Z", "end": "2026-08-23T01:00:00.000Z", "warnings": warnings]
+}
+
+private func sectionJSON(id: String, items: [[String: Any]] = []) -> [String: Any] {
+    ["id": id, "title": "Basics", "items": items]
+}
+
+private func itemJSON(id: String) -> [String: Any] {
+    ["id": id, "title": "Focus", "explanation": NSNull(), "isCompleted": false, "baseRevision": 0]
 }
 
 private final class MobileStoreFixture {
@@ -316,5 +521,26 @@ private final class StateCommitFailure: @unchecked Sendable {
             failuresRemaining -= 1
             throw MobileLibraryStoreError.persistenceFailed
         }
+    }
+}
+
+private final class SecurityScopeCalls: @unchecked Sendable {
+    var starts = 0
+    var stops = 0
+}
+
+private final class ParentSyncFailure: @unchecked Sendable {
+    private var failuresRemaining: Int
+
+    init(failuresRemaining: Int) {
+        self.failuresRemaining = failuresRemaining
+    }
+
+    func check() -> Bool {
+        if failuresRemaining > 0 {
+            failuresRemaining -= 1
+            return false
+        }
+        return true
     }
 }
