@@ -1,4 +1,5 @@
 import Foundation
+import AstroCore
 import AstroMobileDomain
 
 /// Converts the Mac's typed query records into the deliberately small mobile
@@ -12,9 +13,8 @@ public struct MobileSnapshotComposer: Sendable {
         public let nights: [NightRecord]
         public let captures: [SeriesRecord]
         /// Integration totals calculated by the query layer after frame
-        /// acceptance/rejection decisions. A missing entry falls back to the
-        /// record's single-frame exposure for callers that have no frame
-        /// decisions to apply.
+        /// acceptance/rejection decisions. Every capture must have an entry;
+        /// zero is meaningful when no frames were usable.
         public let integrationSecondsByCaptureID: [UUID: Double]
         public let annotations: [ProjectAnnotationRecord]
         public let briefings: [NightBriefingDraft]
@@ -27,7 +27,7 @@ public struct MobileSnapshotComposer: Sendable {
             captures: [SeriesRecord],
             annotations: [ProjectAnnotationRecord],
             briefings: [NightBriefingDraft],
-            integrationSecondsByCaptureID: [UUID: Double] = [:]
+            integrationSecondsByCaptureID: [UUID: Double]
         ) {
             self.libraryID = libraryID
             self.revision = revision
@@ -44,11 +44,20 @@ public struct MobileSnapshotComposer: Sendable {
 
     public func compose(input: Input, now: Date) throws -> MobileLibrarySnapshot {
         let annotationsByProject = Dictionary(uniqueKeysWithValues: input.annotations.map { ($0.projectID, $0) })
-        let integrationByCapture = input.captures.reduce(into: [UUID: Double]()) { totals, capture in
-            totals[capture.id] = input.integrationSecondsByCaptureID[capture.id] ?? capture.exposureSeconds
+        var integrationByCapture = [UUID: Double](minimumCapacity: input.captures.count)
+        for capture in input.captures {
+            guard let total = input.integrationSecondsByCaptureID[capture.id],
+                  total.isFinite,
+                  total >= 0
+            else {
+                throw AstroError.invalidInput(
+                    "Every mobile capture must have a finite, non-negative query integration total."
+                )
+            }
+            integrationByCapture[capture.id] = total
         }
         let integrationByProject = Dictionary(grouping: input.captures, by: \.projectID)
-            .mapValues { $0.reduce(0) { $0 + (integrationByCapture[$1.id] ?? 0) } }
+            .mapValues { $0.reduce(0) { $0 + integrationByCapture[$1.id]! } }
 
         let projects = input.projects.map { project in
             let annotation = annotationsByProject[project.id]
@@ -70,7 +79,7 @@ public struct MobileSnapshotComposer: Sendable {
                 displayName: capture.setupDescriptor,
                 filterName: capture.filterName,
                 exposureSeconds: capture.exposureSeconds,
-                integrationSeconds: integrationByCapture[capture.id] ?? capture.exposureSeconds
+                integrationSeconds: integrationByCapture[capture.id]!
             )
         }
 

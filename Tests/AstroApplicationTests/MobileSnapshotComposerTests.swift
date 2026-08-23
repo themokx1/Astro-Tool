@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 @testable import AstroApplication
+@testable import AstroCore
 @testable import AstroMobileDomain
 
 @Test func composerMapsAllowlistedDomainValuesAndOmitsFilesystemMaterial() throws {
@@ -120,7 +121,8 @@ import Testing
     let input = MobileSnapshotComposer.Input(
         libraryID: PortableLibraryID(rawValue: UUID()),
         revision: 1,
-        projects: [], nights: [], captures: [], annotations: [], briefings: [briefing]
+        projects: [], nights: [], captures: [], annotations: [], briefings: [briefing],
+        integrationSecondsByCaptureID: [:]
     )
 
     let snapshot = try MobileSnapshotComposer().compose(input: input, now: now)
@@ -132,7 +134,8 @@ import Testing
     let input = MobileSnapshotComposer.Input(
         libraryID: PortableLibraryID(rawValue: UUID()),
         revision: 3,
-        projects: [], nights: [], captures: [], annotations: [], briefings: []
+        projects: [], nights: [], captures: [], annotations: [], briefings: [],
+        integrationSecondsByCaptureID: [:]
     )
     let snapshot = try MobileSnapshotComposer().compose(input: input, now: now)
     #expect(snapshot.schemaVersion == 1)
@@ -143,6 +146,66 @@ import Testing
     #expect(snapshot.captures.isEmpty)
     #expect(snapshot.briefings.isEmpty)
     #expect(snapshot.notes.isEmpty)
+}
+
+@Test func composerRejectsACaptureWithoutAQueryIntegrationTotal() throws {
+    let capture = composerTestCapture()
+    let input = MobileSnapshotComposer.Input(
+        libraryID: PortableLibraryID(rawValue: UUID()),
+        revision: 1,
+        projects: [],
+        nights: [],
+        captures: [capture],
+        annotations: [],
+        briefings: [],
+        integrationSecondsByCaptureID: [:]
+    )
+
+    #expect(throws: AstroError.self) {
+        try MobileSnapshotComposer().compose(input: input, now: Date())
+    }
+}
+
+@Test func composerPreservesAnExplicitZeroIntegrationTotal() throws {
+    let capture = composerTestCapture()
+    let project = ProjectRecord(
+        id: capture.projectID,
+        catalogID: "M42",
+        displayName: "Orion Nebula",
+        phase: .collecting
+    )
+    let input = MobileSnapshotComposer.Input(
+        libraryID: PortableLibraryID(rawValue: UUID()),
+        revision: 1,
+        projects: [project],
+        nights: [],
+        captures: [capture],
+        annotations: [],
+        briefings: [],
+        integrationSecondsByCaptureID: [capture.id: 0]
+    )
+
+    let snapshot = try MobileSnapshotComposer().compose(input: input, now: Date())
+    #expect(snapshot.projects.first?.integrationSeconds == 0)
+    #expect(snapshot.captures.first?.integrationSeconds == 0)
+}
+
+private func composerTestCapture() -> SeriesRecord {
+    SeriesRecord(
+        id: UUID(uuidString: "00000000-0000-0000-0000-000000000201")!,
+        projectID: UUID(uuidString: "00000000-0000-0000-0000-000000000202")!,
+        nightID: UUID(uuidString: "00000000-0000-0000-0000-000000000203")!,
+        setupID: "rig-1",
+        setupDescriptor: "Test rig",
+        sensorMode: .mono,
+        passband: .broadband,
+        exposureSeconds: 300,
+        filterName: nil,
+        filterID: nil,
+        gain: nil,
+        offset: nil,
+        binning: "1x1"
+    )
 }
 
 private struct SensitiveSourceFixture {

@@ -60,9 +60,19 @@ public struct WriteGuard: Sendable {
         }
 
         do {
+            let temporary = destination
+                .deletingLastPathComponent()
+                .appendingPathComponent(".library-id-\(UUID().uuidString).tmp", isDirectory: false)
+            defer { try? fileManager.removeItem(at: temporary) }
+
             try Self.classifyingPermissionErrors(path: destination.path) {
                 try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try Data(uuid.uuidString.utf8).write(to: destination, options: .withoutOverwriting)
+                // Finish the contents before publishing the directory entry.
+                // A hard link is an atomic, no-overwrite publication on the
+                // same filesystem, so readers can never observe a partial
+                // UUID while another process is creating the identity.
+                try Data(uuid.uuidString.utf8).write(to: temporary, options: .atomic)
+                try fileManager.linkItem(at: temporary, to: destination)
             }
         } catch {
             // Another caller may have won the no-overwrite race. Re-read the
