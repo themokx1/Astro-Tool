@@ -55,7 +55,10 @@ struct AstroToolMobileApp: App {
                 let current = await store.stagedPackageURL
                 await MainActor.run {
                     stagedPackageURL = current
-                    intakeError = accessed ? .copyFailed : .securityScopeUnavailable
+                    // A false scope result does not establish inaccessible
+                    // data: the copy was attempted and its failure is the
+                    // only truthful recovery classification available here.
+                    intakeError = .copyFailed
                 }
             }
         }

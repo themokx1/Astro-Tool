@@ -21,6 +21,6 @@
 "Discard package" = "Csomag elvetése";
 "The scanned key is not valid. Scan the one-time key shown on your Mac." = "A beolvasott kulcs érvénytelen. Olvasd be a Macen látható egyszer használatos kulcsot.";
 "The latest change was saved, but iPhone storage needs attention. Keep the app open and make a backup before the next import." = "A legutóbbi módosítás mentve lett, de az iPhone tárhelye figyelmet igényel. A következő import előtt hagyd nyitva az appot, és készíts biztonsági mentést.";
-"AstroTool could not open that package. In Files, try sharing it with AstroTool again." = "Az AstroTool nem tudta megnyitni ezt a csomagot. A Fájlokban próbáld meg újra megosztani az AstroToollal.";
+"A save attempt may need attention. Keep the app open and try the same action again." = "Lehet, hogy a mentési kísérlet figyelmet igényel. Hagyd nyitva az appot, és próbáld meg újra ugyanazt a műveletet.";
 "AstroTool could not copy that mobile package safely. Send it from your Mac again and try once more." = "Az AstroTool nem tudta biztonságosan átmásolni ezt a mobilcsomagot. Küldd el újra a Macről, majd próbáld ismét.";
 "Dismiss" = "Bezárás";

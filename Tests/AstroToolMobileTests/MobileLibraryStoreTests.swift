@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import Testing
 @testable import AstroToolMobile
 @testable import AstroMobileDomain
@@ -31,6 +32,10 @@ import Testing
     #expect(calls.stops == 1)
 }
 
+@Test func intakeCopyFailureUsesVisibleLocalizedRecoveryKey() {
+    #expect(MobileIntakeError.copyFailed.localizedKey == "AstroTool could not copy that mobile package safely. Send it from your Mac again and try once more.")
+}
+
 @Test func failedImportKeepsPreviousSnapshot() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let store = fixture.store
@@ -47,7 +52,21 @@ import Testing
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let key = OneTimePackageKey()
 
-    await #expect(throws: MobilePackageError.self) {
+    let payload = Data(repeating: 0, count: 28)
+    let manifest = MobilePackageManifest(
+        formatVersion: MobilePackageManifest.currentFormatVersion,
+        packageID: UUID(),
+        createdAt: Date(timeIntervalSince1970: 1_700_000_100),
+        encryptedByteCount: Int64(payload.count),
+        ciphertextSHA256: SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined(),
+        keyMode: .oneTimeQR,
+        wrappedContentKeyBase64: Data(repeating: 0, count: 60).base64EncodedString()
+    )
+    try MobileJSON.encoder.encode(manifest).write(to: fixture.corruptPackageURL.appendingPathComponent("manifest.json"), options: .atomic)
+    try payload.write(to: fixture.corruptPackageURL.appendingPathComponent(MobilePackageService.encryptedPayloadFileName), options: .atomic)
+    _ = try await fixture.store.stagePackage(from: fixture.corruptPackageURL)
+
+    await #expect(throws: MobilePackageError.authenticationFailed) {
         try await fixture.store.importCurrentStagedPackage(keyPayload: key.qrPayload)
     }
 
@@ -115,6 +134,7 @@ import Testing
 
 @Test func foreignDeviceQueueLocksRecoveryWithoutReplacingSnapshot() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try await fixture.store.editNote(id: "night-note", text: "well-formed queued edit")
     let stateURL = fixture.rootURL.appendingPathComponent("state.json")
     var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
     // Keep the queued record intact but bind the authoritative state to a
@@ -137,11 +157,75 @@ import Testing
 
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
 
-    #expect(await relaunched.durabilityWarning)
+    #expect(await relaunched.durabilityAttemptWarning)
+    #expect(!(await relaunched.durabilityWarning))
     #expect(await relaunched.activeSnapshot?.revision == 1)
 }
 
-@Test func parentSyncUncertaintyLeavesPendingJournalAndWarningAfterRelaunch() async throws {
+@Test func pendingJournalSyncFailurePreventsStateReplacement() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    let before = try Data(contentsOf: stateURL)
+    let store = MobileLibraryStore(
+        applicationSupportURL: fixture.rootURL,
+        packageService: MobilePackageService(),
+        testingBeforeStateCommit: {},
+        testingDurability: { phase in phase == .pending ? .uncertain : .proceed }
+    )
+
+    await #expect(throws: MobileLibraryStoreError.persistenceFailed) {
+        try await store.editNote(id: "night-note", text: "pending sync must block")
+    }
+
+    #expect(try Data(contentsOf: stateURL) == before)
+    #expect(await store.activeSnapshot?.revision == 1)
+    #expect(await store.queuedChanges.isEmpty)
+    #expect(!(await store.durabilityWarning))
+    #expect(await store.durabilityAttemptWarning)
+    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "attempted")
+}
+
+@Test func preRenameStateWriteFailureClearsPendingWithoutSavedWarning() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    let before = try Data(contentsOf: stateURL)
+    let store = MobileLibraryStore(
+        applicationSupportURL: fixture.rootURL,
+        packageService: MobilePackageService(),
+        testingBeforeStateCommit: {},
+        testingDurability: { phase in phase == .state ? .fail : .proceed }
+    )
+
+    await #expect(throws: MobileLibraryStoreError.persistenceFailed) {
+        try await store.editNote(id: "night-note", text: "state write must fail")
+    }
+
+    #expect(try Data(contentsOf: stateURL) == before)
+    #expect(!(await store.durabilityWarning))
+    #expect(!(await store.durabilityAttemptWarning))
+    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "clear")
+}
+
+@Test func clearJournalSyncUncertaintyRemainsConservative() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let store = MobileLibraryStore(
+        applicationSupportURL: fixture.rootURL,
+        packageService: MobilePackageService(),
+        testingBeforeStateCommit: {},
+        testingDurability: { phase in phase == .clear ? .uncertain : .proceed }
+    )
+
+    try await store.editNote(id: "night-note", text: "clear uncertainty")
+
+    #expect(await store.activeSnapshot?.revision == 1)
+    #expect(await store.durabilityWarning)
+    #expect(!(await store.durabilityAttemptWarning))
+    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "uncertain")
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+    #expect(await relaunched.durabilityWarning)
+}
+
+@Test func parentSyncUncertaintyLeavesUncertainJournalAndWarningAfterRelaunch() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let sync = ParentSyncFailure(failuresRemaining: 1)
     let store = MobileLibraryStore(
@@ -154,7 +238,7 @@ import Testing
     try await store.editNote(id: "night-note", text: "Needs durable warning")
 
     #expect(await store.durabilityWarning)
-    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "pending")
+    #expect(try String(contentsOf: fixture.rootURL.appendingPathComponent(".state-durability"), encoding: .utf8) == "uncertain")
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
     #expect(await relaunched.durabilityWarning)
     #expect(await relaunched.activeSnapshot?.revision == 1)

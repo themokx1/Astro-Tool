@@ -115,7 +115,7 @@ The iOS runtime remains unavailable on this host, so the new iOS store/UI tests 
 
 - Document intake now always attempts the app-owned copy even when security-scope acquisition reports false; only a successful acquisition is balanced with `stopAccessingSecurityScopedResource`. Errors are surfaced at the root UI with a localized dismiss/retry instruction.
 - The import API now accepts only the store's current private staged package. Replacing or discarding staged input clears the matched preview capability, preventing a caller-supplied URL from superseding private staging.
-- A `.state-durability` app-owned journal is written and synced as `pending` before every authoritative state replacement (including migration), and overwritten to `clear` only after replacement plus parent sync. Bootstrap treats `pending` as durability uncertainty while keeping valid committed state active.
+- A `.state-durability` app-owned journal is written and synced as `pending` before every authoritative state replacement (including migration); a pending marker is an in-progress/attempted-save marker, not proof of a committed latest change. It is overwritten to `clear` only after replacement plus parent sync, or to `uncertain` when the replacement committed but durability could not be confirmed. Bootstrap keeps valid committed state active and exposes separate attempted-save versus committed-uncertain messaging.
 - Queued changes must now be owned by the authoritative persisted device ID. A decodable foreign-device queue locks recovery rather than being silently accepted.
 - The imported fixture root is unique for every process/launch and no longer fabricates a package-update surface; UI coverage checks the real persisted revision/project library state.
 
@@ -124,7 +124,7 @@ The iOS build/runtime gate was intentionally not rerun in this closure pass: the
 ## Replacement closure — proof gaps after round 1
 
 - Added `MobileSecurityScopedAccess`, an injected async seam proving that a readable URL is still copied when `startAccessingSecurityScopedResource()` returns false, while a true result receives exactly one balanced stop call. Production intake uses the same seam and maps failures to typed, localized `MobileIntakeError` messages shown in the root safe-area banner for both empty and existing-library states.
-- Journal recovery now treats `.state-durability = pending` as authoritative even when `state.json` decodes successfully. Journal clear failures never turn a post-rename state replacement into a false failed import; pending is reasserted and the warning remains visible. Parent-directory sync is injectable for the state writer, with tests covering pending-before/clear-after behavior and relaunch warning persistence.
+- Journal recovery now treats `.state-durability = pending` as an attempted/in-progress marker even when `state.json` decodes successfully, while `uncertain` drives the committed-latest warning. Journal clear failures never turn a post-rename state replacement into a false failed import; uncertainty is persisted conservatively. Parent-directory sync is injectable for the state writer, with tests covering pending-before/clear-after behavior and relaunch warning persistence.
 - Added a foreign-device queue recovery test, staged-source replacement test (including pending authenticated preview cleanup), and separate duplicate target/section/item plus oversized target/section/item/warning/aggregate snapshot tests.
 - The imported UI fixture now has a unique root, fails loudly on setup errors, boots through `MobileLibraryStore`'s authoritative migration, and stages a real encrypted revision-2 package. UI assertions cover revision 1, project M31, and the real “Import newer package” action. No fixture-only update surface is fabricated.
 
@@ -139,3 +139,24 @@ CLANG_MODULE_CACHE_PATH=/tmp/... SWIFT_MODULECACHE_PATH=/tmp/... \
 ```
 
 The focused `AstroToolMobileTests` XCTest runtime/build and imported/empty UI journeys remain unexecuted because they are Xcode-only and the current host gate is unavailable. No iOS build success is claimed for this closure.
+
+## Closure fix round 2
+
+- Regenerated `AstroTool.xcodeproj`; `MobileDocumentIntake.swift` now has a PBX file reference and an `AstroToolMobile` Sources build-phase entry alongside the store/root/app sources.
+- Durability journaling now distinguishes `pending` (operation in progress), `attempted` (pre-rename failure needing attention), `uncertain` (state renamed but durability not confirmed), and `clear`. A pending marker whose own parent sync is uncertain aborts before `state.json` rename. Pre-rename failures clear it when confirmed, otherwise preserve an attempted-save marker and show a truthful generic recovery message. Post-rename parent-sync and clear-sync uncertainty remain conservative and survive relaunch.
+- The injected durability seam covers pending, state, and clear phases. Tests now prove pending sync failure prevents replacement, pre-rename failure does not claim a saved latest change, post-rename uncertainty persists, and clear uncertainty remains conservative.
+- The foreign-device queue test now creates a real typed queued edit before changing the authoritative device ID. The canonical-key malformed-package test first stages a valid public package shape and then verifies the transport authentication error while preserving state.
+- Intake no longer classifies a false security-scope result as inaccessible; any failed copy is the single typed/localized `.copyFailed` recovery path. The seam still proves false-readable and balanced-true behavior, and a visible localized recovery-key test covers the root banner path.
+
+Round-2 static/package verification:
+
+```text
+xcodegen generate                                                   # passed
+rg project.pbxproj membership                                      # MobileDocumentIntake file ref + Sources entry present
+swiftc -frontend -parse <changed iOS sources/tests>                 # passed
+swift test --disable-sandbox --filter MobilePackageServiceTests \
+  --no-parallel                                                    # 39 tests passed
+git diff --check                                                    # passed
+```
+
+The iOS build and XCTest/UI runtime remain blocked by the host Xcode/account gate; no iOS build success is claimed.

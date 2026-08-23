@@ -49,6 +49,7 @@
 		8968166C4BCBFD1BB66BA761 /* SkyChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34CB072F9693E1D2999655D9 /* SkyChartView.swift */; };
 		8E015267067D5874BC5E73BA /* Shared.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7C333D164985BC2632441B7 /* Shared.swift */; };
 		93E92C2E2E590F549108B947 /* MobileLibraryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6FC12F16DFD8D37CAD5E49FF /* MobileLibraryStoreTests.swift */; };
+		9888BBE48D25824FDA23A49A /* MobileDocumentIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1951B3823B698AF8B821643D /* MobileDocumentIntake.swift */; };
 		9A9149A5FF348CED0540053A /* AstroUI in Frameworks */ = {isa = PBXBuildFile; productRef = E0D164E4A9BD03B06F81C81D /* AstroUI */; };
 		9BDA6F5ABEAE86F7570F219A /* AstroMobileTransport in Frameworks */ = {isa = PBXBuildFile; productRef = 10C1F6105F28620D0125B47A /* AstroMobileTransport */; };
 		9E5CE9F5844518026C5E7A34 /* OnboardingWizardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59FA058742E7FC7802164C54 /* OnboardingWizardView.swift */; };
@@ -114,6 +115,7 @@
 		0EDA5EB7D5CCC98A41E70CD4 /* CalibrationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalibrationSettingsView.swift; sourceTree = "<group>"; };
 		147728ED8B9225FB1D3CAA39 /* SessionNoteSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionNoteSheet.swift; sourceTree = "<group>"; };
 		15DF4B8323B1DB6767465D7A /* PreviousNightPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviousNightPage.swift; sourceTree = "<group>"; };
+		1951B3823B698AF8B821643D /* MobileDocumentIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileDocumentIntake.swift; sourceTree = "<group>"; };
 		1ABEE9EF3C25E7AB2AA65A1F /* ProductStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProductStyle.swift; sourceTree = "<group>"; };
 		26B7A75E90C6BB56D03D05D0 /* AstroToolMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AstroToolMobileApp.swift; sourceTree = "<group>"; };
 		281D0D7F60D441922B50B12A /* SharedComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedComponents.swift; sourceTree = "<group>"; };
@@ -367,6 +369,7 @@
 				26B7A75E90C6BB56D03D05D0 /* AstroToolMobileApp.swift */,
 				8F5FD1E2A0196BF313079EFD /* CameraQRScanner.swift */,
 				9CEF9DFC08F996EC79513F02 /* Info.plist */,
+				1951B3823B698AF8B821643D /* MobileDocumentIntake.swift */,
 				6506AA17E940B02F2B7EE272 /* MobileLibraryStore.swift */,
 				537EC0A1C143D675F5FD9D78 /* MobileRootView.swift */,
 				D6BD758C4A83B69BDFDC462B /* Resources */,
@@ -674,6 +677,7 @@
 			files = (
 				AE6B9BB6E0E15D0484A9F793 /* AstroToolMobileApp.swift in Sources */,
 				144D7A72C14F2071E5293BB5 /* CameraQRScanner.swift in Sources */,
+				9888BBE48D25824FDA23A49A /* MobileDocumentIntake.swift in Sources */,
 				E0CEE5655536EFA7F4889504 /* MobileLibraryStore.swift in Sources */,
 				7B6BF6E6D6B7DE4A8D08803E /* MobileRootView.swift in Sources */,
 			);

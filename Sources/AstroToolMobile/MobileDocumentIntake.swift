@@ -34,13 +34,10 @@ struct MobileSecurityScopedAccess: Sendable {
 }
 
 enum MobileIntakeError: Error, Equatable, Sendable {
-    case securityScopeUnavailable
     case copyFailed
 
     var localizedKey: String {
         switch self {
-        case .securityScopeUnavailable:
-            return "AstroTool could not open that package. In Files, try sharing it with AstroTool again."
         case .copyFailed:
             return "AstroTool could not copy that mobile package safely. Send it from your Mac again and try once more."
         }

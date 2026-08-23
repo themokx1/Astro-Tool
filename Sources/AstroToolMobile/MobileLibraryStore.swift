@@ -53,6 +53,18 @@ public enum MobileLibraryStoreRecoveryState: Equatable, Sendable {
     case invalidReceipts
 }
 
+enum MobileDurabilityWritePhase: Sendable {
+    case pending
+    case state
+    case clear
+}
+
+enum MobileDurabilityTestResult: Sendable, Equatable {
+    case proceed
+    case fail
+    case uncertain
+}
+
 /// The iPhone's private, append-only local state. This actor never receives a
 /// source photo path and never exposes a generic file operation.
 public actor MobileLibraryStore {
@@ -62,10 +74,15 @@ public actor MobileLibraryStore {
     public private(set) var deviceID: UUID?
     public private(set) var recoveryState: MobileLibraryStoreRecoveryState
     public private(set) var durabilityWarning = false
+    /// A save attempt was interrupted before its replacement was confirmed.
+    /// This is intentionally separate from `durabilityWarning`, which means
+    /// the latest state was committed but its durability is uncertain.
+    public private(set) var durabilityAttemptWarning = false
 
     private let packageService: MobilePackageService
     private let testingBeforeStateCommit: @Sendable () throws -> Void
     private let testingParentDirectorySync: @Sendable () -> Bool
+    private let testingDurability: @Sendable (MobileDurabilityWritePhase) -> MobileDurabilityTestResult
     private let fileManager = FileManager.default
     private var consumedPackageIDs: Set<UUID>
     private var keyFingerprints: [String: UUID]
@@ -89,6 +106,7 @@ public actor MobileLibraryStore {
         self.packageService = packageService
         self.testingBeforeStateCommit = {}
         self.testingParentDirectorySync = { true }
+        self.testingDurability = { _ in .proceed }
         self.activeSnapshot = nil
         self.queuedChanges = []
         self.deviceID = UUID()
@@ -105,18 +123,21 @@ public actor MobileLibraryStore {
         self.consumedPackageIDs = initial.consumedPackageIDs
         self.keyFingerprints = initial.keyFingerprints
         self.durabilityWarning = initial.durabilityWarning
+        self.durabilityAttemptWarning = initial.durabilityAttemptWarning
     }
 
     init(
         applicationSupportURL: URL,
         packageService: MobilePackageService,
         testingBeforeStateCommit: @escaping @Sendable () throws -> Void,
-        testingParentDirectorySync: @escaping @Sendable () -> Bool = { true }
+        testingParentDirectorySync: @escaping @Sendable () -> Bool = { true },
+        testingDurability: @escaping @Sendable (MobileDurabilityWritePhase) -> MobileDurabilityTestResult = { _ in .proceed }
     ) {
         self.applicationSupportURL = applicationSupportURL
         self.packageService = packageService
         self.testingBeforeStateCommit = testingBeforeStateCommit
         self.testingParentDirectorySync = testingParentDirectorySync
+        self.testingDurability = testingDurability
         self.activeSnapshot = nil
         self.queuedChanges = []
         self.deviceID = UUID()
@@ -133,6 +154,7 @@ public actor MobileLibraryStore {
         self.consumedPackageIDs = initial.consumedPackageIDs
         self.keyFingerprints = initial.keyFingerprints
         self.durabilityWarning = initial.durabilityWarning
+        self.durabilityAttemptWarning = initial.durabilityAttemptWarning
     }
 
     /// Compatibility spelling for callers that use the shorter root label.
@@ -513,8 +535,9 @@ public actor MobileLibraryStore {
         let consumedPackageIDs: Set<UUID>
         let keyFingerprints: [String: UUID]
         let durabilityWarning: Bool
+        let durabilityAttemptWarning: Bool
 
-        init(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], deviceID: UUID?, recoveryState: MobileLibraryStoreRecoveryState, consumedPackageIDs: Set<UUID>, keyFingerprints: [String: UUID], durabilityWarning: Bool = false) {
+        init(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], deviceID: UUID?, recoveryState: MobileLibraryStoreRecoveryState, consumedPackageIDs: Set<UUID>, keyFingerprints: [String: UUID], durabilityWarning: Bool = false, durabilityAttemptWarning: Bool = false) {
             self.snapshot = snapshot
             self.queue = queue
             self.deviceID = deviceID
@@ -522,6 +545,7 @@ public actor MobileLibraryStore {
             self.consumedPackageIDs = consumedPackageIDs
             self.keyFingerprints = keyFingerprints
             self.durabilityWarning = durabilityWarning
+            self.durabilityAttemptWarning = durabilityAttemptWarning
         }
     }
 
@@ -566,6 +590,13 @@ public actor MobileLibraryStore {
     private static let maximumRevision = 1_000_000_000
     private static let maximumRevisionDelta = 1_000_000
 
+    private enum DurabilityMarker: String {
+        case pending
+        case uncertain
+        case attempted
+        case clear
+    }
+
     private static func bootstrap(applicationSupportURL: URL, fallbackDeviceID: UUID?) -> BootstrapState {
         let fileManager = FileManager.default
         let activeDirectory = applicationSupportURL.appendingPathComponent("active", isDirectory: true)
@@ -583,7 +614,9 @@ public actor MobileLibraryStore {
             }
             cleanupOwnedStagingDirectory(stagingDirectory, fileManager: fileManager)
             var deviceID: UUID? = fallbackDeviceID
-            var durabilityWarning = (try? String(contentsOf: applicationSupportURL.appendingPathComponent(".state-durability"), encoding: .utf8)) == "pending"
+            let marker = (try? String(contentsOf: applicationSupportURL.appendingPathComponent(".state-durability"), encoding: .utf8)).flatMap(DurabilityMarker.init(rawValue:)) ?? .clear
+            var durabilityWarning = marker == .uncertain
+            var durabilityAttemptWarning = marker == .pending || marker == .attempted
             var deviceError = false
             if fileManager.fileExists(atPath: stateURL.path) {
                 do {
@@ -610,7 +643,7 @@ public actor MobileLibraryStore {
                     // last replacement may have crossed rename without a
                     // confirmed parent sync. Preserve that warning even when
                     // state.json itself decoded cleanly.
-                    return BootstrapState(snapshot: state.snapshot, queue: queue, deviceID: state.deviceID, recoveryState: recovery, consumedPackageIDs: receiptsValid ? Set(state.consumedPackageIDs) : [], keyFingerprints: fingerprintsValid ? state.keyFingerprints : [:], durabilityWarning: state.durabilityWarning || durabilityWarning)
+                    return BootstrapState(snapshot: state.snapshot, queue: queue, deviceID: state.deviceID, recoveryState: recovery, consumedPackageIDs: receiptsValid ? Set(state.consumedPackageIDs) : [], keyFingerprints: fingerprintsValid ? state.keyFingerprints : [:], durabilityWarning: state.durabilityWarning || durabilityWarning, durabilityAttemptWarning: durabilityAttemptWarning)
                 } catch {
                     return BootstrapState(snapshot: nil, queue: [], deviceID: nil, recoveryState: .invalidSnapshot, consumedPackageIDs: [], keyFingerprints: [:])
                 }
@@ -663,23 +696,49 @@ public actor MobileLibraryStore {
             let result = BootstrapState(snapshot: snapshot, queue: queue, deviceID: deviceError ? nil : deviceID, recoveryState: recovery, consumedPackageIDs: consumed, keyFingerprints: keys)
             if !fileManager.fileExists(atPath: stateURL.path), recovery == .empty || recovery == .ready,
                let deviceID, let encoded = try? MobileJSON.encoder.encode(PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: consumed.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keys, durabilityWarning: durabilityWarning)) {
-                _ = try durableWrite(Data("pending".utf8), to: applicationSupportURL.appendingPathComponent(".state-durability"))
-                let uncertain = try durableWrite(encoded, to: stateURL)
-                var journalUncertain = uncertain
-                if !uncertain {
-                    do {
-                        journalUncertain = try durableWrite(Data("clear".utf8), to: applicationSupportURL.appendingPathComponent(".state-durability"))
-                    } catch {
-                        _ = try? durableWrite(Data("pending".utf8), to: applicationSupportURL.appendingPathComponent(".state-durability"))
-                        journalUncertain = true
+                let journalURL = applicationSupportURL.appendingPathComponent(".state-durability")
+                do {
+                    let pendingUncertain = try durableWrite(Data(DurabilityMarker.pending.rawValue.utf8), to: journalURL)
+                    guard !pendingUncertain else {
+                        _ = try? durableWrite(Data(DurabilityMarker.attempted.rawValue.utf8), to: journalURL)
+                        durabilityAttemptWarning = true
+                        throw MobileLibraryStoreError.persistenceFailed
                     }
-                    if journalUncertain {
-                        _ = try? durableWrite(Data("pending".utf8), to: applicationSupportURL.appendingPathComponent(".state-durability"))
+                    let stateUncertain = try durableWrite(encoded, to: stateURL)
+                    if stateUncertain {
+                        _ = try? durableWrite(Data(DurabilityMarker.uncertain.rawValue.utf8), to: journalURL)
+                        durabilityWarning = true
+                    } else {
+                        do {
+                            let clearUncertain = try durableWrite(Data(DurabilityMarker.clear.rawValue.utf8), to: journalURL)
+                            if clearUncertain {
+                                _ = try? durableWrite(Data(DurabilityMarker.uncertain.rawValue.utf8), to: journalURL)
+                                durabilityWarning = true
+                            }
+                        } catch {
+                            _ = try? durableWrite(Data(DurabilityMarker.uncertain.rawValue.utf8), to: journalURL)
+                            durabilityWarning = true
+                        }
+                    }
+                } catch {
+                    // Migration must not report a saved state after any
+                    // pre-rename failure. Keep a truthful attempted marker
+                    // only if the clear itself cannot be confirmed.
+                    if (try? String(contentsOf: journalURL, encoding: .utf8)) == DurabilityMarker.pending.rawValue {
+                        do {
+                            let clearUncertain = try durableWrite(Data(DurabilityMarker.clear.rawValue.utf8), to: journalURL)
+                            if clearUncertain {
+                                _ = try? durableWrite(Data(DurabilityMarker.attempted.rawValue.utf8), to: journalURL)
+                                durabilityAttemptWarning = true
+                            }
+                        } catch {
+                            _ = try? durableWrite(Data(DurabilityMarker.attempted.rawValue.utf8), to: journalURL)
+                            durabilityAttemptWarning = true
+                        }
                     }
                 }
-                durabilityWarning = journalUncertain || durabilityWarning
             }
-            return BootstrapState(snapshot: result.snapshot, queue: result.queue, deviceID: result.deviceID, recoveryState: result.recoveryState, consumedPackageIDs: result.consumedPackageIDs, keyFingerprints: result.keyFingerprints, durabilityWarning: durabilityWarning)
+            return BootstrapState(snapshot: result.snapshot, queue: result.queue, deviceID: result.deviceID, recoveryState: result.recoveryState, consumedPackageIDs: result.consumedPackageIDs, keyFingerprints: result.keyFingerprints, durabilityWarning: durabilityWarning, durabilityAttemptWarning: durabilityAttemptWarning)
         } catch let error as MobileLibraryStoreError {
             return BootstrapState(snapshot: nil, queue: [], deviceID: fallbackDeviceID, recoveryState: error == .invalidSnapshot ? .invalidSnapshot : .invalidQueue, consumedPackageIDs: [], keyFingerprints: [:])
         } catch {
@@ -862,19 +921,67 @@ public actor MobileLibraryStore {
         } catch let error as MobileLibraryStoreError { throw error } catch { throw MobileLibraryStoreError.persistenceFailed }
     }
 
+    private func writeJournal(_ marker: DurabilityMarker, phase: MobileDurabilityWritePhase) throws -> Bool {
+        switch testingDurability(phase) {
+        case .proceed:
+            return try Self.durableWrite(Data(marker.rawValue.utf8), to: durabilityURL)
+        case .fail:
+            throw MobileLibraryStoreError.persistenceFailed
+        case .uncertain:
+            _ = try Self.durableWrite(Data(marker.rawValue.utf8), to: durabilityURL)
+            return true
+        }
+    }
+
+    /// Preserve a truthful, non-committed marker when a pre-rename operation
+    /// cannot durably clear its in-progress marker. The UI maps this marker to
+    /// an attempted-save message, never to “latest change was saved”.
+    private func preserveAttemptedSaveMarker() {
+        _ = try? Self.durableWrite(Data(DurabilityMarker.attempted.rawValue.utf8), to: durabilityURL)
+        durabilityAttemptWarning = true
+    }
+
+    private func clearJournalAfterPreRenameFailure() {
+        do {
+            let uncertain = try writeJournal(.clear, phase: .clear)
+            guard !uncertain else {
+                preserveAttemptedSaveMarker()
+                return
+            }
+            durabilityAttemptWarning = false
+        } catch {
+            preserveAttemptedSaveMarker()
+        }
+    }
+
     private func writeRaw(_ data: Data, to destination: URL) throws -> Bool {
         try fileManager.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         let tracksDurability = destination == stateURL
         if tracksDurability {
-            // This operation-owned journal makes a post-rename parent-sync
-            // uncertainty survive process death. It is overwritten, never
-            // deleted, only after the replacement is fully synced.
-            _ = try Self.durableWrite(Data("pending".utf8), to: durabilityURL)
+            // A pending marker is an operation-in-progress, not proof that a
+            // replacement committed. Its own parent sync must be confirmed
+            // before state.json is allowed to rename.
+            do {
+                guard !(try writeJournal(.pending, phase: .pending)) else {
+                    preserveAttemptedSaveMarker()
+                    throw MobileLibraryStoreError.persistenceFailed
+                }
+            } catch {
+                if !durabilityAttemptWarning { preserveAttemptedSaveMarker() }
+                throw (error as? MobileLibraryStoreError) ?? MobileLibraryStoreError.persistenceFailed
+            }
         }
         let temporary = destination.deletingLastPathComponent().appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).tmp")
         let descriptor = temporary.path.withCString { Darwin.open($0, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, S_IRUSR | S_IWUSR) }
-        guard descriptor >= 0 else { throw MobileLibraryStoreError.persistenceFailed }
+        guard descriptor >= 0 else {
+            if tracksDurability { clearJournalAfterPreRenameFailure() }
+            throw MobileLibraryStoreError.persistenceFailed
+        }
+        var renamed = false
         do {
+            guard !tracksDurability || testingDurability(.state) == .proceed else {
+                throw MobileLibraryStoreError.persistenceFailed
+            }
             try data.withUnsafeBytes { bytes in
                 var offset = 0
                 while offset < data.count {
@@ -888,35 +995,40 @@ public actor MobileLibraryStore {
             let persisted = try Data(contentsOf: temporary)
             guard persisted == data else { throw MobileLibraryStoreError.persistenceFailed }
             guard Darwin.rename(temporary.path, destination.path) == 0 else { throw MobileLibraryStoreError.persistenceFailed }
+            renamed = true
             let parentDescriptor = destination.deletingLastPathComponent().path.withCString { Darwin.open($0, O_RDONLY | O_DIRECTORY | O_CLOEXEC) }
-            // The rename is already durable state from the store's point of
-            // view. Parent sync is best-effort and reported as a warning.
-            guard parentDescriptor >= 0 else { return true }
-            let syncFailed = Darwin.fsync(parentDescriptor) != 0 || !testingParentDirectorySync()
-            let closeFailed = Darwin.close(parentDescriptor) != 0
+            // A state rename followed by an unconfirmed parent sync is a
+            // committed-but-uncertain result, never a failed save.
+            let syncFailed = parentDescriptor < 0 || Darwin.fsync(parentDescriptor) != 0 || !testingParentDirectorySync()
+            let closeFailed = parentDescriptor >= 0 && Darwin.close(parentDescriptor) != 0
             let uncertain = syncFailed || closeFailed
-            if tracksDurability && !uncertain {
-                // Clearing the journal is itself a durable operation. If its
-                // replacement or parent sync is uncertain, reassert pending
-                // so a relaunch cannot mistake an uncertain state for a
-                // clean one. This is deliberately non-throwing: state.json
-                // has already been renamed and must remain authoritative.
-                let clearUncertain: Bool
+            if tracksDurability && uncertain {
+                _ = try? Self.durableWrite(Data(DurabilityMarker.uncertain.rawValue.utf8), to: durabilityURL)
+                durabilityWarning = true
+                return true
+            }
+            if tracksDurability {
                 do {
-                    clearUncertain = try Self.durableWrite(Data("clear".utf8), to: durabilityURL)
+                    let clearUncertain = try writeJournal(.clear, phase: .clear)
+                    if clearUncertain {
+                        _ = try? Self.durableWrite(Data(DurabilityMarker.uncertain.rawValue.utf8), to: durabilityURL)
+                        durabilityWarning = true
+                        return true
+                    }
+                    durabilityAttemptWarning = false
                 } catch {
-                    _ = try? Self.durableWrite(Data("pending".utf8), to: durabilityURL)
-                    return true
-                }
-                if clearUncertain {
-                    _ = try? Self.durableWrite(Data("pending".utf8), to: durabilityURL)
+                    _ = try? Self.durableWrite(Data(DurabilityMarker.uncertain.rawValue.utf8), to: durabilityURL)
+                    durabilityWarning = true
                     return true
                 }
             }
-            return uncertain
+            return false
         } catch {
             Darwin.close(descriptor)
             try? fileManager.removeItem(at: temporary)
+            if tracksDurability && !renamed {
+                clearJournalAfterPreRenameFailure()
+            }
             throw error
         }
     }
