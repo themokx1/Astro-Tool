@@ -56,9 +56,17 @@ public enum MobilePackageCrypto {
     static let tagByteCount = 16
 
     public static func seal(_ plaintext: Data, using key: SymmetricKey) throws -> MobileSealedPayload {
+        try seal(plaintext, using: key, authenticating: Data())
+    }
+
+    public static func seal(
+        _ plaintext: Data,
+        using key: SymmetricKey,
+        authenticating authenticatedData: Data
+    ) throws -> MobileSealedPayload {
         guard key.bitCount == 256 else { throw MobilePackageError.invalidKey }
         do {
-            let box = try ChaChaPoly.seal(plaintext, using: key)
+            let box = try ChaChaPoly.seal(plaintext, using: key, authenticating: authenticatedData)
             return MobileSealedPayload(
                 nonce: Array(box.nonce),
                 ciphertext: Array(box.ciphertext),
@@ -70,6 +78,14 @@ public enum MobilePackageCrypto {
     }
 
     public static func open(_ sealed: MobileSealedPayload, using key: SymmetricKey) throws -> Data {
+        try open(sealed, using: key, authenticating: Data())
+    }
+
+    public static func open(
+        _ sealed: MobileSealedPayload,
+        using key: SymmetricKey,
+        authenticating authenticatedData: Data
+    ) throws -> Data {
         guard key.bitCount == 256,
               sealed.nonce.count == nonceByteCount,
               sealed.tag.count == tagByteCount else {
@@ -82,7 +98,7 @@ public enum MobilePackageCrypto {
                 ciphertext: Data(sealed.ciphertext),
                 tag: Data(sealed.tag)
             )
-            return try ChaChaPoly.open(box, using: key)
+            return try ChaChaPoly.open(box, using: key, authenticating: authenticatedData)
         } catch let error as MobilePackageError {
             throw error
         } catch {
@@ -91,7 +107,29 @@ public enum MobilePackageCrypto {
     }
 
     static func combinedBytes(_ sealed: MobileSealedPayload) -> Data {
-        Data(sealed.nonce) + Data(sealed.ciphertext) + Data(sealed.tag)
+        var data = Data()
+        data.reserveCapacity(sealed.nonce.count + sealed.ciphertext.count + sealed.tag.count)
+        data.append(contentsOf: sealed.nonce)
+        data.append(contentsOf: sealed.ciphertext)
+        data.append(contentsOf: sealed.tag)
+        return data
+    }
+
+    static func openCombined(_ data: Data, using key: SymmetricKey, authenticating authenticatedData: Data) throws -> Data {
+        guard key.bitCount == 256, data.count >= nonceByteCount + tagByteCount else { throw MobilePackageError.invalidSealedPayload }
+        let nonceEnd = nonceByteCount
+        let tagStart = data.count - tagByteCount
+        do {
+            let nonce = try ChaChaPoly.Nonce(data: data[..<nonceEnd])
+            let box = try ChaChaPoly.SealedBox(
+                nonce: nonce,
+                ciphertext: data[nonceEnd..<tagStart],
+                tag: data[tagStart...]
+            )
+            return try ChaChaPoly.open(box, using: key, authenticating: authenticatedData)
+        } catch {
+            throw MobilePackageError.authenticationFailed
+        }
     }
 
     static func payload(fromCombinedBytes data: Data) throws -> MobileSealedPayload {

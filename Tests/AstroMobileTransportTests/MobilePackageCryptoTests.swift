@@ -37,6 +37,15 @@ import Testing
     }
 }
 
+@Test func authenticatedDataIsRequiredAndTamperIsRejected() throws {
+    let key = SymmetricKey(size: .bits256)
+    let sealed = try MobilePackageCrypto.seal(Data("snapshot".utf8), using: key, authenticating: Data("package-header".utf8))
+    #expect(try MobilePackageCrypto.open(sealed, using: key, authenticating: Data("package-header".utf8)) == Data("snapshot".utf8))
+    #expect(throws: MobilePackageError.authenticationFailed) {
+        try MobilePackageCrypto.open(sealed, using: key, authenticating: Data("changed-header".utf8))
+    }
+}
+
 @Test func oneTimeKeyQRPayloadRoundTripsAndWraps() throws {
     let key = OneTimePackageKey()
     let scanned = try OneTimePackageKey(qrPayload: key.qrPayload)
