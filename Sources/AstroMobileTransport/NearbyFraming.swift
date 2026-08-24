@@ -44,6 +44,14 @@ public enum NearbyTransportError: Error, Equatable, Sendable {
     /// A frame decoded structurally but its payload did not decode into the
     /// `NearbySessionMessage` its frame kind demands.
     case invalidMessage
+    /// `storeTrustedPeer` was asked to persist a deviceID that is already
+    /// trusted under a DIFFERENT public key. The store never silently
+    /// replaces a known peer's key — this is a hard re-pairing signal.
+    case peerIdentityChanged(UUID)
+    /// A device identity store's persisted bytes did not decode into a valid
+    /// identity or peer list (malformed JSON, wrong-length key material). The
+    /// store fails closed rather than guessing at recovery.
+    case identityStoreCorrupted
 }
 
 /// Encodes and decodes `NearbyFrame`s to and from the wire format.
