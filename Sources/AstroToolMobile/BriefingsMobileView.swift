@@ -40,7 +40,7 @@ struct BriefingsMobileView: View {
                             }
                             .padding(.vertical, 5)
                         }
-                        .accessibilityIdentifier(briefing.nightDate == nil ? "mobile-briefing-undated" : "mobile-briefing-\(briefing.id.uuidString)")
+                        .accessibilityIdentifier("mobile-briefing-\(briefing.id.uuidString)")
                     }
                 }
             }

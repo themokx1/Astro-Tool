@@ -92,6 +92,11 @@ func mobileMutationSurfaceContract() throws {
         .map { try String(contentsOf: repository.appendingPathComponent($0), encoding: .utf8) }
         .joined(separator: "\n")
         .lowercased()
+    let visibleText = try surfaceFiles
+        .map { try String(contentsOf: repository.appendingPathComponent($0), encoding: .utf8) }
+        .map(visibleTextLiterals)
+        .joined(separator: "\n")
+        .lowercased()
 
     for forbidden in [
         "finder", "file path", "path", "crud", "file management", "file-management",
@@ -104,4 +109,36 @@ func mobileMutationSurfaceContract() throws {
     #expect(source.components(separatedBy: "try await store.editnote").count - 1 == 2)
     #expect(!source.contains("store.remove"))
     #expect(!source.contains("store.copy"))
+    for forbidden in ["copy", "edit"] {
+        #expect(
+            visibleText.range(of: "\\b\\(forbidden)\\b", options: .regularExpression) == nil,
+            "The mobile surface must not offer a visible \(forbidden) action."
+        )
+    }
+}
+
+@Test("every briefing row uses its UUID-backed semantic identifier")
+func briefingRowsUseUniqueSemanticIdentifiers() throws {
+    let repository = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let source = try String(
+        contentsOf: repository.appendingPathComponent("Sources/AstroToolMobile/BriefingsMobileView.swift"),
+        encoding: .utf8
+    )
+
+    #expect(source.contains("mobile-briefing-\\(briefing.id.uuidString)"))
+    #expect(!source.contains("mobile-briefing-undated"))
+}
+
+private func visibleTextLiterals(in source: String) -> String {
+    let expression = try! NSRegularExpression(
+        pattern: #"(?:Text|Button|Label|LabeledContent|ContentUnavailableView|navigationTitle|alert)\(\s*\"([^\"]+)\""#
+    )
+    let range = NSRange(source.startIndex..., in: source)
+    return expression.matches(in: source, range: range).compactMap { match in
+        guard let literalRange = Range(match.range(at: 1), in: source) else { return nil }
+        return String(source[literalRange])
+    }.joined(separator: "\n")
 }

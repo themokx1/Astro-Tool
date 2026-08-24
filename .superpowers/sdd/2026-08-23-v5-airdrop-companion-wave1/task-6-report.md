@@ -131,3 +131,25 @@ git diff --check                                       # passed
 ```
 
 The Xcode account/CoreSimulator runtime gate remains separate and unclaimed; no fresh build or UI runtime result is asserted.
+
+## Fix round 4 — unique undated rows and visible-action vocabulary
+
+- Every Briefings row now receives `mobile-briefing-<briefing UUID>`, including undated plans; the fixture’s undated briefing has the stable UUID `00000000-0000-0000-0000-000000000002`, and the Hungarian UI journey targets that exact semantic identifier instead of a shared fallback or list position.
+- The safe-surface contract still reads the four production surface files, but now extracts only visible SwiftUI text/action literals before checking the additional bare `copy` and generic `edit` vocabulary. This catches prohibited visible actions without treating the legitimate internal `store.editNote` API route as a false positive. The two previous bare `Edit` controls are now scoped as `Update note`.
+- The UUID and vocabulary tests were added before the corresponding production changes. The focused SwiftPM invocation has no matching iPhone bundle cases, so source parsing and direct production-source RED/GREEN checks provide the available evidence for those Xcode-targeted regressions.
+
+Fix-round 4 safe verification:
+
+```text
+xcodegen generate                                      # passed
+swiftc -frontend -parse <all mobile sources/tests/UI tests> # passed
+visible source contracts (UUID rows; no visible copy/edit) # passed
+localization key-set parity (EN/HU)                    # passed
+swift test --disable-sandbox --filter MobilePackageServiceTests --no-parallel
+                                                       # 39 tests passed
+git diff --check                                       # passed
+```
+
+No Xcode build, simulator launch, or iPhone UI-test runtime is claimed. The account/CoreSimulator gate remains the follow-up verification boundary.
+
+A broad local `swiftc -typecheck` pass also stops at the pre-existing, unchanged ternary `Label` expression in `BriefingsMobileView.swift:102` because the host compiler cannot type-check that expression in reasonable time. This is not part of the two residual fixes and is not represented as a successful type-check result.

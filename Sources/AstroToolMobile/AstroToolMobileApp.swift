@@ -80,7 +80,8 @@ private enum MobileLaunchFixture {
         } catch {
             fatalError("Could not create the imported mobile UI fixture: \(error)")
         }
-        let projectID = UUID(), nightID = UUID(), briefingID = UUID(), undatedBriefingID = UUID()
+        let projectID = UUID(), nightID = UUID(), briefingID = UUID()
+        let undatedBriefingID = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
         let noteID = "fixture-note"
         let captureID = UUID()
         let checklistItem = MobileChecklistItem(id: "focus", title: "Check focus", explanation: "Confirm the first test exposure before the planned sequence.", isCompleted: false, baseRevision: 1)

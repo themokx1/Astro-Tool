@@ -80,7 +80,7 @@ final class AstroToolMobileLaunchTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.tabBars.buttons["Tervek"].tap()
         XCTAssertTrue(app.otherElements["mobile-briefings-surface"].waitForExistence(timeout: 5))
-        let undatedBriefing = app.descendants(matching: .any)["mobile-briefing-undated"]
+        let undatedBriefing = app.descendants(matching: .any)["mobile-briefing-00000000-0000-0000-0000-000000000002"]
         XCTAssertTrue(undatedBriefing.waitForExistence(timeout: 5))
         undatedBriefing.tap()
         XCTAssertTrue(app.staticTexts["Dátum nincs megadva"].waitForExistence(timeout: 5))

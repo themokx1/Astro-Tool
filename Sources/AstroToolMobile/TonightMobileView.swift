@@ -183,7 +183,7 @@ struct TonightMobileView: View {
                         Text("Your note").font(.headline)
                         Spacer()
                         if !editingNote {
-                            Button("Edit") { editingNote = true; syncDraft() }
+                            Button("Update note") { editingNote = true; syncDraft() }
                                 .accessibilityIdentifier("mobile-note-edit")
                         }
                     }
