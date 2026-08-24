@@ -339,6 +339,28 @@ struct MobileSyncStoreTests {
         #expect(base != changed)
     }
 
+    @Test("Snapshot revisions remain monotonic across identical and acknowledgement-only compositions")
+    func snapshotRevisionPersistsAcrossStoreReload() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let first = try MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent("revision.json")).next()
+        let second = try MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent("revision.json")).next()
+        #expect(first > 0)
+        #expect(second > first)
+    }
+
+    @Test("Sent snapshot history retains multiple recent bases and is bounded")
+    func sentSnapshotHistoryIsBounded() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent.json"))
+        let ids = (0..<20).map { _ in UUID() }
+        for id in ids { try store.save(snapshotID: id) }
+        let loaded = try store.load()
+        #expect(loaded.count == 16)
+        #expect(Set(loaded) == Set(ids.suffix(16)))
+    }
+
     @Test("Destination preparation never removes an existing package")
     func destinationNoOverwrite() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)

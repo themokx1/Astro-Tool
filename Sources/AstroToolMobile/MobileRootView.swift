@@ -506,6 +506,9 @@ private struct MobileReturnPackagePlaceholderDocument: FileDocument {
     init(configuration: ReadConfiguration) throws {}
 
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        if configuration.existingFile != nil {
+            throw MobileLibraryStoreError.persistenceFailed
+        }
         FileWrapper(regularFileWithContents: Self.marker)
     }
 

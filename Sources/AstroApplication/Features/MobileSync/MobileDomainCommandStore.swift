@@ -60,15 +60,17 @@ public final class MobileDomainCommandStore: @unchecked Sendable {
 
     private func saveChecklist(_ command: MobileChecklistRevisionCommand) throws -> Int? {
         lock.lock(); defer { lock.unlock() }
-        let key = "(command.briefingID.uuidString):(command.itemID)"
+        let key = "\(command.briefingID.uuidString):\(command.itemID)"
         if let existing = state.checklist[key], existing.changeIDs.contains(command.changeID) { return existing.revision }
         var value = state.checklist[key] ?? .init(revision: command.expectedRevision, isCompleted: false, changeIDs: [])
         guard value.revision == command.expectedRevision else { throw MobileChangeImportError.commandFailed(command.changeID) }
         value.revision = command.resultingRevision
         value.isCompleted = command.isCompleted
         value.changeIDs.append(command.changeID)
-        state.checklist[key] = value
-        try persist()
+        var proposed = state
+        proposed.checklist[key] = value
+        try persist(proposed)
+        state = proposed
         return value.revision
     }
 
@@ -80,23 +82,27 @@ public final class MobileDomainCommandStore: @unchecked Sendable {
         value.revision = command.resultingRevision
         value.text = command.text
         value.changeIDs.append(command.changeID)
-        state.notes[command.noteID] = value
-        try persist()
+        var proposed = state
+        proposed.notes[command.noteID] = value
+        try persist(proposed)
+        state = proposed
         return value.revision
     }
 
     private func addFieldNote(_ command: MobileFieldNoteCommand) throws -> Int? {
         lock.lock(); defer { lock.unlock() }
         guard !state.fieldNotes.contains(where: { $0.changeID == command.changeID }) else { return nil }
-        state.fieldNotes.append(.init(changeID: command.changeID, noteID: command.noteID, ownerID: command.ownerID, text: command.text, createdAt: command.createdAt))
-        try persist()
+        var proposed = state
+        proposed.fieldNotes.append(.init(changeID: command.changeID, noteID: command.noteID, ownerID: command.ownerID, text: command.text, createdAt: command.createdAt))
+        try persist(proposed)
+        state = proposed
         return nil
     }
 
-    private func persist() throws {
+    private func persist(_ value: State) throws {
         do {
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let data = try MobileJSON.encoder.encode(state)
+            let data = try MobileJSON.encoder.encode(value)
             guard data.count <= 1_048_576 else { throw MobileChangeImportError.limitsExceeded }
             try data.write(to: fileURL, options: [.atomic])
         } catch let error as MobileChangeImportError {
@@ -109,6 +115,94 @@ public final class MobileDomainCommandStore: @unchecked Sendable {
 
 public extension MobileChangeCommands {
     static func production(rootURL: URL) throws -> MobileChangeCommands {
-        try MobileDomainCommandStore(rootURL: rootURL).commands()
+        let paths = try AppStoragePaths.production(
+            libraryID: LibraryIdentity(rootURL: rootURL),
+            libraryRoot: rootURL
+        )
+        let metadataStore = try MetadataStore(storagePaths: paths)
+        let briefingStore = NightBriefingRevisionStore(directory: paths.briefings)
+        let bridge = MobileMacDomainCommandBridge(metadataStore: metadataStore, briefingStore: briefingStore)
+        return .init(
+            saveChecklist: { command in try await bridge.saveChecklist(command) },
+            saveNote: { command in try await bridge.saveNote(command) },
+            addFieldNote: { command in try await bridge.addFieldNote(command) }
+        )
+    }
+}
+
+/// Production commands write the same stores read by
+/// `MobileSyncStore.metadataSnapshotProvider`: briefing revisions and the
+/// metadata project's annotation table. The JSON helper above remains a
+/// fixture seam only; it is never selected by the production factory.
+private final class MobileMacDomainCommandBridge: @unchecked Sendable {
+    private let metadataStore: MetadataStore
+    private let briefingStore: NightBriefingRevisionStore
+
+    init(metadataStore: MetadataStore, briefingStore: NightBriefingRevisionStore) {
+        self.metadataStore = metadataStore
+        self.briefingStore = briefingStore
+    }
+
+    func saveChecklist(_ command: MobileChecklistRevisionCommand) async throws -> Int? {
+        guard var draft = try await briefingStore.latest(id: command.briefingID), draft.revision == command.expectedRevision else {
+            throw MobileChangeImportError.commandFailed(command.changeID)
+        }
+        guard let sectionIndex = draft.checklist.firstIndex(where: { $0.items.contains { $0.id == command.itemID } }),
+              let itemIndex = draft.checklist[sectionIndex].items.firstIndex(where: { $0.id == command.itemID }) else {
+            throw MobileChangeImportError.commandFailed(command.changeID)
+        }
+        draft.checklist[sectionIndex].items[itemIndex].isCompleted = command.isCompleted
+        let saved = try await briefingStore.save(draft)
+        return saved.revision
+    }
+
+    func saveNote(_ command: MobileNoteRevisionCommand) async throws -> Int? {
+        if let briefingID = Self.briefingID(from: command.noteID) {
+            guard var draft = try await briefingStore.latest(id: briefingID), draft.revision == command.expectedRevision else {
+                throw MobileChangeImportError.commandFailed(command.changeID)
+            }
+            draft.notes = command.text
+            let saved = try await briefingStore.save(draft)
+            return saved.revision
+        }
+        guard let projectID = UUID(uuidString: command.ownerID),
+              let annotation = try await metadataStore.projectAnnotation(projectID: projectID) else {
+            throw MobileChangeImportError.commandFailed(command.changeID)
+        }
+        try await metadataStore.save(ProjectAnnotationRecord(
+            projectID: annotation.projectID,
+            integrationGoalHours: annotation.integrationGoalHours,
+            notes: command.text,
+            updatedAt: command.createdAt
+        ))
+        return command.resultingRevision
+    }
+
+    func addFieldNote(_ command: MobileFieldNoteCommand) async throws -> Int? {
+        let separator = "\n\n— Phone field note —\n"
+        if let briefingID = Self.briefingID(from: command.noteID) {
+            guard var draft = try await briefingStore.latest(id: briefingID) else {
+                throw MobileChangeImportError.commandFailed(command.changeID)
+            }
+            draft.notes += separator + command.text
+            _ = try await briefingStore.save(draft)
+            return nil
+        }
+        guard let projectID = UUID(uuidString: command.ownerID),
+              let annotation = try await metadataStore.projectAnnotation(projectID: projectID) else {
+            throw MobileChangeImportError.commandFailed(command.changeID)
+        }
+        try await metadataStore.save(ProjectAnnotationRecord(
+            projectID: annotation.projectID,
+            integrationGoalHours: annotation.integrationGoalHours,
+            notes: annotation.notes + separator + command.text,
+            updatedAt: command.createdAt
+        ))
+        return nil
+    }
+
+    private static func briefingID(from noteID: String) -> UUID? {
+        guard noteID.hasPrefix("briefing-") else { return nil }
+        return UUID(uuidString: String(noteID.dropFirst("briefing-".count)))
     }
 }

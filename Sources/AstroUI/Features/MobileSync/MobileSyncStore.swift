@@ -60,6 +60,7 @@ public enum MobileSyncPhase: String, Equatable, Sendable {
     case exported
     case importing
     case importPreviewReady
+    case applying
     case discarding
     case failed
 }
@@ -136,7 +137,7 @@ public final class MobileSyncStore {
     @ObservationIgnored private var incomingQRPayload: String?
     @ObservationIgnored private var incomingCapability: MobilePackagePreviewToken?
     @ObservationIgnored private var incomingEnvelope: MobilePackageEnvelope?
-    @ObservationIgnored private var sentBaseSnapshotID: UUID?
+    @ObservationIgnored private var sentBaseSnapshotIDs: Set<UUID> = []
 
     public init(
         rootURL: URL?,
@@ -173,10 +174,10 @@ public final class MobileSyncStore {
         let configuredSentSnapshotStore = sentSnapshotStore ?? rootURL.map { MobileSentSnapshotIdentityStore(fileURL: $0.appendingPathComponent(".astro-tool/mobile-sent-snapshot.json")) }
         self.sentSnapshotStore = configuredSentSnapshotStore
         do {
-            self.sentBaseSnapshotID = try configuredSentSnapshotStore?.load()
+            let loaded = try configuredSentSnapshotStore?.load() ?? []
+            self.sentBaseSnapshotIDs = Set(loaded)
             self.sentSnapshotLoadFailed = false
         } catch {
-            self.sentBaseSnapshotID = nil
             self.sentSnapshotLoadFailed = true
         }
         let identityStore = PortableLibraryIdentityStore()
@@ -215,7 +216,7 @@ public final class MobileSyncStore {
     }
 
     public var isBusy: Bool {
-        phase == .previewing || phase == .exporting || phase == .finishing || phase == .importing || phase == .discarding
+        phase == .previewing || phase == .exporting || phase == .finishing || phase == .importing || phase == .applying || phase == .discarding
     }
 
     public func startPreview() {
@@ -244,53 +245,9 @@ public final class MobileSyncStore {
         operationTask = Task { [weak self] in await self?.retry() }
     }
 
-    /// Authenticated return data is classified before any Mac command can
-    /// run. This direct entry point is also used by fixture journeys while
-    /// the package service keeps its opaque decryption capability private.
-    internal func previewReturnChanges(
-        envelope: MobilePackageEnvelope,
-        expectedLibraryID: PortableLibraryID,
-        currentSnapshot: MobileLibrarySnapshot,
-        sourcePackageID: UUID
-    ) throws {
-        let result = try changeImporter.preview(
-            envelope: envelope,
-            expectedLibraryID: expectedLibraryID,
-            currentSnapshot: currentSnapshot,
-            sourcePackageID: sourcePackageID
-        )
-        changePreview = result
-        changeResolutions = result.conflicts.reduce(into: [:]) { values, conflict in
-            if conflict.kind == .note { values[conflict.changeID] = .keepBothAsFieldNote }
-        }
-        appliedChangeReceipt = nil
-        didApplyIncomingChanges = false
-        phase = .importPreviewReady
-        failure = nil
-        errorMessage = nil
-    }
-
     public func setChangeResolution(_ resolution: MobileChangeResolution, for changeID: UUID) {
         guard changePreview?.conflicts.contains(where: { $0.changeID == changeID }) == true else { return }
         changeResolutions[changeID] = resolution
-    }
-
-    internal func applyReturnChanges(
-        envelope: MobilePackageEnvelope,
-        currentSnapshot: MobileLibrarySnapshot,
-        confirmed: Bool
-    ) throws {
-        guard let changePreview else { throw MobileChangeImportError.stalePreview }
-        let receipt = try changeImporter.apply(
-            preview: changePreview,
-            envelope: envelope,
-            currentSnapshot: currentSnapshot,
-            resolutions: changeResolutions,
-            confirmed: confirmed
-        )
-        appliedChangeReceipt = receipt
-        didApplyIncomingChanges = true
-        phase = .importPreviewReady
     }
 
     /// Applies the authenticated return document retained by this store.
@@ -301,9 +258,14 @@ public final class MobileSyncStore {
               let envelope = incomingEnvelope,
               let changePreview,
               let current = try await currentSnapshotForReturn() else { throw MobileChangeImportError.stalePreview }
+        guard phase == .importPreviewReady else { throw MobileChangeImportError.stalePreview }
+        generation += 1
+        let operationGeneration = generation
+        phase = .applying
         let receipt: MobileChangeApplicationReceipt
         do {
-            receipt = try changeImporter.apply(preview: changePreview, envelope: envelope, currentSnapshot: current, resolutions: changeResolutions, confirmed: confirmed)
+            receipt = try await changeImporter.apply(preview: changePreview, envelope: envelope, currentSnapshot: current, resolutions: changeResolutions, confirmed: confirmed)
+            guard generation == operationGeneration, phase == .applying else { throw MobileChangeImportError.stalePreview }
             _ = try await packageImportCommit(capability)
         } catch {
             await packageImportDiscardCapability(capability)
@@ -312,8 +274,10 @@ public final class MobileSyncStore {
             incomingPreview = nil
             failure = .importFailed
             errorMessage = String(localized: "The reviewed changes were not applied. No phone changes were acknowledged.")
+            phase = .failed
             throw error
         }
+        guard generation == operationGeneration else { throw MobileChangeImportError.stalePreview }
         appliedChangeReceipt = receipt
         appliedChangeTotals = (receipt.appliedChangeIDs.count, receipt.resolvedChangeIDs.count, changePreview.rejected.count)
         didApplyIncomingChanges = true
@@ -360,7 +324,7 @@ public final class MobileSyncStore {
             )
             let input = MobileSnapshotComposer.Input(
                 libraryID: id,
-                revision: Self.metadataRevision(projects: projects, nights: nights, captures: captures, annotations: annotations, briefings: briefings, decisions: decisions, integrationSecondsByCaptureID: totals),
+                revision: try MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent(".astro-tool/mobile-snapshot-revision.json")).next(),
                 projects: projects,
                 nights: nights,
                 captures: captures,
@@ -473,14 +437,17 @@ public final class MobileSyncStore {
         let envelope = MobilePackageEnvelope(snapshot: preview.snapshot, changes: [], acknowledgedChangeIDs: changeImporter.acknowledgementIDs)
         do {
             try prepareDestination(destination)
+            // Persist the base identity before publication. A return package
+            // can therefore never become externally visible without a
+            // durable authorization record for its exact snapshot.
+            try sentSnapshotStore?.save(snapshotID: preview.snapshot.snapshotID)
             let result = try await packageExport(envelope, destination, key)
             guard token == generation, (phase == .exporting || phase == .finishing) else { return }
             packageID = result.packageID
             exportedAt = result.createdAt
             encryptedByteCount = result.encryptedByteCount
             exportedURL = destination
-            try sentSnapshotStore?.save(snapshotID: preview.snapshot.snapshotID)
-            sentBaseSnapshotID = preview.snapshot.snapshotID
+            sentBaseSnapshotIDs.insert(preview.snapshot.snapshotID)
             oneTimeQRPayload = key.qrPayload
             errorMessage = nil
             failure = nil
@@ -521,8 +488,8 @@ public final class MobileSyncStore {
                 if imported.purpose == .returnChanges,
                    let envelope = incomingEnvelope,
                    let current = try await currentSnapshotForReturn() {
-                    guard let expectedBase = sentBaseSnapshotID else { throw MobileChangeImportError.snapshotMismatch }
-                    let typed = try changeImporter.preview(envelope: envelope, expectedLibraryID: current.libraryID, expectedBaseSnapshotID: expectedBase, currentSnapshot: current, sourcePackageID: imported.packageID)
+                    guard let baseID = envelope.baseSnapshotID, sentBaseSnapshotIDs.contains(baseID) else { throw MobileChangeImportError.snapshotMismatch }
+                    let typed = try changeImporter.preview(envelope: envelope, expectedLibraryID: current.libraryID, expectedBaseSnapshotID: baseID, currentSnapshot: current, sourcePackageID: imported.packageID)
                     changePreview = typed
                     changeResolutions = typed.conflicts.reduce(into: [:]) { values, conflict in if conflict.kind == .note { values[conflict.changeID] = .keepBothAsFieldNote } }
                 }
@@ -558,6 +525,7 @@ public final class MobileSyncStore {
             return
         }
         if phase == .finishing { return }
+        if phase == .applying { return }
         if phase == .discarding { return }
         if incomingPreview != nil {
             startDiscardingIncomingPreview()
@@ -588,12 +556,12 @@ public final class MobileSyncStore {
     }
 
     public func reset() {
-        guard phase != .finishing, phase != .discarding else { return }
+        guard phase != .finishing, phase != .applying, phase != .discarding else { return }
         dismiss()
     }
 
     public func dismiss() {
-        guard phase != .finishing, phase != .discarding else { return }
+        guard phase != .finishing, phase != .applying, phase != .discarding else { return }
         if incomingPreview != nil {
             startDiscardingIncomingPreview()
             return

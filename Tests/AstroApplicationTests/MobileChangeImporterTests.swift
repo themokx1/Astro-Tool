@@ -100,7 +100,7 @@ struct MobileChangeImporterTests {
     }
 
     @Test("apply requires explicit confirmation and records the narrow command receipt")
-    func applyIsSecondPhase() throws {
+    func applyIsSecondPhase() async throws {
         let fixture = Fixture()
         let calls = CommandCounter()
         let importer = MobileChangeImporter(commands: .init(
@@ -111,17 +111,17 @@ struct MobileChangeImporterTests {
         let envelope = fixture.envelope(changes: [fixture.checklistChange(), fixture.noteChange()])
         let preview = try importer.preview(envelope: envelope, expectedLibraryID: fixture.libraryID, currentSnapshot: fixture.snapshot, sourcePackageID: fixture.packageID)
 
-        #expect(throws: MobileChangeImportError.finalConfirmationRequired) {
-            try importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [:], confirmed: false)
+        await #expect(throws: MobileChangeImportError.finalConfirmationRequired) {
+            try await importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [:], confirmed: false)
         }
         #expect(calls.value == 0)
-        let receipt = try importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [:], confirmed: true)
+        let receipt = try await importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [:], confirmed: true)
         #expect(receipt.appliedChangeIDs.count == 2)
         #expect(calls.value == 2)
     }
 
     @Test("each conflict resolution has explicit, narrow semantics and replay is idempotent")
-    func resolutionsAndReplay() throws {
+    func resolutionsAndReplay() async throws {
         let fixture = Fixture(macChecklistRevision: 4, macNoteRevision: 4)
         let note = fixture.noteChange()
         let checklist = fixture.checklistChange()
@@ -137,7 +137,7 @@ struct MobileChangeImporterTests {
         ), recordStore: recordStore)
         let preview = try importer.preview(envelope: envelope, expectedLibraryID: fixture.libraryID, currentSnapshot: fixture.snapshot, sourcePackageID: fixture.packageID)
         let ids = Dictionary(uniqueKeysWithValues: preview.conflicts.map { ($0.kind, $0.changeID) })
-        _ = try importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [ids[.checklist]!: .keepMac, ids[.note]!: .keepBothAsFieldNote], confirmed: true)
+        _ = try await importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [ids[.checklist]!: .keepMac, ids[.note]!: .keepBothAsFieldNote], confirmed: true)
         #expect(calls.value == 1)
 
         let relaunched = MobileChangeImporter(recordStore: recordStore)
@@ -157,13 +157,13 @@ struct MobileChangeImporterTests {
     }
 
     @Test("production defaults fail closed when persistence commands are not configured")
-    func missingCommandsNeverClaimSuccess() throws {
+    func missingCommandsNeverClaimSuccess() async throws {
         let fixture = Fixture()
         let importer = MobileChangeImporter()
         let envelope = fixture.envelope(changes: [fixture.checklistChange()])
         let preview = try importer.preview(envelope: envelope, expectedLibraryID: fixture.libraryID, currentSnapshot: fixture.snapshot, sourcePackageID: fixture.packageID)
-        #expect(throws: MobileChangeImportError.configurationMissing) {
-            try importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [:], confirmed: true)
+        await #expect(throws: MobileChangeImportError.configurationMissing) {
+            try await importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [:], confirmed: true)
         }
     }
 }

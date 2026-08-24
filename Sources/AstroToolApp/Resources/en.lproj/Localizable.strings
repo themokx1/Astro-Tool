@@ -201,3 +201,6 @@
 "Rakd össze a teljes tervet, majd vidd magaddal PDF-ben vagy telefonos képeken." = "Build the complete plan, then take it with you as a PDF or phone images.";
 "Briefing készítése" = "Create briefing";
 "Készíts részletes, telefonon vagy papíron magaddal vihető tervet." = "Create a detailed plan you can take on your phone or on paper.";
+"Duplicate change IDs were shown for review and were not applied." = "Duplicate change IDs were shown for review and were not applied.";
+"Older edits were superseded by the latest edit for the same target." = "Older edits were superseded by the latest edit for the same target.";
+"The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved." = "The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved.";

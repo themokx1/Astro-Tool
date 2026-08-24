@@ -781,10 +781,10 @@ public actor MobilePackageService {
         for change in envelope.changes {
             switch change {
             case .checklistCompletion(let value):
-                guard changeIDs.insert(value.changeID).inserted else { throw MobilePackageError.invalidEnvelope }
+                if envelope.purpose == .forwardSnapshot { guard changeIDs.insert(value.changeID).inserted else { throw MobilePackageError.invalidEnvelope } }
                 guard value.baseRevision >= 0, validString(value.itemID), value.createdAt.timeIntervalSince1970.isFinite else { throw MobilePackageError.invalidEnvelope }
             case .noteRevision(let value):
-                guard changeIDs.insert(value.changeID).inserted else { throw MobilePackageError.invalidEnvelope }
+                if envelope.purpose == .forwardSnapshot { guard changeIDs.insert(value.changeID).inserted else { throw MobilePackageError.invalidEnvelope } }
                 guard value.baseRevision >= 0,
                       validString(value.noteID), validString(value.ownerID), validString(value.text),
                       value.createdAt.timeIntervalSince1970.isFinite else { throw MobilePackageError.invalidEnvelope }

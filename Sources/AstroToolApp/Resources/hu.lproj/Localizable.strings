@@ -2803,3 +2803,6 @@
 "iPhone: %@" = "iPhone: %@";
 "Superseded" = "Felülírt";
 "Checklist and notes only. Original photos stay on this Mac or external drive. Mac review is required; there is no automatic or cloud sync." = "Csak ellenőrzőlista és jegyzetek. Az eredeti fotók ezen a Macen vagy külső meghajtón maradnak. Kötelező a Macen történő áttekintés; nincs automatikus vagy felhőszinkronizálás.";
+"Duplicate change IDs were shown for review and were not applied." = "A duplikált módosításazonosítók megjelentek az ellenőrzéshez, de nem kerültek alkalmazásra.";
+"Older edits were superseded by the latest edit for the same target." = "A régebbi módosításokat ugyanazon cél legfrissebb módosítása váltotta fel.";
+"The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved." = "A Mac csak az ellenőrzött ellenőrzőlista- és jegyzetparancsokat írja. Tartsa nyitva ezt az ablakot a bizonylat mentéséig.";

@@ -62,7 +62,7 @@ public struct MobileSyncView: View {
             importSource = url
             importCode = ""
         }
-        .interactiveDismissDisabled(store.phase == .exporting || store.phase == .finishing)
+        .interactiveDismissDisabled(store.phase == .exporting || store.phase == .finishing || store.phase == .applying)
         .onChange(of: store.phase) { _, phase in
             if phase == .importPreviewReady {
                 clearIncomingSelection()
@@ -149,6 +149,8 @@ public struct MobileSyncView: View {
             readyContent
         case .exporting, .finishing:
             exportingContent
+        case .applying:
+            applyingContent
         case .exported:
             exportedContent
         case .importPreviewReady:
@@ -290,6 +292,17 @@ public struct MobileSyncView: View {
         .astroRaisedSurface()
     }
 
+    private var applyingContent: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            ProgressView("Applying the reviewed changes…")
+            Text("The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved.")
+                .font(.callout)
+                .foregroundStyle(AstroTokens.Color.inkDim)
+        }
+        .astroRaisedSurface()
+        .accessibilityIdentifier("v5.mobile-sync.return.applying")
+    }
+
     private var discardingContent: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
             ProgressView("Cleaning up securely…")
@@ -352,6 +365,19 @@ public struct MobileSyncView: View {
                     LabeledContent("Superseded", value: changes.superseded.count.formatted())
                     LabeledContent("Duplicates", value: changes.duplicates.count.formatted())
                     LabeledContent("Not imported", value: changes.rejected.count.formatted())
+                    if !changes.duplicates.isEmpty {
+                        Label("Duplicate change IDs were shown for review and were not applied.", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption)
+                    }
+                    if !changes.superseded.isEmpty {
+                        Label("Older edits were superseded by the latest edit for the same target.", systemImage: "clock.arrow.circlepath")
+                            .font(.caption)
+                    }
+                    ForEach(changes.rejected, id: \.changeID) { rejected in
+                        Label(rejected.detail ?? "This change was not accepted.", systemImage: "nosign")
+                            .font(.caption)
+                            .foregroundStyle(AstroTokens.Color.critical)
+                    }
                     if !changes.conflicts.isEmpty {
                         Text("Choose what to do with each conflict. Notes default to Keep both as field note.")
                             .astroBody()
@@ -405,7 +431,13 @@ public struct MobileSyncView: View {
         .confirmationDialog("Apply these reviewed checklist and note changes?", isPresented: $showsReturnConfirmation, titleVisibility: .visible) {
             Button("Apply changes") {
                 Task {
-                    try? await store.applyAuthenticatedReturnChanges(confirmed: true)
+                    do {
+                        try await store.applyAuthenticatedReturnChanges(confirmed: true)
+                    } catch {
+                        // The store retains the user-visible failure and leaves
+                        // the phone queue unacknowledged when apply or receipt
+                        // persistence fails.
+                    }
                 }
             }
             Button("Cancel", role: .cancel) {}
