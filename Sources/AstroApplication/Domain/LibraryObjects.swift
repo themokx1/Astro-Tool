@@ -28,16 +28,20 @@ public struct ProjectAnnotationRecord: Codable, Equatable, Hashable, Sendable {
     public let notes: String
     public let updatedAt: Date
     public let revision: Int
+    /// Durable idempotency markers for mobile-originated annotation edits.
+    /// They live in the same SQLite row as the edited text/revision.
+    public let mobileChangeIDs: [UUID]
 
-    public init(projectID: UUID, integrationGoalHours: Double?, notes: String, updatedAt: Date, revision: Int = 0) {
+    public init(projectID: UUID, integrationGoalHours: Double?, notes: String, updatedAt: Date, revision: Int = 0, mobileChangeIDs: [UUID] = []) {
         self.projectID = projectID
         self.integrationGoalHours = integrationGoalHours
         self.notes = notes
         self.updatedAt = updatedAt
         self.revision = revision
+        self.mobileChangeIDs = Array(Set(mobileChangeIDs)).sorted { $0.uuidString < $1.uuidString }
     }
 
-    private enum CodingKeys: String, CodingKey { case projectID, integrationGoalHours, notes, updatedAt, revision }
+    private enum CodingKeys: String, CodingKey { case projectID, integrationGoalHours, notes, updatedAt, revision, mobileChangeIDs }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         projectID = try c.decode(UUID.self, forKey: .projectID)
@@ -45,6 +49,7 @@ public struct ProjectAnnotationRecord: Codable, Equatable, Hashable, Sendable {
         notes = try c.decode(String.self, forKey: .notes)
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         revision = try c.decodeIfPresent(Int.self, forKey: .revision) ?? 0
+        mobileChangeIDs = Array(Set(try c.decodeIfPresent([UUID].self, forKey: .mobileChangeIDs) ?? [])).sorted { $0.uuidString < $1.uuidString }
     }
 }
 

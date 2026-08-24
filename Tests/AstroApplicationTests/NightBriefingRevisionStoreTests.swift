@@ -76,6 +76,24 @@ struct NightBriefingRevisionStoreTests {
         #expect(try await store.latest(id: draft.id)?.notes == "Harmadik")
     }
 
+    @Test("compare-and-set rejects a stale mobile revision instead of writing over a Mac edit")
+    func saveIfLatestRejectsStaleRevision() async throws {
+        let fixture = try Fixture()
+        defer { fixture.remove() }
+        let store = NightBriefingRevisionStore(directory: fixture.directory)
+        let original = try await store.save(fixture.draft(notes: "Phone base"))
+        var macEdit = original
+        macEdit.notes = "Mac edit"
+        _ = try await store.save(macEdit)
+
+        var stalePhoneEdit = original
+        stalePhoneEdit.notes = "Phone edit"
+        await #expect(throws: NightBriefingRevisionStoreError.self) {
+            try await store.saveIfLatest(stalePhoneEdit, expectedRevision: original.revision)
+        }
+        #expect(try await store.latest(id: original.id)?.notes == "Mac edit")
+    }
+
     private struct Fixture {
         let directory: URL
 

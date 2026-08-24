@@ -2806,6 +2806,9 @@
 "Duplicate change IDs were shown for review and were not applied." = "A duplikált módosításazonosítók megjelentek az ellenőrzéshez, de nem kerültek alkalmazásra.";
 "Older edits were superseded by the latest edit for the same target." = "A régebbi módosításokat ugyanazon cél legfrissebb módosítása váltotta fel.";
 "The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved." = "A Mac csak az ellenőrzött ellenőrzőlista- és jegyzetparancsokat írja. Tartsa nyitva ezt az ablakot a bizonylat mentéséig.";
+"Applying the reviewed changes…" = "Az ellenőrzött módosítások alkalmazása…";
+"The reviewed changes were not applied. No phone changes were acknowledged." = "Az ellenőrzött módosítások nem kerültek alkalmazásra. Egyetlen telefonos módosítást sem nyugtáztunk.";
+"The reviewed changes were saved, but package acknowledgement could not be finalized. Keep the phone package and create a fresh forward snapshot after recovery." = "Az ellenőrzött módosítások mentése sikerült, de a csomag nyugtázását nem tudtuk véglegesíteni. Őrizze meg a telefoncsomagot, és helyreállítás után készítsen új előre irányú pillanatképet.";
 "Duplicate change ID: none of those records was applied." = "Duplikált módosításazonosító: egyik ilyen rekord sem került alkalmazásra.";
 "The target is no longer available on this Mac." = "A cél már nem érhető el ezen a Macen.";
 "The phone note was empty and was not imported." = "A telefonjegyzet üres volt, ezért nem lett importálva.";

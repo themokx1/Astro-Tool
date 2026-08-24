@@ -1,4 +1,5 @@
 import AstroCore
+import AstroMobileDomain
 import Darwin
 import Foundation
 
@@ -118,7 +119,72 @@ public actor MetadataStore {
     }
 
     public func save(_ annotation: ProjectAnnotationRecord) throws {
-        try transaction { try upsert(annotation) }
+        try transaction {
+            let existing = try projectAnnotation(projectID: annotation.projectID)
+            let normalized = ProjectAnnotationRecord(
+                projectID: annotation.projectID,
+                integrationGoalHours: annotation.integrationGoalHours,
+                notes: annotation.notes,
+                updatedAt: existing.map { max($0.updatedAt, annotation.updatedAt) } ?? annotation.updatedAt,
+                revision: existing.map { max($0.revision + 1, annotation.revision) } ?? annotation.revision,
+                mobileChangeIDs: existing?.mobileChangeIDs ?? annotation.mobileChangeIDs
+            )
+            try upsert(normalized)
+        }
+    }
+
+    /// Applies one closed, typed mobile annotation batch in the same SQLite
+    /// transaction as its content and idempotency markers. A retry of any
+    /// included change returns the exact stored revision without duplicating a
+    /// field note.
+    public func applyMobileProjectAnnotationBatch(_ batch: MobileProjectAnnotationChangeBatch) throws -> MobileChangeDomainBatchResult {
+        var result: MobileChangeDomainBatchResult?
+        try transaction {
+            guard let existing = try projectAnnotation(projectID: batch.projectID) else {
+                throw MobileChangeImportError.commandFailed(batch.mutations.first?.0.changeID ?? UUID())
+            }
+            let requestedIDs = batch.mutations.map { $0.0.changeID }
+            guard Set(requestedIDs).count == requestedIDs.count else {
+                throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID())
+            }
+            let existingIDs = Set(existing.mobileChangeIDs)
+            if Set(requestedIDs).isSubset(of: existingIDs) {
+                result = MobileChangeDomainBatchResult(
+                    appliedChangeIDs: requestedIDs,
+                    resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, existing.revision) })
+                )
+                return
+            }
+            guard existing.revision == batch.expectedRevision,
+                  existing.mobileChangeIDs.count + requestedIDs.filter({ !existingIDs.contains($0) }).count <= 10_000 else {
+                throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID())
+            }
+            var notes = existing.notes
+            var savedAt = existing.updatedAt
+            for (command, mode) in batch.mutations where !existingIDs.contains(command.changeID) {
+                switch mode {
+                case .replace: notes = command.text
+                case .appendFieldNote:
+                    notes += "\n\n— Phone field note —\n" + command.createdAt.formatted(date: .abbreviated, time: .shortened) + "\n" + command.text
+                }
+                savedAt = max(savedAt, command.createdAt)
+            }
+            let nextRevision = existing.revision + 1
+            try upsert(ProjectAnnotationRecord(
+                projectID: existing.projectID,
+                integrationGoalHours: existing.integrationGoalHours,
+                notes: notes,
+                updatedAt: savedAt,
+                revision: nextRevision,
+                mobileChangeIDs: existing.mobileChangeIDs + requestedIDs
+            ))
+            result = MobileChangeDomainBatchResult(
+                appliedChangeIDs: requestedIDs,
+                resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, nextRevision) })
+            )
+        }
+        guard let result else { throw MobileChangeImportError.receiptFailed }
+        return result
     }
 
     public func save(_ night: NightRecord) throws {
@@ -252,7 +318,7 @@ public actor MetadataStore {
     public func projectAnnotation(projectID: UUID) throws -> ProjectAnnotationRecord? {
         var record: ProjectAnnotationRecord?
         try database.query(
-            "SELECT project_id, integration_goal_hours, notes, updated_at, revision FROM project_annotations WHERE project_id = ?;",
+            "SELECT project_id, integration_goal_hours, notes, updated_at, revision, mobile_change_ids FROM project_annotations WHERE project_id = ?;",
             bind: [.text(projectID.databaseText)]
         ) { row in
             guard let id = row.string(0).flatMap(UUID.init(uuidString:)),
@@ -264,7 +330,8 @@ public actor MetadataStore {
                 integrationGoalHours: row.double(1),
                 notes: notes,
                 updatedAt: Date(timeIntervalSince1970: updatedAt),
-                revision: Int(row.int64(4) ?? 0)
+                revision: Int(row.int64(4) ?? 0),
+                mobileChangeIDs: (row.string(5).flatMap { try? MobileJSON.decoder.decode([UUID].self, from: Data($0.utf8)) }) ?? []
             )
         }
         return record
@@ -973,13 +1040,14 @@ public actor MetadataStore {
         try Self.validateFinite(record.updatedAt.timeIntervalSince1970, record: "project_annotations", field: "updated_at")
         try database.run(
             """
-            INSERT INTO project_annotations(project_id, integration_goal_hours, notes, updated_at, revision)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO project_annotations(project_id, integration_goal_hours, notes, updated_at, revision, mobile_change_ids)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id) DO UPDATE SET
               integration_goal_hours = excluded.integration_goal_hours,
               notes = excluded.notes,
               updated_at = excluded.updated_at,
-              revision = excluded.revision;
+              revision = excluded.revision,
+              mobile_change_ids = excluded.mobile_change_ids;
             """,
             bind: [
                 .text(record.projectID.databaseText),
@@ -987,6 +1055,7 @@ public actor MetadataStore {
                 .text(record.notes),
                 .real(record.updatedAt.timeIntervalSince1970),
                 .int(Int64(record.revision)),
+                .text(String(decoding: try MobileJSON.encoder.encode(record.mobileChangeIDs), as: UTF8.self)),
             ]
         )
     }

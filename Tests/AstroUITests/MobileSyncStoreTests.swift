@@ -150,6 +150,55 @@ struct MobileSyncStoreTests {
         #expect(store.didApplyIncomingChanges == false)
     }
 
+    @Test("a capability-commit failure truthfully preserves the saved return receipt")
+    func returnCommitFailureReportsSavedChanges() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identity = PortableLibraryID(rawValue: UUID())
+        let base = MobileLibrarySnapshot.empty(libraryID: identity)
+        let source = root.appendingPathComponent("phone-return.astromobile")
+        let key = OneTimePackageKey()
+        let packageService = MobilePackageService()
+        _ = try await packageService.export(
+            MobilePackageEnvelope(purpose: .returnChanges, snapshot: base, baseSnapshotID: base.snapshotID, changes: [], acknowledgedChangeIDs: []),
+            to: source,
+            wrapping: key
+        )
+        let sentBases = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent-bases.json"))
+        try sentBases.save(snapshotID: base.snapshotID)
+        let importer = MobileChangeImporter(commands: .init(applyBatch: { batch in
+            let ids: [UUID]
+            switch batch {
+            case .briefing(let briefing):
+                ids = briefing.mutations.map { mutation in
+                    switch mutation { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
+                }
+            case .projectAnnotation(let project): ids = project.mutations.map { $0.0.changeID }
+            }
+            return .init(appliedChangeIDs: ids, resultingRevisions: [:])
+        }))
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in .init(proposedID: identity, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in base },
+            packageAuthenticatePreview: { url, scannedKey in try await packageService.authenticatePreview(from: url, wrapping: scannedKey) },
+            packageAuthenticatedReturn: { token in try await packageService.authenticatedReturn(token: token) },
+            packageImportCommitReturn: { _ in throw MobilePackageError.duplicatePackageID },
+            packageImportDiscardReturn: { package in await packageService.discardAuthenticatedReturn(package) },
+            changeImporter: importer,
+            sentSnapshotStore: sentBases
+        )
+
+        await store.previewIncomingPackage(from: source, qrPayload: key.qrPayload)
+        await #expect(throws: MobilePackageError.duplicatePackageID) {
+            try await store.applyAuthenticatedReturnChanges(confirmed: true)
+        }
+        #expect(store.appliedChangeReceipt != nil)
+        #expect(store.errorMessage?.localizedCaseInsensitiveContains("saved") == true)
+        #expect(store.phase == .failed)
+    }
+
     @Test("Summary confirmation is bound to the exact displayed snapshot token")
     func exactSnapshotTokenRequired() async throws {
         let id = PortableLibraryID(rawValue: UUID())
@@ -340,13 +389,61 @@ struct MobileSyncStoreTests {
     }
 
     @Test("Snapshot revisions remain monotonic across identical and acknowledgement-only compositions")
-    func snapshotRevisionPersistsAcrossStoreReload() throws {
+    func snapshotRevisionPersistsAcrossStoreReload() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let first = try MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent("revision.json")).next()
-        let second = try MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent("revision.json")).next()
+        let first = try await MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent("revision.json")).next()
+        let second = try await MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent("revision.json")).next()
         #expect(first > 0)
         #expect(second > first)
+    }
+
+    @Test("Snapshot revision allocation serializes independent window stores")
+    func snapshotRevisionCoordinatesIndependentStores() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("revision.json")
+        let firstStore = MobileSnapshotRevisionStore(fileURL: fileURL)
+        let secondStore = MobileSnapshotRevisionStore(fileURL: fileURL)
+        let revisions = try await withThrowingTaskGroup(of: Int.self) { group in
+            group.addTask { try await firstStore.next() }
+            group.addTask { try await secondStore.next() }
+            var values: [Int] = []
+            for try await revision in group { values.append(revision) }
+            return values.sorted()
+        }
+
+        #expect(revisions == [1, 2])
+    }
+
+    @Test("a publication reservation blocks newer revision allocation until sent-base association finishes")
+    func publicationReservationOrdersWindows() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fileURL = root.appendingPathComponent("revision.json")
+        let firstStore = MobileSnapshotRevisionStore(fileURL: fileURL)
+        let secondStore = MobileSnapshotRevisionStore(fileURL: fileURL)
+        let first = try await firstStore.next()
+        let reservation = try await firstStore.beginPublication(expectedRevision: first)
+        let next = Task { try await secondStore.next() }
+        await Task.yield()
+        #expect(!next.isCancelled)
+
+        await firstStore.finishPublication(reservation, published: true)
+        #expect(try await next.value == first + 1)
+    }
+
+    @Test("a stale window cannot reserve an older preview for publication")
+    func stalePreviewCannotBeginPublication() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent("revision.json"))
+        let older = try await store.next()
+        _ = try await store.next()
+
+        await #expect(throws: MobileChangeImportError.stalePreview) {
+            try await store.beginPublication(expectedRevision: older)
+        }
     }
 
     @Test("Sent snapshot history retains multiple recent bases and is bounded")
@@ -360,6 +457,19 @@ struct MobileSyncStoreTests {
         let loaded = try store.load()
         #expect(loaded.count == 128)
         #expect(Set(loaded) == Set(ids.prefix(128)))
+    }
+
+    @Test("published sent bases retain the exact acknowledgement set")
+    func sentSnapshotAcknowledgementEvidenceRoundTrips() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent.json"))
+        let snapshotID = UUID()
+        let first = UUID()
+        let second = UUID()
+        try store.save(snapshotID: snapshotID, acknowledgementIDs: [second, first])
+
+        #expect(try store.loadRecords() == [.init(snapshotID: snapshotID, acknowledgementIDs: [first, second])])
     }
 
     @Test("Destination preparation never removes an existing package")

@@ -191,6 +191,15 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
     public var checklist: [BriefingChecklistSection]
     public var notes: String
     public var language: BriefingDocumentLanguage
+    /// A bounded idempotency marker set persisted in the same immutable
+    /// briefing revision as mobile-originated checklist/note changes.
+    public var mobileChangeIDs: [UUID]
+
+    private enum CodingKeys: String, CodingKey {
+        case id, revision, savedAt, nightDate, arrival, departure, site, setup,
+             powerRuntimeHours, weather, targets, checklist, notes, language,
+             mobileChangeIDs
+    }
 
     public init(
         id: UUID = UUID(),
@@ -206,7 +215,8 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
         targets: [BriefingTargetBlock] = [],
         checklist: [BriefingChecklistSection] = [],
         notes: String = "",
-        language: BriefingDocumentLanguage = .hu
+        language: BriefingDocumentLanguage = .hu,
+        mobileChangeIDs: [UUID] = []
     ) {
         self.id = id
         self.revision = revision
@@ -222,6 +232,26 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
         self.checklist = checklist
         self.notes = notes
         self.language = language
+        self.mobileChangeIDs = Array(Set(mobileChangeIDs)).sorted { $0.uuidString < $1.uuidString }
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(UUID.self, forKey: .id)
+        revision = try values.decode(Int.self, forKey: .revision)
+        savedAt = try values.decode(Date.self, forKey: .savedAt)
+        nightDate = try values.decodeIfPresent(Date.self, forKey: .nightDate)
+        arrival = try values.decodeIfPresent(Date.self, forKey: .arrival)
+        departure = try values.decodeIfPresent(Date.self, forKey: .departure)
+        site = try values.decodeIfPresent(BriefingSiteSummary.self, forKey: .site)
+        setup = try values.decodeIfPresent(BriefingSetupSummary.self, forKey: .setup)
+        powerRuntimeHours = try values.decodeIfPresent(Double.self, forKey: .powerRuntimeHours)
+        weather = try values.decode(BriefingDataState<BriefingWeatherSummary>.self, forKey: .weather)
+        targets = try values.decode([BriefingTargetBlock].self, forKey: .targets)
+        checklist = try values.decode([BriefingChecklistSection].self, forKey: .checklist)
+        notes = try values.decode(String.self, forKey: .notes)
+        language = try values.decode(BriefingDocumentLanguage.self, forKey: .language)
+        mobileChangeIDs = Array(Set(try values.decodeIfPresent([UUID].self, forKey: .mobileChangeIDs) ?? [])).sorted { $0.uuidString < $1.uuidString }
     }
 }
 

@@ -86,8 +86,9 @@ public final class MobileSyncStore {
     public typealias PackageExport = @Sendable (MobilePackageEnvelope, URL, OneTimePackageKey) async throws -> MobileSyncExportResult
     public typealias PackageImportPreview = @Sendable (URL, OneTimePackageKey) async throws -> MobilePackageImportPreview
     public typealias PackageAuthenticatePreview = @Sendable (URL, OneTimePackageKey) async throws -> MobilePackageAuthenticatedPreview
-    public typealias PackageImportEnvelope = @Sendable (MobilePackagePreviewToken) async throws -> MobilePackageEnvelope?
-    public typealias PackageImportCommit = @Sendable (MobilePackagePreviewToken) async throws -> MobilePackageEnvelope
+    public typealias PackageAuthenticatedReturn = @Sendable (MobilePackagePreviewToken) async throws -> MobileAuthenticatedReturnPackage
+    public typealias PackageImportCommitReturn = @Sendable (MobileAuthenticatedReturnPackage) async throws -> Void
+    public typealias PackageImportDiscardReturn = @Sendable (MobileAuthenticatedReturnPackage) async -> Void
     public typealias PackageImportDiscardCapability = @Sendable (MobilePackagePreviewToken) async -> Void
     public typealias PackageImportDiscard = @Sendable (UUID) async -> Void
     public typealias DestinationPreparation = @Sendable (URL) throws -> Void
@@ -121,8 +122,9 @@ public final class MobileSyncStore {
     private let packageExport: PackageExport
     private let packageImportPreview: PackageImportPreview
     private let packageAuthenticatePreview: PackageAuthenticatePreview
-    private let packageImportEnvelope: PackageImportEnvelope
-    private let packageImportCommit: PackageImportCommit
+    private let packageAuthenticatedReturn: PackageAuthenticatedReturn
+    private let packageImportCommitReturn: PackageImportCommitReturn
+    private let packageImportDiscardReturn: PackageImportDiscardReturn
     private let packageImportDiscardCapability: PackageImportDiscardCapability
     private let usesLegacyImportPreview: Bool
     private let packageImportDiscard: PackageImportDiscard
@@ -136,8 +138,9 @@ public final class MobileSyncStore {
     @ObservationIgnored private var incomingSource: URL?
     @ObservationIgnored private var incomingQRPayload: String?
     @ObservationIgnored private var incomingCapability: MobilePackagePreviewToken?
-    @ObservationIgnored private var incomingEnvelope: MobilePackageEnvelope?
+    @ObservationIgnored private var incomingReturn: MobileAuthenticatedReturnPackage?
     @ObservationIgnored private var sentBaseSnapshotIDs: Set<UUID> = []
+    @ObservationIgnored private var sentBaseAcknowledgements: [UUID: Set<UUID>] = [:]
 
     public init(
         rootURL: URL?,
@@ -147,35 +150,40 @@ public final class MobileSyncStore {
         packageExport: PackageExport? = nil,
         packageImportPreview: PackageImportPreview? = nil,
         packageAuthenticatePreview: PackageAuthenticatePreview? = nil,
-        packageImportEnvelope: PackageImportEnvelope? = nil,
-        packageImportCommit: PackageImportCommit? = nil,
+        packageAuthenticatedReturn: PackageAuthenticatedReturn? = nil,
+        packageImportCommitReturn: PackageImportCommitReturn? = nil,
+        packageImportDiscardReturn: PackageImportDiscardReturn? = nil,
         packageImportDiscardCapability: PackageImportDiscardCapability? = nil,
         packageImportDiscard: PackageImportDiscard? = nil,
         destinationToken: String = UUID().uuidString.lowercased(),
         prepareDestination: DestinationPreparation? = nil,
         packageService: MobilePackageService = MobilePackageService(),
         changeImporter: MobileChangeImporter? = nil,
-        changeCommands: MobileChangeCommands? = nil,
         changeRecordStore: MobileChangeApplicationRecordStore? = nil,
         sentSnapshotStore: MobileSentSnapshotStore? = nil
     ) {
         self.rootURL = rootURL
         self.destinationToken = destinationToken
         let defaultLedgerStore = changeRecordStore ?? rootURL.map { MobileChangeReceiptStore(fileURL: $0.appendingPathComponent(".astro-tool/mobile-change-ledger.json")) }
-        let defaultCommands: MobileChangeCommands
-        if let changeCommands {
-            defaultCommands = changeCommands
-        } else if let rootURL, let production = try? MobileChangeCommands.production(rootURL: rootURL) {
-            defaultCommands = production
+        if let changeImporter {
+            self.changeImporter = changeImporter
+        } else if let rootURL, let production = try? MobileChangeImporter.production(rootURL: rootURL, recordStore: defaultLedgerStore) {
+            self.changeImporter = production
         } else {
-            defaultCommands = MobileChangeCommands()
+            self.changeImporter = MobileChangeImporter(recordStore: defaultLedgerStore)
         }
-        self.changeImporter = changeImporter ?? MobileChangeImporter(commands: defaultCommands, recordStore: defaultLedgerStore)
         let configuredSentSnapshotStore = sentSnapshotStore ?? rootURL.map { MobileSentSnapshotIdentityStore(fileURL: $0.appendingPathComponent(".astro-tool/mobile-sent-snapshot.json")) }
         self.sentSnapshotStore = configuredSentSnapshotStore
         do {
-            let loaded = try configuredSentSnapshotStore?.load() ?? []
-            self.sentBaseSnapshotIDs = Set(loaded)
+            if let acknowledgementStore = configuredSentSnapshotStore as? MobileSentSnapshotAcknowledgementStore {
+                let loaded = try acknowledgementStore.loadRecords()
+                self.sentBaseSnapshotIDs = Set(loaded.map(\.snapshotID))
+                self.sentBaseAcknowledgements = Dictionary(uniqueKeysWithValues: loaded.map { ($0.snapshotID, Set($0.acknowledgementIDs)) })
+            } else {
+                let loaded = try configuredSentSnapshotStore?.load() ?? []
+                self.sentBaseSnapshotIDs = Set(loaded)
+                self.sentBaseAcknowledgements = Dictionary(uniqueKeysWithValues: loaded.map { ($0, []) })
+            }
             self.sentSnapshotLoadFailed = false
         } catch {
             self.sentSnapshotLoadFailed = true
@@ -205,8 +213,9 @@ public final class MobileSyncStore {
             self.usesLegacyImportPreview = false
         }
         self.packageAuthenticatePreview = packageAuthenticatePreview ?? { source, key in try await packageService.authenticatePreview(from: source, wrapping: key) }
-        self.packageImportEnvelope = packageImportEnvelope ?? { token in try await packageService.validatedEnvelope(token: token) }
-        self.packageImportCommit = packageImportCommit ?? { token in try await packageService.commitImport(token: token) }
+        self.packageAuthenticatedReturn = packageAuthenticatedReturn ?? { token in try await packageService.authenticatedReturn(token: token) }
+        self.packageImportCommitReturn = packageImportCommitReturn ?? { package in try await packageService.commitAuthenticatedReturn(package) }
+        self.packageImportDiscardReturn = packageImportDiscardReturn ?? { package in await packageService.discardAuthenticatedReturn(package) }
         self.packageImportDiscardCapability = packageImportDiscardCapability ?? { token in await packageService.discardImportPreview(token: token) }
         self.packageImportDiscard = packageImportDiscard ?? { _ in }
     }
@@ -254,31 +263,47 @@ public final class MobileSyncStore {
     /// Callers cannot supply an envelope, package UUID, or fingerprint as
     /// authority; all three come from the retained package capability.
     public func applyAuthenticatedReturnChanges(confirmed: Bool) async throws {
-        guard let capability = incomingCapability,
-              let envelope = incomingEnvelope,
+        guard let authenticatedReturn = incomingReturn,
               let changePreview,
               let current = try await currentSnapshotForReturn() else { throw MobileChangeImportError.stalePreview }
         guard phase == .importPreviewReady else { throw MobileChangeImportError.stalePreview }
         generation += 1
         let operationGeneration = generation
         phase = .applying
-        let receipt: MobileChangeApplicationReceipt
+        var completedReceipt: MobileChangeApplicationReceipt?
         do {
-            receipt = try await changeImporter.apply(preview: changePreview, envelope: envelope, currentSnapshot: current, resolutions: changeResolutions, confirmed: confirmed)
+            let receipt = try await changeImporter.apply(preview: changePreview, authenticatedReturn: authenticatedReturn, currentSnapshot: current, resolutions: changeResolutions, confirmed: confirmed)
+            completedReceipt = receipt
             guard generation == operationGeneration, phase == .applying else { throw MobileChangeImportError.stalePreview }
-            _ = try await packageImportCommit(capability)
+            try await packageImportCommitReturn(authenticatedReturn)
+            guard generation == operationGeneration else { throw MobileChangeImportError.stalePreview }
+            appliedChangeReceipt = receipt
+            appliedChangeTotals = (receipt.appliedChangeIDs.count, receipt.resolvedChangeIDs.count, changePreview.rejected.count)
+            didApplyIncomingChanges = true
+            incomingCapability = nil
+            incomingReturn = nil
+            phase = .importPreviewReady
         } catch {
-            if case let MobileChangeImportError.partialReceipt(partial) = error {
+            if let completedReceipt {
+                // The domain batch has committed its own atomic change-ID
+                // markers. A subsequent capability acknowledgement failure
+                // must never claim that those reviewed edits were rolled back.
+                appliedChangeReceipt = completedReceipt
+                appliedChangeTotals = (completedReceipt.appliedChangeIDs.count, completedReceipt.resolvedChangeIDs.count, changePreview.rejected.count)
+                errorMessage = String(localized: "The reviewed changes were saved, but package acknowledgement could not be finalized. Keep the phone package and create a fresh forward snapshot after recovery.")
+            } else if case let MobileChangeImportError.partialReceipt(partial) = error {
                 appliedChangeReceipt = partial
                 appliedChangeTotals = (partial.appliedChangeIDs.count, partial.resolvedChangeIDs.count, changePreview.rejected.count)
                 errorMessage = String(localized: "Some reviewed changes were saved before the receipt failed. Applied \(partial.appliedChangeIDs.count); resolved \(partial.resolvedChangeIDs.count). Keep the phone package and create a fresh forward snapshot after recovery.")
             }
-            await packageImportDiscardCapability(capability)
+            await packageImportDiscardReturn(authenticatedReturn)
             incomingCapability = nil
-            incomingEnvelope = nil
+            incomingReturn = nil
             incomingPreview = nil
             failure = .importFailed
-            if let importError = error as? MobileChangeImportError, case .partialReceipt = importError {
+            if completedReceipt != nil {
+                // The recovery message above is the authoritative result.
+            } else if let importError = error as? MobileChangeImportError, case .partialReceipt = importError {
                 // Preserve exact partial totals and the recovery action above.
             } else {
                 errorMessage = String(localized: "The reviewed changes were not applied. No phone changes were acknowledged.")
@@ -286,13 +311,6 @@ public final class MobileSyncStore {
             phase = .failed
             throw error
         }
-        guard generation == operationGeneration else { throw MobileChangeImportError.stalePreview }
-        appliedChangeReceipt = receipt
-        appliedChangeTotals = (receipt.appliedChangeIDs.count, receipt.resolvedChangeIDs.count, changePreview.rejected.count)
-        didApplyIncomingChanges = true
-        incomingCapability = nil
-        incomingEnvelope = nil
-        phase = .importPreviewReady
     }
 
     /// Builds the safe, allowlisted snapshot from the already-open metadata
@@ -333,7 +351,7 @@ public final class MobileSyncStore {
             )
             let input = MobileSnapshotComposer.Input(
                 libraryID: id,
-                revision: try MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent(".astro-tool/mobile-snapshot-revision.json")).next(),
+                revision: try await MobileSnapshotRevisionStore(fileURL: root.appendingPathComponent(".astro-tool/mobile-snapshot-revision.json")).next(),
                 projects: projects,
                 nights: nights,
                 captures: captures,
@@ -443,25 +461,39 @@ public final class MobileSyncStore {
         }
         let token = generation
         let key = OneTimePackageKey()
-        let envelope = MobilePackageEnvelope(snapshot: preview.snapshot, changes: [], acknowledgedChangeIDs: changeImporter.acknowledgementIDs)
+            let acknowledgementIDs = changeImporter.acknowledgementIDs
+            let envelope = MobilePackageEnvelope(snapshot: preview.snapshot, changes: [], acknowledgedChangeIDs: acknowledgementIDs)
         do {
             let revisions = MobileSnapshotRevisionStore(fileURL: (rootURL ?? destination.deletingLastPathComponent()).appendingPathComponent(".astro-tool/mobile-snapshot-revision.json"))
-            guard try revisions.current() == preview.snapshot.revision else {
-                throw MobileChangeImportError.stalePreview
+            let reservation = try await revisions.beginPublication(expectedRevision: preview.snapshot.revision)
+            do {
+                try Task.checkCancellation()
+                try prepareDestination(destination)
+                let result = try await packageExport(envelope, destination, key)
+                guard token == generation, (phase == .exporting || phase == .finishing) else {
+                    await revisions.finishPublication(reservation, published: false)
+                    return
+                }
+                packageID = result.packageID
+                exportedAt = result.createdAt
+                encryptedByteCount = result.encryptedByteCount
+                exportedURL = destination
+                if let acknowledgementStore = sentSnapshotStore as? MobileSentSnapshotAcknowledgementStore {
+                    try acknowledgementStore.save(snapshotID: preview.snapshot.snapshotID, acknowledgementIDs: acknowledgementIDs)
+                } else {
+                    try sentSnapshotStore?.save(snapshotID: preview.snapshot.snapshotID)
+                }
+                sentBaseSnapshotIDs.insert(preview.snapshot.snapshotID)
+                sentBaseAcknowledgements[preview.snapshot.snapshotID] = Set(acknowledgementIDs)
+                await revisions.finishPublication(reservation, published: true)
+                oneTimeQRPayload = key.qrPayload
+                errorMessage = nil
+                failure = nil
+                phase = .exported
+            } catch {
+                await revisions.finishPublication(reservation, published: false)
+                throw error
             }
-            try prepareDestination(destination)
-            let result = try await packageExport(envelope, destination, key)
-            guard token == generation, (phase == .exporting || phase == .finishing) else { return }
-            packageID = result.packageID
-            exportedAt = result.createdAt
-            encryptedByteCount = result.encryptedByteCount
-            exportedURL = destination
-            try sentSnapshotStore?.save(snapshotID: preview.snapshot.snapshotID)
-            sentBaseSnapshotIDs.insert(preview.snapshot.snapshotID)
-            oneTimeQRPayload = key.qrPayload
-            errorMessage = nil
-            failure = nil
-            phase = .exported
         } catch {
             guard token == generation else { return }
             if cancellationRequested {
@@ -493,13 +525,13 @@ public final class MobileSyncStore {
                 let imported = authenticated.preview
                 guard token == generation, phase == .importing else { await packageImportDiscardCapability(authenticated.token); return }
                 incomingCapability = authenticated.token
-                incomingEnvelope = try await packageImportEnvelope(authenticated.token)
                 incomingPreview = imported
-                if imported.purpose == .returnChanges,
-                   let envelope = incomingEnvelope,
-                   let current = try await currentSnapshotForReturn() {
-                    guard let baseID = envelope.baseSnapshotID, sentBaseSnapshotIDs.contains(baseID) else { throw MobileChangeImportError.snapshotMismatch }
-                    let typed = try changeImporter.preview(envelope: envelope, expectedLibraryID: current.libraryID, expectedBaseSnapshotID: baseID, currentSnapshot: current, sourcePackageID: imported.packageID)
+                if imported.purpose == .returnChanges, let current = try await currentSnapshotForReturn() {
+                    let authenticatedReturn = try await packageAuthenticatedReturn(authenticated.token)
+                    guard sentBaseSnapshotIDs.contains(authenticatedReturn.baseSnapshotID) else { throw MobileChangeImportError.snapshotMismatch }
+                    try changeImporter.acknowledgePhoneEvidence(sentBaseAcknowledgements[authenticatedReturn.baseSnapshotID] ?? [])
+                    let typed = try changeImporter.preview(authenticatedReturn: authenticatedReturn, expectedLibraryID: current.libraryID, expectedBaseSnapshotID: authenticatedReturn.baseSnapshotID, currentSnapshot: current)
+                    incomingReturn = authenticatedReturn
                     changePreview = typed
                     changeResolutions = typed.conflicts.reduce(into: [:]) { values, conflict in if conflict.kind == .note { values[conflict.changeID] = .keepBothAsFieldNote } }
                 }
@@ -513,7 +545,7 @@ public final class MobileSyncStore {
             if let capability = incomingCapability {
                 await packageImportDiscardCapability(capability)
                 incomingCapability = nil
-                incomingEnvelope = nil
+                incomingReturn = nil
                 incomingPreview = nil
             }
             let isKeyError = (error as? MobilePackageError) == .invalidKeyPayload
@@ -655,7 +687,7 @@ public final class MobileSyncStore {
             await packageImportDiscard(packageID)
         }
         incomingCapability = nil
-        incomingEnvelope = nil
+        incomingReturn = nil
         incomingPreview = nil
     }
 
@@ -670,7 +702,7 @@ public final class MobileSyncStore {
         let discardCapability = packageImportDiscardCapability
         let discardLegacy = packageImportDiscard
         incomingPreview = nil
-        incomingEnvelope = nil
+        incomingReturn = nil
         incomingCapability = nil
         incomingSource = nil
         incomingQRPayload = nil
@@ -679,7 +711,7 @@ public final class MobileSyncStore {
             await priorDiscard?.value
             if let capability { await discardCapability(capability) }
             else if let packageID { await discardLegacy(packageID) }
-            await self?.finishDiscardingIncomingPreview()
+            self?.finishDiscardingIncomingPreview()
         }
     }
 

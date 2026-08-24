@@ -204,6 +204,9 @@
 "Duplicate change IDs were shown for review and were not applied." = "Duplicate change IDs were shown for review and were not applied.";
 "Older edits were superseded by the latest edit for the same target." = "Older edits were superseded by the latest edit for the same target.";
 "The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved." = "The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved.";
+"Applying the reviewed changes…" = "Applying the reviewed changes…";
+"The reviewed changes were not applied. No phone changes were acknowledged." = "The reviewed changes were not applied. No phone changes were acknowledged.";
+"The reviewed changes were saved, but package acknowledgement could not be finalized. Keep the phone package and create a fresh forward snapshot after recovery." = "The reviewed changes were saved, but package acknowledgement could not be finalized. Keep the phone package and create a fresh forward snapshot after recovery.";
 "Duplicate change ID: none of those records was applied." = "Duplicate change ID: none of those records was applied.";
 "The target is no longer available on this Mac." = "The target is no longer available on this Mac.";
 "The phone note was empty and was not imported." = "The phone note was empty and was not imported.";

@@ -89,6 +89,43 @@ public struct MobilePackageAuthenticatedPreview: Sendable {
     }
 }
 
+/// An authenticated iPhone-to-Mac return capability.  Only
+/// `MobilePackageService` can mint this value after it has verified the
+/// package manifest, encrypted payload, and return-only envelope shape.  The
+/// package identifier is deliberately not exposed as application authority:
+/// callers can inspect the typed return payload, but can neither construct nor
+/// replay this capability against another service instance.
+public struct MobileAuthenticatedReturnPackage: Sendable {
+    /// Read-only receipt binding. It is populated only after authentication;
+    /// application callers never supply it to the importer.
+    public let packageID: UUID
+    public let libraryID: PortableLibraryID
+    public let baseSnapshotID: UUID
+    public let baseSnapshot: MobileLibrarySnapshot
+    public let changes: [MobileChange]
+
+    fileprivate let serviceID: UUID
+    fileprivate let token: MobilePackagePreviewToken
+
+    fileprivate init(
+        packageID: UUID,
+        libraryID: PortableLibraryID,
+        baseSnapshotID: UUID,
+        baseSnapshot: MobileLibrarySnapshot,
+        changes: [MobileChange],
+        serviceID: UUID,
+        token: MobilePackagePreviewToken
+    ) {
+        self.packageID = packageID
+        self.libraryID = libraryID
+        self.baseSnapshotID = baseSnapshotID
+        self.baseSnapshot = baseSnapshot
+        self.changes = changes
+        self.serviceID = serviceID
+        self.token = token
+    }
+}
+
 public actor MobilePackageService {
     public static let manifestFileName = "manifest.json"
     public static let encryptedPayloadFileName = "encrypted-payload.bin"
@@ -404,6 +441,43 @@ public actor MobilePackageService {
     public func validatedEnvelope(token: MobilePackagePreviewToken) throws -> MobilePackageEnvelope? {
         guard token.serviceID == serviceID else { return nil }
         return stagedImports[token.rawValue]?.envelope
+    }
+
+    /// Narrows an already-authenticated preview to the only value accepted by
+    /// the Mac return importer. Forward snapshots and malformed return shapes
+    /// never cross this boundary as a return capability.
+    public func authenticatedReturn(token: MobilePackagePreviewToken) throws -> MobileAuthenticatedReturnPackage {
+        guard token.serviceID == serviceID,
+              let staged = stagedImports[token.rawValue],
+              staged.envelope.purpose == .returnChanges,
+              let snapshot = staged.envelope.snapshot,
+              staged.envelope.baseSnapshotID == snapshot.snapshotID,
+              staged.envelope.acknowledgedChangeIDs.isEmpty
+        else {
+            throw MobilePackageError.invalidEnvelope
+        }
+        return MobileAuthenticatedReturnPackage(
+            packageID: staged.preview.packageID,
+            libraryID: snapshot.libraryID,
+            baseSnapshotID: snapshot.snapshotID,
+            baseSnapshot: snapshot,
+            changes: staged.envelope.changes,
+            serviceID: serviceID,
+            token: token
+        )
+    }
+
+    /// Commits a return package only when it is the opaque capability minted
+    /// by this exact service instance. The call intentionally does not expose
+    /// the decrypted envelope to application mutation code.
+    public func commitAuthenticatedReturn(_ package: MobileAuthenticatedReturnPackage) throws {
+        guard package.serviceID == serviceID else { throw MobilePackageError.duplicatePackageID }
+        _ = try commitImport(token: package.token)
+    }
+
+    public func discardAuthenticatedReturn(_ package: MobileAuthenticatedReturnPackage) {
+        guard package.serviceID == serviceID else { return }
+        discardImportPreview(token: package.token)
     }
 
     public func commitImport(token: MobilePackagePreviewToken) throws -> MobilePackageEnvelope {

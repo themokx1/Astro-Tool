@@ -5,6 +5,10 @@ public enum NightBriefingRevisionStoreError: Error, Equatable, Sendable {
 }
 
 public actor NightBriefingRevisionStore {
+    /// Revision filename allocation is a read-modify-write operation. Keep it
+    /// process-wide so two window-specific actors cannot each observe the
+    /// same latest revision and write a stale successor.
+    private static let processLock = NSLock()
     private let directory: URL
     private let fileManager: FileManager
     private let encoder: JSONEncoder
@@ -21,6 +25,25 @@ public actor NightBriefingRevisionStore {
     }
 
     public func save(_ draft: NightBriefingDraft) throws -> NightBriefingDraft {
+        Self.processLock.lock()
+        defer { Self.processLock.unlock() }
+        return try saveUnlocked(draft)
+    }
+
+    /// Saves only if the durable latest revision is exactly the revision the
+    /// caller reviewed.  This is the compare-and-set used by mobile return
+    /// batches to prevent overwriting an intervening Mac edit.
+    public func saveIfLatest(_ draft: NightBriefingDraft, expectedRevision: Int) throws -> NightBriefingDraft {
+        Self.processLock.lock()
+        defer { Self.processLock.unlock() }
+        let currentRevision = try revisionNumbers(id: draft.id).max() ?? 0
+        guard currentRevision == expectedRevision else {
+            throw NightBriefingRevisionStoreError.revisionAlreadyExists(revisionURL(id: draft.id, revision: currentRevision))
+        }
+        return try saveUnlocked(draft)
+    }
+
+    private func saveUnlocked(_ draft: NightBriefingDraft) throws -> NightBriefingDraft {
         try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         let nextRevision = (try revisionNumbers(id: draft.id).max() ?? 0) + 1
         var saved = draft

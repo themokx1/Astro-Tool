@@ -4,7 +4,10 @@ import AstroMobileDomain
 /// The production bridge for the three deliberately narrow mobile domains.
 /// Every mutation is keyed by the phone change ID and written atomically, so
 /// a command retry after a receipt interruption is a no-op for that change.
-public final class MobileDomainCommandStore: @unchecked Sendable {
+/// Internal fixture seam; the public application cannot obtain mutation
+/// commands from it. Real return application is built by
+/// `MobileChangeImporter.production` below.
+final class MobileDomainCommandStore: @unchecked Sendable {
     private struct ChecklistValue: Codable, Sendable {
         var revision: Int
         var isCompleted: Bool
@@ -33,7 +36,7 @@ public final class MobileDomainCommandStore: @unchecked Sendable {
     private let lock = NSLock()
     private var state: State
 
-    public init(rootURL: URL) throws {
+    init(rootURL: URL) throws {
         let directory = rootURL.appendingPathComponent(".astro-tool", isDirectory: true)
         fileURL = directory.appendingPathComponent("mobile-domain-commands.json")
         if FileManager.default.fileExists(atPath: fileURL.path) {
@@ -50,12 +53,43 @@ public final class MobileDomainCommandStore: @unchecked Sendable {
         }
     }
 
-    public func commands() -> MobileChangeCommands {
-        .init(
-            saveChecklist: { [self] command in try saveChecklist(command) },
-            saveNote: { [self] command in try saveNote(command) },
-            addFieldNote: { [self] command in try addFieldNote(command) }
-        )
+    func commands() -> MobileChangeCommands {
+        .init(applyBatch: { [self] batch in try apply(batch) })
+    }
+
+    private func apply(_ batch: MobileChangeDomainBatch) throws -> MobileChangeDomainBatchResult {
+        switch batch {
+        case .briefing(let batch):
+            var revisions: [String: Int] = [:]
+            var ids: [UUID] = []
+            for mutation in batch.mutations {
+                switch mutation {
+                case .checklist(let command):
+                    guard let revision = try saveChecklist(command) else { throw MobileChangeImportError.commandFailed(command.changeID) }
+                    ids.append(command.changeID); revisions[command.changeID.uuidString] = revision
+                case .note(let command, let mode):
+                    let revision: Int?
+                    switch mode {
+                    case .replace: revision = try saveNote(command)
+                    case .appendFieldNote: revision = try addFieldNote(.init(changeID: command.changeID, noteID: command.noteID, ownerID: command.ownerID, text: command.text, createdAt: command.createdAt))
+                    }
+                    ids.append(command.changeID); revisions[command.changeID.uuidString] = revision ?? batch.expectedRevision + 1
+                }
+            }
+            return .init(appliedChangeIDs: ids, resultingRevisions: revisions)
+        case .projectAnnotation(let batch):
+            var revisions: [String: Int] = [:]
+            var ids: [UUID] = []
+            for (command, mode) in batch.mutations {
+                let revision: Int?
+                switch mode {
+                case .replace: revision = try saveNote(command)
+                case .appendFieldNote: revision = try addFieldNote(.init(changeID: command.changeID, noteID: command.noteID, ownerID: command.ownerID, text: command.text, createdAt: command.createdAt))
+                }
+                ids.append(command.changeID); revisions[command.changeID.uuidString] = revision ?? batch.expectedRevision + 1
+            }
+            return .init(appliedChangeIDs: ids, resultingRevisions: revisions)
+        }
     }
 
     private func saveChecklist(_ command: MobileChecklistRevisionCommand) throws -> Int? {
@@ -113,7 +147,7 @@ public final class MobileDomainCommandStore: @unchecked Sendable {
     }
 }
 
-public extension MobileChangeCommands {
+extension MobileChangeCommands {
     static func production(rootURL: URL) throws -> MobileChangeCommands {
         let paths = try AppStoragePaths.production(
             libraryID: LibraryIdentity(rootURL: rootURL),
@@ -122,13 +156,7 @@ public extension MobileChangeCommands {
         let metadataStore = try MetadataStore(storagePaths: paths)
         let briefingStore = NightBriefingRevisionStore(directory: paths.briefings)
         let bridge = try MobileMacDomainCommandBridge(rootURL: rootURL, metadataStore: metadataStore, briefingStore: briefingStore)
-        return .init(
-            saveChecklist: { command in try await bridge.saveChecklist(command) },
-            saveNote: { command in try await bridge.saveNote(command) },
-            addFieldNote: { command in try await bridge.addFieldNote(command) },
-            beginApply: { try await bridge.beginApply() },
-            endApply: { try await bridge.endApply() }
-        )
+        return .init(applyBatch: { batch in try await bridge.apply(batch) })
     }
 }
 
@@ -136,129 +164,74 @@ public extension MobileChangeCommands {
 /// `MobileSyncStore.metadataSnapshotProvider`: briefing revisions and the
 /// metadata project's annotation table. The JSON helper above remains a
 /// fixture seam only; it is never selected by the production factory.
-private final class MobileMacDomainCommandBridge: @unchecked Sendable {
+private actor MobileMacDomainCommandBridge {
     private let metadataStore: MetadataStore
     private let briefingStore: NightBriefingRevisionStore
-    private let receipts: MobileDomainCommandReceiptStore
-    private let lock = NSLock()
-    private var briefingBatchRevisions: [UUID: Int] = [:]
 
     init(rootURL: URL, metadataStore: MetadataStore, briefingStore: NightBriefingRevisionStore) throws {
         self.metadataStore = metadataStore
         self.briefingStore = briefingStore
-        self.receipts = try MobileDomainCommandReceiptStore(fileURL: rootURL.appendingPathComponent(".astro-tool/mobile-domain-command-receipts.json"))
     }
 
-    func beginApply() { lock.lock(); briefingBatchRevisions = [:]; lock.unlock() }
-    func endApply() { lock.lock(); briefingBatchRevisions = [:]; lock.unlock() }
-
-    func saveChecklist(_ command: MobileChecklistRevisionCommand) async throws -> Int? {
-        if let result = try receipts.result(for: command.changeID) { return result }
-        guard var draft = try await briefingStore.latest(id: command.briefingID) else {
-            throw MobileChangeImportError.commandFailed(command.changeID)
+    func apply(_ batch: MobileChangeDomainBatch) async throws -> MobileChangeDomainBatchResult {
+        switch batch {
+        case .briefing(let briefing): return try await apply(briefing)
+        case .projectAnnotation(let project): return try await metadataStore.applyMobileProjectAnnotationBatch(project)
         }
-        guard let sectionIndex = draft.checklist.firstIndex(where: { $0.items.contains { $0.id == command.itemID } }),
-              let itemIndex = draft.checklist[sectionIndex].items.firstIndex(where: { $0.id == command.itemID }) else {
-            throw MobileChangeImportError.commandFailed(command.changeID)
-        }
-        let expected = lock.withLock { briefingBatchRevisions[command.briefingID] ?? command.expectedRevision }
-        guard draft.revision == expected else { throw MobileChangeImportError.commandFailed(command.changeID) }
-        draft.checklist[sectionIndex].items[itemIndex].isCompleted = command.isCompleted
-        draft.savedAt = command.createdAt
-        let saved = try await briefingStore.save(draft)
-        lock.withLock { briefingBatchRevisions[command.briefingID] = saved.revision }
-        try receipts.record(command.changeID, result: saved.revision)
-        return saved.revision
     }
 
-    func saveNote(_ command: MobileNoteRevisionCommand) async throws -> Int? {
-        if let result = try receipts.result(for: command.changeID) { return result }
-        if let briefingID = Self.briefingID(from: command.noteID) {
-            guard var draft = try await briefingStore.latest(id: briefingID) else {
-                throw MobileChangeImportError.commandFailed(command.changeID)
+    private func apply(_ batch: MobileBriefingChangeBatch) async throws -> MobileChangeDomainBatchResult {
+        let requestedIDs = batch.mutations.map { mutation in
+            switch mutation { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
+        }
+        guard Set(requestedIDs).count == requestedIDs.count,
+              var draft = try await briefingStore.latest(id: batch.briefingID) else {
+            throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID())
+        }
+        let existingIDs = Set(draft.mobileChangeIDs)
+        if Set(requestedIDs).isSubset(of: existingIDs) {
+            return .init(appliedChangeIDs: requestedIDs, resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, draft.revision) }))
+        }
+        guard draft.revision == batch.expectedRevision,
+              draft.mobileChangeIDs.count + requestedIDs.filter({ !existingIDs.contains($0) }).count <= 10_000 else {
+            throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID())
+        }
+        var savedAt = draft.savedAt
+        for mutation in batch.mutations where !existingIDs.contains(Self.changeID(mutation)) {
+            switch mutation {
+            case .checklist(let command):
+                guard let sectionIndex = draft.checklist.firstIndex(where: { $0.items.contains { $0.id == command.itemID } }),
+                      let itemIndex = draft.checklist[sectionIndex].items.firstIndex(where: { $0.id == command.itemID }) else { throw MobileChangeImportError.commandFailed(command.changeID) }
+                draft.checklist[sectionIndex].items[itemIndex].isCompleted = command.isCompleted
+                savedAt = max(savedAt, command.createdAt)
+            case .note(let command, let mode):
+                switch mode {
+                case .replace: draft.notes = command.text
+                case .appendFieldNote:
+                    draft.notes += "\n\n— Phone field note —\n" + command.createdAt.formatted(date: .abbreviated, time: .shortened) + "\n" + command.text
+                }
+                savedAt = max(savedAt, command.createdAt)
             }
-            let expected = lock.withLock { briefingBatchRevisions[briefingID] ?? command.expectedRevision }
-            guard draft.revision == expected else { throw MobileChangeImportError.commandFailed(command.changeID) }
-            draft.notes = command.text
-            draft.savedAt = command.createdAt
-            let saved = try await briefingStore.save(draft)
-            lock.withLock { briefingBatchRevisions[briefingID] = saved.revision }
-            try receipts.record(command.changeID, result: saved.revision)
-            return saved.revision
         }
-        guard let projectID = UUID(uuidString: command.ownerID),
-              let annotation = try await metadataStore.projectAnnotation(projectID: projectID) else {
-            throw MobileChangeImportError.commandFailed(command.changeID)
-        }
-        guard annotation.revision == command.expectedRevision else { throw MobileChangeImportError.commandFailed(command.changeID) }
-        try await metadataStore.save(ProjectAnnotationRecord(
-            projectID: annotation.projectID,
-            integrationGoalHours: annotation.integrationGoalHours,
-            notes: command.text,
-            updatedAt: command.createdAt,
-            revision: annotation.revision + 1
-        ))
-        try receipts.record(command.changeID, result: annotation.revision + 1)
-        return command.resultingRevision
-    }
-
-    func addFieldNote(_ command: MobileFieldNoteCommand) async throws -> Int? {
-        if try receipts.contains(command.changeID) { return nil }
-        let separator = "\n\n— Phone field note —\n"
-        if let briefingID = Self.briefingID(from: command.noteID) {
-            guard var draft = try await briefingStore.latest(id: briefingID) else {
-                throw MobileChangeImportError.commandFailed(command.changeID)
+        draft.savedAt = savedAt
+        draft.mobileChangeIDs = Array(existingIDs.union(requestedIDs)).sorted { $0.uuidString < $1.uuidString }
+        do {
+            let saved = try await briefingStore.saveIfLatest(draft, expectedRevision: batch.expectedRevision)
+            return .init(appliedChangeIDs: requestedIDs, resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, saved.revision) }))
+        } catch NightBriefingRevisionStoreError.revisionAlreadyExists {
+            // A second sync window may have won the filename race after this
+            // bridge read the draft. Re-read once: an identical return batch
+            // is an idempotent success, while any other concurrent Mac edit
+            // remains a compare-and-set failure.
+            guard let latest = try await briefingStore.latest(id: batch.briefingID),
+                  Set(requestedIDs).isSubset(of: Set(latest.mobileChangeIDs)) else {
+                throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID())
             }
-            draft.notes += separator + Self.timestamp(command.createdAt) + "\n" + command.text
-            draft.savedAt = command.createdAt
-            _ = try await briefingStore.save(draft)
-            try receipts.record(command.changeID, result: nil)
-            return nil
+            return .init(appliedChangeIDs: requestedIDs, resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, latest.revision) }))
         }
-        guard let projectID = UUID(uuidString: command.ownerID),
-              let annotation = try await metadataStore.projectAnnotation(projectID: projectID) else {
-            throw MobileChangeImportError.commandFailed(command.changeID)
-        }
-        try await metadataStore.save(ProjectAnnotationRecord(
-            projectID: annotation.projectID,
-            integrationGoalHours: annotation.integrationGoalHours,
-            notes: annotation.notes + separator + Self.timestamp(command.createdAt) + "\n" + command.text,
-            updatedAt: command.createdAt,
-            revision: annotation.revision + 1
-        ))
-        try receipts.record(command.changeID, result: nil)
-        return nil
     }
 
-    private static func briefingID(from noteID: String) -> UUID? {
-        guard noteID.hasPrefix("briefing-") else { return nil }
-        return UUID(uuidString: String(noteID.dropFirst("briefing-".count)))
-    }
-
-    private static func timestamp(_ date: Date) -> String { date.formatted(date: .abbreviated, time: .shortened) }
-}
-
-private final class MobileDomainCommandReceiptStore: @unchecked Sendable {
-    private struct Payload: Codable { var schemaVersion: Int = 1; var results: [UUID: Int?] = [:] }
-    private let fileURL: URL
-    private let lock = NSLock()
-    private var payload: Payload
-    init(fileURL: URL) throws {
-        self.fileURL = fileURL
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            payload = try MobileJSON.decoder.decode(Payload.self, from: Data(contentsOf: fileURL))
-        } else { payload = Payload() }
-    }
-    func contains(_ id: UUID) throws -> Bool { lock.lock(); defer { lock.unlock() }; return payload.results[id] != nil || payload.results.keys.contains(id) }
-    func result(for id: UUID) throws -> Int?? {
-        lock.lock(); defer { lock.unlock() }
-        guard payload.results.keys.contains(id) else { return nil }
-        return payload.results[id]
-    }
-    func record(_ id: UUID, result: Int?) throws {
-        lock.lock(); defer { lock.unlock() }
-        payload.results[id] = result
-        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try MobileJSON.encoder.encode(payload).write(to: fileURL, options: [.atomic])
+    private static func changeID(_ mutation: MobileBriefingBatchMutation) -> UUID {
+        switch mutation { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
     }
 }
