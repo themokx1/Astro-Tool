@@ -175,6 +175,12 @@
 "That destination already exists. Choose a new name; AstroTool never overwrites it." = "That destination already exists. Choose a new name; AstroTool never overwrites it.";
 "This package could not be unlocked. Check the package and scan its code again." = "This package could not be unlocked. Check the package and scan its code again.";
 "This package is damaged or incomplete. Ask for a fresh package and try again." = "This package is damaged or incomplete. Ask for a fresh package and try again.";
+"Ready to apply" = "Ready to apply";
+"Needs your choice" = "Needs your choice";
+"Already handled" = "Already handled";
+"Not imported" = "Not imported";
+"Choose what to do with each conflict. Notes default to Keep both as field note." = "Choose what to do with each conflict. Notes default to Keep both as field note.";
+"Checklist and notes only. Original photos stay on this Mac or external drive. Mac review is required; there is no automatic or cloud sync." = "Checklist and notes only. Original photos stay on this Mac or external drive. Mac review is required; there is no automatic or cloud sync.";
 
 /* V4 entry points outside the editor. */
 "Készülj fel a következő éjszakára" = "Prepare for your next night";

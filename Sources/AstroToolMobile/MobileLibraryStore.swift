@@ -44,6 +44,22 @@ public enum MobileLibraryStoreError: Error, Equatable, Sendable, CustomStringCon
     }
 }
 
+public struct MobileReturnExportResult: Equatable, Sendable {
+    public let packageID: UUID
+    public let createdAt: Date
+    public let destination: URL
+    public let oneTimeQRPayload: String
+    public let queuedChangeIDs: [UUID]
+
+    public init(packageID: UUID, createdAt: Date, destination: URL, oneTimeQRPayload: String, queuedChangeIDs: [UUID]) {
+        self.packageID = packageID
+        self.createdAt = createdAt
+        self.destination = destination
+        self.oneTimeQRPayload = oneTimeQRPayload
+        self.queuedChangeIDs = queuedChangeIDs.sorted { $0.uuidString < $1.uuidString }
+    }
+}
+
 public enum MobileLibraryStoreRecoveryState: Equatable, Sendable {
     case ready
     case empty
@@ -209,6 +225,36 @@ public actor MobileLibraryStore {
     public func stagePackage(from source: URL) async throws -> URL {
         await discardCurrentStagedPackage()
         return try stagePackageSync(from: source)
+    }
+
+    /// Seals the phone's typed checklist/note queue for Mac review. Export is
+    /// deliberately read-only: queue records are acknowledged only by a
+    /// later authenticated Mac snapshot.
+    public func exportReturnPackage(to destination: URL) async throws -> MobileReturnExportResult {
+        try ensureWritable()
+        guard let snapshot = activeSnapshot else { throw MobileLibraryStoreError.noLibrary }
+        let key = OneTimePackageKey()
+        let changes = queuedChanges
+        let envelope = MobilePackageEnvelope(snapshot: snapshot, changes: changes, acknowledgedChangeIDs: [])
+        let manifest: MobilePackageManifest
+        do {
+            manifest = try await packageService.export(envelope, to: destination, wrapping: key)
+        } catch let error as MobilePackageError {
+            throw error
+        } catch {
+            throw MobileLibraryStoreError.persistenceFailed
+        }
+        return MobileReturnExportResult(
+            packageID: manifest.packageID,
+            createdAt: manifest.createdAt,
+            destination: destination,
+            oneTimeQRPayload: key.qrPayload,
+            queuedChangeIDs: changes.map(Self.changeID)
+        )
+    }
+
+    public func exportQueuedChanges(to destination: URL) async throws -> MobileReturnExportResult {
+        try await exportReturnPackage(to: destination)
     }
 
     private func stagePackageSync(from source: URL) throws -> URL {
@@ -437,6 +483,10 @@ public actor MobileLibraryStore {
         var stateCommitSucceeded = false
         do {
             guard let candidate = envelope.snapshot else { throw MobileLibraryStoreError.invalidPackage }
+            // This store is the phone side of the protocol. A return package
+            // is never accepted as a forward snapshot or used to clear the
+            // queue; only a snapshot with acknowledgement IDs is allowed.
+            guard envelope.changes.isEmpty else { throw MobileLibraryStoreError.invalidPackage }
             guard Self.isSafeRevision(candidate.revision) else { throw MobileLibraryStoreError.revisionNotMonotonic }
             try Self.validate(candidate)
             if let current = activeSnapshot {
@@ -455,13 +505,16 @@ public actor MobileLibraryStore {
             var nextKeys = keyFingerprints
             nextKeys[fingerprint] = preview.packageID
             try Self.validateKeyFingerprints(nextKeys, boundTo: nextReceipts)
+            let acknowledged = Set(envelope.acknowledgedChangeIDs)
+            let nextQueue = queuedChanges.filter { !acknowledged.contains(Self.changeID($0)) }
             try Task.checkCancellation()
             stateCommitAttempted = true
-            try commitState(snapshot: snapshot, queue: queuedChanges, receipts: nextReceipts, keyFingerprints: nextKeys)
+            try commitState(snapshot: snapshot, queue: nextQueue, receipts: nextReceipts, keyFingerprints: nextKeys)
             stateCommitSucceeded = true
             consumedPackageIDs = nextReceipts
             keyFingerprints = nextKeys
             activeSnapshot = snapshot
+            queuedChanges = nextQueue
             recoveryState = .ready
             pendingImport = nil
             // A service acknowledgement is deliberately after the durable

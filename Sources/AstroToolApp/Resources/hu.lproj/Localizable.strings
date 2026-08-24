@@ -2783,3 +2783,9 @@
 "That destination already exists. Choose a new name; AstroTool never overwrites it." = "Ez a célhely már létezik. Válassz új nevet; az AstroTool soha nem írja felül.";
 "This package could not be unlocked. Check the package and scan its code again." = "A csomag nem oldható fel. Ellenőrizd, majd olvasd be újra a kódját.";
 "This package is damaged or incomplete. Ask for a fresh package and try again." = "A csomag sérült vagy hiányos. Kérj új csomagot, és próbáld újra.";
+"Ready to apply" = "Alkalmazásra kész";
+"Needs your choice" = "Döntés szükséges";
+"Already handled" = "Már kezelve";
+"Not imported" = "Nem importálva";
+"Choose what to do with each conflict. Notes default to Keep both as field note." = "Válaszd ki, mi történjen az egyes ütközésekkel. A jegyzetek alapértelmezett választása: mindkettő megtartása mezőjegyzetként.";
+"Checklist and notes only. Original photos stay on this Mac or external drive. Mac review is required; there is no automatic or cloud sync." = "Csak ellenőrzőlista és jegyzetek. Az eredeti fotók ezen a Macen vagy külső meghajtón maradnak. Kötelező a Macen történő áttekintés; nincs automatikus vagy felhőszinkronizálás.";

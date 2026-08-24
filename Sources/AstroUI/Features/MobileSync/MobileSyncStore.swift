@@ -90,6 +90,9 @@ public final class MobileSyncStore {
     public private(set) var phase: MobileSyncPhase = .idle
     public private(set) var preview: MobileSyncPreview?
     public private(set) var incomingPreview: MobilePackageImportPreview?
+    public private(set) var changePreview: MobileChangeImportPreview?
+    public private(set) var changeResolutions: [UUID: MobileChangeResolution] = [:]
+    public private(set) var appliedChangeReceipt: MobileChangeApplicationReceipt?
     public private(set) var exportedURL: URL?
     public private(set) var packageID: UUID?
     public private(set) var encryptedByteCount: Int64?
@@ -103,6 +106,8 @@ public final class MobileSyncStore {
 
     public let rootURL: URL?
     public let destinationToken: String
+
+    private let changeImporter: MobileChangeImporter
 
     private let identityPreview: IdentityPreview
     private let identityCommit: IdentityCommit
@@ -128,10 +133,12 @@ public final class MobileSyncStore {
         packageImportDiscard: PackageImportDiscard? = nil,
         destinationToken: String = UUID().uuidString.lowercased(),
         prepareDestination: DestinationPreparation? = nil,
-        packageService: MobilePackageService = MobilePackageService()
+        packageService: MobilePackageService = MobilePackageService(),
+        changeImporter: MobileChangeImporter = MobileChangeImporter()
     ) {
         self.rootURL = rootURL
         self.destinationToken = destinationToken
+        self.changeImporter = changeImporter
         let identityStore = PortableLibraryIdentityStore()
         self.identityPreview = identityPreview ?? { root in try identityStore.preview(root: root) }
         self.identityCommit = identityCommit ?? { root, id in try identityStore.loadOrCreate(root: root, confirmedID: id) }
@@ -192,6 +199,55 @@ public final class MobileSyncStore {
     public func startRetry() {
         operationTask?.cancel()
         operationTask = Task { [weak self] in await self?.retry() }
+    }
+
+    /// Authenticated return data is classified before any Mac command can
+    /// run. This direct entry point is also used by fixture journeys while
+    /// the package service keeps its opaque decryption capability private.
+    public func previewReturnChanges(
+        envelope: MobilePackageEnvelope,
+        expectedLibraryID: PortableLibraryID,
+        currentSnapshot: MobileLibrarySnapshot,
+        sourcePackageID: UUID
+    ) throws {
+        let result = try changeImporter.preview(
+            envelope: envelope,
+            expectedLibraryID: expectedLibraryID,
+            currentSnapshot: currentSnapshot,
+            sourcePackageID: sourcePackageID
+        )
+        changePreview = result
+        changeResolutions = result.conflicts.reduce(into: [:]) { values, conflict in
+            if conflict.kind == .note { values[conflict.changeID] = .keepBothAsFieldNote }
+        }
+        appliedChangeReceipt = nil
+        didApplyIncomingChanges = false
+        phase = .importPreviewReady
+        failure = nil
+        errorMessage = nil
+    }
+
+    public func setChangeResolution(_ resolution: MobileChangeResolution, for changeID: UUID) {
+        guard changePreview?.conflicts.contains(where: { $0.changeID == changeID }) == true else { return }
+        changeResolutions[changeID] = resolution
+    }
+
+    public func applyReturnChanges(
+        envelope: MobilePackageEnvelope,
+        currentSnapshot: MobileLibrarySnapshot,
+        confirmed: Bool
+    ) throws {
+        guard let changePreview else { throw MobileChangeImportError.stalePreview }
+        let receipt = try changeImporter.apply(
+            preview: changePreview,
+            envelope: envelope,
+            currentSnapshot: currentSnapshot,
+            resolutions: changeResolutions,
+            confirmed: confirmed
+        )
+        appliedChangeReceipt = receipt
+        didApplyIncomingChanges = true
+        phase = .importPreviewReady
     }
 
     /// Builds the safe, allowlisted snapshot from the already-open metadata
@@ -412,6 +468,9 @@ public final class MobileSyncStore {
         phase = .idle
         preview = nil
         incomingPreview = nil
+        changePreview = nil
+        changeResolutions = [:]
+        appliedChangeReceipt = nil
         exportedURL = nil
         packageID = nil
         encryptedByteCount = nil
@@ -444,6 +503,9 @@ public final class MobileSyncStore {
         phase = .idle
         preview = nil
         incomingPreview = nil
+        changePreview = nil
+        changeResolutions = [:]
+        appliedChangeReceipt = nil
         exportedURL = nil
         packageID = nil
         encryptedByteCount = nil
@@ -478,6 +540,9 @@ public final class MobileSyncStore {
         if next != .importing {
             preview = nil
             incomingPreview = nil
+            changePreview = nil
+            changeResolutions = [:]
+            appliedChangeReceipt = nil
             exportedURL = nil
             packageID = nil
             encryptedByteCount = nil
@@ -535,6 +600,9 @@ public final class MobileSyncStore {
         phase = .idle
         preview = nil
         exportedURL = nil
+        changePreview = nil
+        changeResolutions = [:]
+        appliedChangeReceipt = nil
         packageID = nil
         encryptedByteCount = nil
         exportedAt = nil

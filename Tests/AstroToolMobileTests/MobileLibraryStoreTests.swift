@@ -103,6 +103,45 @@ import Testing
     }
 }
 
+@Test func returnExportKeepsQueueAndCarriesOnlyTypedChanges() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try await fixture.store.editNote(id: "night-note", text: "Ready for the field")
+    let destination = fixture.rootURL.appendingPathComponent("return.astromobile", isDirectory: true)
+
+    let result = try await fixture.store.exportReturnPackage(to: destination)
+    #expect(!result.oneTimeQRPayload.isEmpty)
+    #expect(await fixture.store.queuedChanges.count == 1)
+    let key = try OneTimePackageKey(scanning: result.oneTimeQRPayload)
+    let preview = try await MobilePackageService().importPreview(from: destination, wrapping: key)
+    #expect(preview.incomingChanges.count == 1)
+}
+
+@Test func laterForwardSnapshotPrunesOnlyAcknowledgedQueueIDs() async throws {
+    let libraryID = UUID()
+    let fixture = try MobileStoreFixture(snapshotRevision: 1, libraryID: libraryID)
+    try await fixture.store.editNote(id: "night-note", text: "first")
+    try await fixture.store.toggleChecklistItem(briefingID: fixture.briefingID, itemID: "focus", isCompleted: true)
+    let queued = await fixture.store.queuedChanges
+    let acknowledgedID: UUID = {
+        if case .noteRevision(let value) = queued[0] { return value.changeID }
+        return UUID()
+    }()
+    let sourceFixture = try MobileStoreFixture(snapshotRevision: 2, libraryID: libraryID)
+    let key = OneTimePackageKey()
+    let packageURL = fixture.rootURL.appendingPathComponent("ack.astromobile", isDirectory: true)
+    _ = try await MobilePackageService().export(
+        MobilePackageEnvelope(snapshot: sourceFixture.snapshot, changes: [], acknowledgedChangeIDs: [acknowledgedID]),
+        to: packageURL,
+        wrapping: key
+    )
+    _ = try await fixture.store.stagePackage(from: packageURL)
+    try await fixture.store.importCurrentStagedPackage(key: key)
+
+    let remaining = await fixture.store.queuedChanges
+    #expect(remaining.count == 1)
+    if case .checklistCompletion = remaining[0] {} else { Issue.record("The unrelated queued change was not retained") }
+}
+
 @Test func relaunchRecoversSnapshotQueueAndDeviceID() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let first = fixture.store

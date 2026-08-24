@@ -344,9 +344,25 @@ public struct MobileSyncView: View {
                 packageIDRow(incoming.packageID)
                 LabeledContent("Encrypted size", value: ByteCountFormatter.string(fromByteCount: incoming.encryptedByteCount, countStyle: .file))
                 LabeledContent("Incoming changes", value: incoming.incomingChanges.count.formatted())
+                if let changes = store.changePreview {
+                    LabeledContent("Ready to apply", value: changes.applicable.count.formatted())
+                    LabeledContent("Needs your choice", value: changes.conflicts.count.formatted())
+                    LabeledContent("Already handled", value: changes.alreadyApplied.count.formatted())
+                    LabeledContent("Not imported", value: changes.rejected.count.formatted())
+                    if !changes.conflicts.isEmpty {
+                        Text("Choose what to do with each conflict. Notes default to Keep both as field note.")
+                            .astroBody()
+                            .foregroundStyle(AstroTokens.Color.attention)
+                    }
+                }
                 Text("Applying changes will be confirmed separately. Nothing in the image library has changed.")
                     .astroBody()
                     .foregroundStyle(AstroTokens.Color.attention)
+                Text("Checklist and notes only. Original photos stay on this Mac or external drive. Mac review is required; there is no automatic or cloud sync.")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(AstroTokens.Color.ok)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("v5.mobile-sync.return.safety")
             }
             Button("Done") { cancelAndClear() }
                 .buttonStyle(.borderedProminent)
