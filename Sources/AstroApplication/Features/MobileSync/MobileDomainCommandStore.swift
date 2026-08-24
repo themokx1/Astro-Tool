@@ -238,6 +238,13 @@ private actor MobileMacDomainCommandBridge {
                 savedAt = max(savedAt, command.createdAt)
             }
         }
+        // Per-mutation text is already bounded by `Limits.maxTextBytes`, but
+        // `.appendFieldNote` accumulates onto `draft.notes` across up to
+        // 10,000 phone changes, so the resulting string needs its own cap.
+        // This must run before any durable write below.
+        guard draft.notes.utf8.count <= MobileChangeImporter.Limits.maxAccumulatedNotesBytes else {
+            throw MobileChangeImportError.limitsExceeded
+        }
         draft.savedAt = savedAt
         draft.mobileChangeIDs = Array(existingIDs.union(requestedIDs)).sorted { $0.uuidString < $1.uuidString }
         draft.mobileChangeMarkers += requestedMarkers.filter { existingMarkers[$0.changeID] == nil }

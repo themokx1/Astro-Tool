@@ -67,6 +67,7 @@ package protocol MobileSentSnapshotAcknowledgementStore: MobileSentSnapshotStore
     func claimPublished(snapshotID: UUID, packageID: UUID, sourceFingerprint: String) throws -> MobileSentSnapshotRecord
     func consumeClaimed(snapshotID: UUID, packageID: UUID, sourceFingerprint: String) throws
     func consumePublished(snapshotID: UUID) throws
+    func releaseClaim(snapshotID: UUID, packageID: UUID, sourceFingerprint: String) throws
 }
 
 package final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledgementStore, @unchecked Sendable {
@@ -250,6 +251,39 @@ package final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowled
                 throw MobileChangeImportError.snapshotMismatch
             }
             records.removeAll { $0.snapshotID == snapshotID }
+        }
+    }
+
+    /// Apply-failure recovery path: gives a claimed base back to `.published`
+    /// so it is neither leaked forever nor immediately usable by an unrelated
+    /// package. The claim's whole purpose is mutual exclusion around the
+    /// domain write inside `importer.apply`; once that call has thrown, no
+    /// domain write happened (or, if a receipt exists, the caller uses a
+    /// different path than this one -- see `MobileReturnApplicationCoordinator
+    /// .apply`), so nothing is left in an inconsistent state by unclaiming.
+    /// Exact-match on package and fingerprint is required so this can only
+    /// release the specific claim its own failed apply attempt created, never
+    /// a different in-flight apply's claim (e.g. a losing competitor's, which
+    /// never gets to observe a `.claimed` state for its own identity here).
+    package func releaseClaim(
+        snapshotID: UUID,
+        packageID: UUID,
+        sourceFingerprint: String
+    ) throws {
+        try mutate { records in
+            guard let index = records.firstIndex(where: { $0.snapshotID == snapshotID }),
+                  records[index].state == .claimed,
+                  records[index].claimedPackageID == packageID,
+                  records[index].claimedSourceFingerprint == sourceFingerprint else {
+                throw MobileChangeImportError.snapshotMismatch
+            }
+            records[index] = MobileSentSnapshotRecord(
+                snapshotID: snapshotID,
+                acknowledgementIDs: records[index].acknowledgementIDs,
+                state: .published,
+                claimedPackageID: nil,
+                claimedSourceFingerprint: nil
+            )
         }
     }
 

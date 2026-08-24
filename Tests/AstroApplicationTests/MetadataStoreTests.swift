@@ -121,6 +121,75 @@ struct MetadataStoreTests {
         #expect(saved.notes == "Mac edit with differing fabricated evidence")
     }
 
+    @Test("applyMobileProjectAnnotationBatch rejects a field-note append that would push accumulated notes over the bound")
+    func applyMobileProjectAnnotationBatchRejectsAccumulatedNotesOverBound() async throws {
+        let store = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 33", displayName: "Trifid", phase: .collecting)
+        try await store.save(project)
+        let baseline = Date(timeIntervalSince1970: 1_786_404_000)
+        // Comfortably near the 1 MiB accumulated-notes bound; the field-note
+        // wrapper plus the appended text below pushes it well over, no
+        // matter how the locale formats the timestamp in the wrapper.
+        let nearLimitNotes = String(repeating: "m", count: 1_048_576 - 50)
+        try await store.createProjectAnnotation(ProjectAnnotationRecord(
+            projectID: project.id, integrationGoalHours: nil, notes: nearLimitNotes, updatedAt: baseline
+        ))
+        let changeID = UUID()
+
+        await #expect(throws: MobileChangeImportError.limitsExceeded) {
+            _ = try await store.applyMobileProjectAnnotationBatch(.init(
+                projectID: project.id,
+                expectedRevision: 0,
+                mutations: [(.init(
+                    changeID: changeID,
+                    noteID: "project-\(project.id.uuidString.lowercased())",
+                    ownerID: project.id.uuidString,
+                    text: String(repeating: "x", count: 500),
+                    expectedRevision: 0,
+                    resultingRevision: 1,
+                    createdAt: baseline.addingTimeInterval(10)
+                ), .appendFieldNote)]
+            ))
+        }
+
+        let unchanged = try #require(try await store.projectAnnotation(projectID: project.id))
+        #expect(unchanged.revision == 0)
+        #expect(unchanged.notes == nearLimitNotes)
+        #expect(!unchanged.mobileChangeIDs.contains(changeID))
+    }
+
+    @Test("applyMobileProjectAnnotationBatch accepts a resulting notes text exactly at the accumulated bound")
+    func applyMobileProjectAnnotationBatchAcceptsExactAccumulatedNotesBound() async throws {
+        let store = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion", phase: .collecting)
+        try await store.save(project)
+        let baseline = Date(timeIntervalSince1970: 1_786_404_000)
+        try await store.createProjectAnnotation(ProjectAnnotationRecord(
+            projectID: project.id, integrationGoalHours: nil, notes: "Mac base", updatedAt: baseline
+        ))
+        let changeID = UUID()
+        let exactlyAtBound = String(repeating: "n", count: 1_048_576)
+
+        let applied = try await store.applyMobileProjectAnnotationBatch(.init(
+            projectID: project.id,
+            expectedRevision: 0,
+            mutations: [(.init(
+                changeID: changeID,
+                noteID: "project-\(project.id.uuidString.lowercased())",
+                ownerID: project.id.uuidString,
+                text: exactlyAtBound,
+                expectedRevision: 0,
+                resultingRevision: 1,
+                createdAt: baseline.addingTimeInterval(10)
+            ), .replace)]
+        ))
+
+        #expect(applied.resultingRevisions[changeID.uuidString] == 1)
+        let saved = try #require(try await store.projectAnnotation(projectID: project.id))
+        #expect(saved.notes.utf8.count == 1_048_576)
+        #expect(saved.revision == 1)
+    }
+
     @Test("Acknowledging a finding group upserts on ack key and revoking removes it")
     func acknowledgeFindingGroupUpsertsAndRevokes() async throws {
         let store = try MetadataStore.temporary()

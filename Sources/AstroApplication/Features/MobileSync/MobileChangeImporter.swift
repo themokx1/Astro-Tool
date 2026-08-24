@@ -443,6 +443,16 @@ package final class MobileChangeImporter: @unchecked Sendable {
             self.maxChanges = maxChanges
             self.maxTextBytes = maxTextBytes
         }
+
+        /// `maxTextBytes` bounds a single mutation's text, but
+        /// `.appendFieldNote` mutations accumulate onto existing notes across
+        /// up to thousands of phone changes, so the *resulting* notes string
+        /// needs its own independent ceiling. Enforced by both mobile domain
+        /// command bridges: `MobileMacDomainCommandBridge` (briefing notes,
+        /// in MobileDomainCommandStore.swift) and
+        /// `MetadataStore.applyMobileProjectAnnotationBatch` (project
+        /// annotation notes, in MetadataStore.swift).
+        package static let maxAccumulatedNotesBytes = 1_048_576
     }
 
     private let commands: MobileChangeCommands

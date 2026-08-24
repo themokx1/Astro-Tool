@@ -164,13 +164,32 @@ public actor MobileReturnApplicationCoordinator {
             packageID: livePackage.packageID,
             sourceFingerprint: refreshed.sourceFingerprint
         )
-        let receipt = try await importer.apply(
-            preview: refreshed,
-            authenticatedReturn: livePackage,
-            currentSnapshot: currentSnapshot,
-            resolutions: resolutions,
-            confirmed: confirmed
-        )
+        let receipt: MobileChangeApplicationReceipt
+        do {
+            receipt = try await importer.apply(
+                preview: refreshed,
+                authenticatedReturn: livePackage,
+                currentSnapshot: currentSnapshot,
+                resolutions: resolutions,
+                confirmed: confirmed
+            )
+        } catch {
+            // Releasing after a failed apply (including a `partialReceipt`
+            // reported by the importer itself, e.g. a domain batch failure
+            // partway through) is safe because global change-ID markers make
+            // any replay idempotent: a retry of already-applied changes is a
+            // no-op, so the base's mutual-exclusion job is over once
+            // `importer.apply` has thrown, and the same package may still
+            // re-claim it. Deliberately not done in `discard(_:)`, which can
+            // run concurrently with an in-flight apply and must not disturb
+            // that apply's exclusive claim.
+            try? sentBases.releaseClaim(
+                snapshotID: livePackage.baseSnapshotID,
+                packageID: livePackage.packageID,
+                sourceFingerprint: refreshed.sourceFingerprint
+            )
+            throw error
+        }
         do {
             // The phone package itself proves the attached forward
             // acknowledgements were observed. Prune the latest root ledger

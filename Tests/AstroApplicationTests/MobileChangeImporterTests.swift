@@ -493,6 +493,84 @@ struct MobileChangeImporterTests {
         #expect(Set(result.appliedChangeIDs) == Set([checklistID, noteID]))
     }
 
+    @Test("production briefing batch rejects a field-note append that would push accumulated notes over the bound")
+    func productionBriefingBatchRejectsAccumulatedNotesOverBound() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let briefingID = UUID()
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let revisions = NightBriefingRevisionStore(directory: paths.briefings)
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_100)
+        // Comfortably near the 1 MiB accumulated-notes bound; the field-note
+        // wrapper plus the appended text below pushes it well over, no
+        // matter how the locale formats the timestamp in the wrapper.
+        let nearLimitNotes = String(repeating: "m", count: 1_048_576 - 50)
+        let original = try await revisions.create(NightBriefingDraft(
+            id: briefingID,
+            savedAt: savedAt,
+            notes: nearLimitNotes
+        ))
+        let changeID = UUID()
+        let commands = try MobileChangeCommands.production(rootURL: root)
+
+        await #expect(throws: MobileChangeImportError.limitsExceeded) {
+            _ = try await commands.applyBatch(.briefing(.init(
+                briefingID: briefingID,
+                expectedRevision: original.revision,
+                mutations: [.note(.init(
+                    changeID: changeID,
+                    noteID: "briefing-\(briefingID.uuidString.lowercased())",
+                    ownerID: briefingID.uuidString,
+                    text: String(repeating: "x", count: 500),
+                    expectedRevision: original.revision,
+                    resultingRevision: original.revision + 1,
+                    createdAt: savedAt.addingTimeInterval(10)
+                ), .appendFieldNote)]
+            )))
+        }
+
+        let latest = try #require(await revisions.latest(id: briefingID))
+        #expect(latest.revision == original.revision)
+        #expect(latest.notes == nearLimitNotes)
+        #expect(!latest.mobileChangeIDs.contains(changeID))
+    }
+
+    @Test("production briefing batch accepts a resulting notes text exactly at the accumulated bound")
+    func productionBriefingBatchAcceptsExactAccumulatedNotesBound() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let briefingID = UUID()
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let revisions = NightBriefingRevisionStore(directory: paths.briefings)
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_100)
+        let original = try await revisions.create(NightBriefingDraft(
+            id: briefingID,
+            savedAt: savedAt,
+            notes: "Mac note"
+        ))
+        let changeID = UUID()
+        let exactlyAtBound = String(repeating: "n", count: 1_048_576)
+        let commands = try MobileChangeCommands.production(rootURL: root)
+
+        _ = try await commands.applyBatch(.briefing(.init(
+            briefingID: briefingID,
+            expectedRevision: original.revision,
+            mutations: [.note(.init(
+                changeID: changeID,
+                noteID: "briefing-\(briefingID.uuidString.lowercased())",
+                ownerID: briefingID.uuidString,
+                text: exactlyAtBound,
+                expectedRevision: original.revision,
+                resultingRevision: original.revision + 1,
+                createdAt: savedAt.addingTimeInterval(10)
+            ), .replace)]
+        )))
+
+        let latest = try #require(await revisions.latest(id: briefingID))
+        #expect(latest.notes.utf8.count == 1_048_576)
+        #expect(latest.mobileChangeIDs == [changeID])
+    }
+
     @Test("same-ID concurrent production retries create one briefing revision and one field note")
     func concurrentProductionRetriesAreIdempotent() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)

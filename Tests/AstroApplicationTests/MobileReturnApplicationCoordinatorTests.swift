@@ -199,6 +199,149 @@ struct MobileReturnApplicationCoordinatorTests {
         ).loadPublishedRecords().map(\.snapshotID) == [refreshed.snapshotID])
     }
 
+    @Test("a failed apply releases its claim so a different package can claim the base")
+    func failedApplyReleasesClaimForDifferentPackage() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("return-release-other-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identityStore = PortableLibraryIdentityStore()
+        let libraryID = try identityStore.preview(root: root).proposedID
+        _ = try identityStore.loadOrCreate(root: root, confirmedID: libraryID)
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let briefingStore = NightBriefingRevisionStore(directory: paths.briefings)
+        let briefingID = UUID()
+        let noteID = "briefing-\(briefingID.uuidString.lowercased())"
+        let original = try await briefingStore.create(NightBriefingDraft(
+            id: briefingID,
+            savedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            notes: "Mac note"
+        ))
+        let base = MobileLibrarySnapshot(
+            schemaVersion: 1,
+            libraryID: libraryID,
+            snapshotID: UUID(),
+            revision: 1,
+            createdAt: original.savedAt,
+            projects: [], nights: [], captures: [],
+            briefings: [.init(id: briefingID, revision: original.revision, savedAt: original.savedAt, nightDate: nil, readiness: "ready", targets: [], checklist: [], noteID: noteID)],
+            notes: [.init(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: original.notes, baseRevision: original.revision, updatedAt: original.savedAt, isEditableOnPhone: true)]
+        )
+        let service = MobilePackageService()
+        let sentFileURL = root.appendingPathComponent(".astro-tool/mobile-sent-snapshot.json")
+        let sent = MobileSentSnapshotIdentityStore(fileURL: sentFileURL)
+        try sent.reserve(snapshotID: base.snapshotID, acknowledgementIDs: [])
+        try sent.markPublished(snapshotID: base.snapshotID)
+        let coordinator = try MobileReturnApplicationCoordinator.production(
+            rootURL: root,
+            packageService: service,
+            currentSnapshotProvider: { base }
+        )
+        let returnURL = root.appendingPathComponent("return.astromobile", isDirectory: true)
+        let returnKey = OneTimePackageKey()
+        _ = try await service.export(
+            MobilePackageEnvelope(
+                purpose: .returnChanges,
+                snapshot: base,
+                baseSnapshotID: base.snapshotID,
+                changes: [.noteRevision(.init(changeID: UUID(), deviceID: UUID(), noteID: noteID, ownerID: briefingID.uuidString, baseRevision: original.revision, text: "Phone note", createdAt: original.savedAt.addingTimeInterval(1)))],
+                acknowledgedChangeIDs: []
+            ),
+            to: returnURL,
+            wrapping: returnKey
+        )
+        let review = try await coordinator.preview(from: returnURL, wrapping: returnKey)
+
+        // confirmed: false makes the real importer's apply throw
+        // `finalConfirmationRequired` immediately after the coordinator has
+        // already claimed the base.
+        await #expect(throws: MobileChangeImportError.finalConfirmationRequired) {
+            try await coordinator.apply(review, resolutions: [:], confirmed: false)
+        }
+
+        // The base must not be permanently stuck as claimed: a wholly
+        // different package can claim it now.
+        let otherPackageID = UUID()
+        let otherFingerprint = String(repeating: "c", count: 64)
+        let reclaimed = try MobileSentSnapshotIdentityStore(fileURL: sentFileURL).claimPublished(
+            snapshotID: base.snapshotID,
+            packageID: otherPackageID,
+            sourceFingerprint: otherFingerprint
+        )
+        #expect(reclaimed.claimedPackageID == otherPackageID)
+
+        // Nothing was written to the domain store by the failed attempt.
+        let stillOriginal = try #require(await briefingStore.latest(id: briefingID))
+        #expect(stillOriginal.notes == "Mac note")
+        #expect(stillOriginal.revision == original.revision)
+    }
+
+    @Test("a successful retry of the same package still works after a failed apply attempt")
+    func sameProductPackageCanRetryAfterFailedApply() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("return-release-retry-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identityStore = PortableLibraryIdentityStore()
+        let libraryID = try identityStore.preview(root: root).proposedID
+        _ = try identityStore.loadOrCreate(root: root, confirmedID: libraryID)
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let briefingStore = NightBriefingRevisionStore(directory: paths.briefings)
+        let briefingID = UUID()
+        let noteID = "briefing-\(briefingID.uuidString.lowercased())"
+        let original = try await briefingStore.create(NightBriefingDraft(
+            id: briefingID,
+            savedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            notes: "Mac note"
+        ))
+        let base = MobileLibrarySnapshot(
+            schemaVersion: 1,
+            libraryID: libraryID,
+            snapshotID: UUID(),
+            revision: 1,
+            createdAt: original.savedAt,
+            projects: [], nights: [], captures: [],
+            briefings: [.init(id: briefingID, revision: original.revision, savedAt: original.savedAt, nightDate: nil, readiness: "ready", targets: [], checklist: [], noteID: noteID)],
+            notes: [.init(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: original.notes, baseRevision: original.revision, updatedAt: original.savedAt, isEditableOnPhone: true)]
+        )
+        let service = MobilePackageService()
+        let sent = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent(".astro-tool/mobile-sent-snapshot.json"))
+        try sent.reserve(snapshotID: base.snapshotID, acknowledgementIDs: [])
+        try sent.markPublished(snapshotID: base.snapshotID)
+        let coordinator = try MobileReturnApplicationCoordinator.production(
+            rootURL: root,
+            packageService: service,
+            currentSnapshotProvider: { base }
+        )
+        let changeID = UUID()
+        let returnURL = root.appendingPathComponent("return.astromobile", isDirectory: true)
+        let returnKey = OneTimePackageKey()
+        _ = try await service.export(
+            MobilePackageEnvelope(
+                purpose: .returnChanges,
+                snapshot: base,
+                baseSnapshotID: base.snapshotID,
+                changes: [.noteRevision(.init(changeID: changeID, deviceID: UUID(), noteID: noteID, ownerID: briefingID.uuidString, baseRevision: original.revision, text: "Phone note", createdAt: original.savedAt.addingTimeInterval(1)))],
+                acknowledgedChangeIDs: []
+            ),
+            to: returnURL,
+            wrapping: returnKey
+        )
+        let review = try await coordinator.preview(from: returnURL, wrapping: returnKey)
+
+        await #expect(throws: MobileChangeImportError.finalConfirmationRequired) {
+            try await coordinator.apply(review, resolutions: [:], confirmed: false)
+        }
+
+        // Retrying with the very same review (same package) still succeeds:
+        // the release did not consume the package's capability or the
+        // coordinator's session.
+        let receipt = try await coordinator.apply(review, resolutions: [:], confirmed: true)
+        #expect(receipt.appliedChangeIDs == [changeID])
+        let changed = try #require(await briefingStore.latest(id: briefingID))
+        #expect(changed.notes == "Phone note")
+    }
+
     @Test("competing packages for one published base perform exactly one domain write")
     func competingBaseHasOneApplyingSession() async throws {
         let root = FileManager.default.temporaryDirectory

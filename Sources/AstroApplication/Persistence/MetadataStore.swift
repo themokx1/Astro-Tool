@@ -255,6 +255,14 @@ public actor MetadataStore {
                 }
                 savedAt = max(savedAt, command.createdAt)
             }
+            // Per-mutation text is already bounded by
+            // `MobileChangeImporter.Limits.maxTextBytes`, but
+            // `.appendFieldNote` accumulates onto `notes` across up to
+            // 10,000 phone changes, so the resulting string needs its own
+            // cap. This must run before the upsert below.
+            guard notes.utf8.count <= MobileChangeImporter.Limits.maxAccumulatedNotesBytes else {
+                throw MobileChangeImportError.limitsExceeded
+            }
             let nextRevision = existing.revision + 1
             try upsert(ProjectAnnotationRecord(
                 projectID: existing.projectID,
