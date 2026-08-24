@@ -97,6 +97,21 @@ func mobileMutationSurfaceContract() throws {
         .map(visibleTextLiterals)
         .joined(separator: "\n")
         .lowercased()
+    let noteAction = #"Button(String(localized: "Update note"))"#
+    #expect(source.components(separatedBy: noteAction.lowercased()).count - 1 == 2)
+
+    let english = try String(
+        contentsOf: repository.appendingPathComponent("Sources/AstroToolMobile/Resources/en.lproj/Localizable.strings"),
+        encoding: .utf8
+    )
+    let hungarian = try String(
+        contentsOf: repository.appendingPathComponent("Sources/AstroToolMobile/Resources/hu.lproj/Localizable.strings"),
+        encoding: .utf8
+    )
+    #expect(english.contains(#""Update note" = "Update note";"#))
+    #expect(hungarian.contains(#""Update note" = "Jegyzet módosítása";"#))
+    #expect(!english.contains(#""Edit" = "#))
+    #expect(!hungarian.contains(#""Edit" = "#))
 
     for forbidden in [
         "finder", "file path", "path", "crud", "file management", "file-management",
@@ -134,7 +149,7 @@ func briefingRowsUseUniqueSemanticIdentifiers() throws {
 
 private func visibleTextLiterals(in source: String) -> String {
     let expression = try! NSRegularExpression(
-        pattern: #"(?:Text|Button|Label|LabeledContent|ContentUnavailableView|navigationTitle|alert)\(\s*\"([^\"]+)\""#
+        pattern: #"(?:Text|Button|Label|LabeledContent|ContentUnavailableView|navigationTitle|alert)\(\s*(?:String\(localized:\s*)?\"([^\"]+)\""#
     )
     let range = NSRange(source.startIndex..., in: source)
     return expression.matches(in: source, range: range).compactMap { match in

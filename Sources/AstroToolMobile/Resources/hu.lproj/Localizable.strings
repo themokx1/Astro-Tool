@@ -42,7 +42,7 @@
 "Planned" = "Tervezve";
 "Checklist" = "Ellenőrzőlista";
 "Your note" = "Saját jegyzet";
-"Edit" = "Szerkesztés";
+"Update note" = "Jegyzet módosítása";
 "Save note" = "Jegyzet mentése";
 "A blank note is kept as a blank revision." = "Az üres jegyzet üres változatként megmarad.";
 "No note yet" = "Még nincs jegyzet";

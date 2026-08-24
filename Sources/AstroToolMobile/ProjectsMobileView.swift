@@ -191,7 +191,7 @@ private struct ProjectMobileDetailView: View {
                         HStack {
                             Text(noteText.isEmpty ? String(localized: "No note yet") : noteText).foregroundStyle(noteText.isEmpty ? .secondary : .primary)
                             Spacer()
-                            Button("Update note") { noteDraft = noteText; editingNote = true }.accessibilityIdentifier("mobile-project-note-edit")
+                            Button(String(localized: "Update note")) { noteDraft = noteText; editingNote = true }.accessibilityIdentifier("mobile-project-note-edit")
                         }
                     }
                 }

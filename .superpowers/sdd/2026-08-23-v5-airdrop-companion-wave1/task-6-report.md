@@ -153,3 +153,22 @@ git diff --check                                       # passed
 No Xcode build, simulator launch, or iPhone UI-test runtime is claimed. The account/CoreSimulator gate remains the follow-up verification boundary.
 
 A broad local `swiftc -typecheck` pass also stops at the pre-existing, unchanged ternary `Label` expression in `BriefingsMobileView.swift:102` because the host compiler cannot type-check that expression in reasonable time. This is not part of the two residual fixes and is not represented as a successful type-check result.
+
+## Fix round 5 — localized scoped note affordances
+
+- Both intentional note-affordance buttons now use the stable `Update note` localization key. English renders `Update note`; Hungarian renders `Jegyzet módosítása`. The unused generic `Edit` key was removed from both tables.
+- The source-backed contract requires exactly two `Button(String(localized: "Update note"))` call sites, validates both localized values, and rejects any remaining generic `Edit` localization key. Its visible-control extraction includes `String(localized:)`, so this is not an English-only literal workaround: scoped note actions are allowed by their stable key and control context, while visible generic `copy` and `edit` actions remain forbidden.
+
+Fix-round 5 safe verification:
+
+```text
+xcodegen generate                                      # passed
+swiftc -frontend -parse <all mobile sources/tests/UI tests> # passed
+localized note-action and visible-action source contracts # passed
+localization key-set parity (EN/HU)                    # passed
+swift test --disable-sandbox --filter MobilePackageServiceTests --no-parallel
+                                                       # 39 tests passed
+git diff --check                                       # passed
+```
+
+No Xcode build, simulator launch, or iPhone UI-test runtime is claimed.
