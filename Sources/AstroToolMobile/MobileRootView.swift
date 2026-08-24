@@ -46,9 +46,104 @@ enum MobileProjectProgress {
     }
 }
 
-enum MobileSurfaceSafety {
-    static let permittedMutationMethods = ["toggleChecklistItem", "editNote"]
-    static let forbiddenTerms = ["Finder", "path", "delete", "move", "rename", "original file"]
+enum MobileProjectPhaseLabel {
+    static func label(for value: String) -> String {
+        switch value.lowercased() {
+        case "planned": return String(localized: "Planned")
+        case "collecting": return String(localized: "Collecting")
+        case "processing": return String(localized: "Processing")
+        case "complete": return String(localized: "Complete")
+        case "archived": return String(localized: "Archived")
+        default: return String(localized: "Planned")
+        }
+    }
+}
+
+enum MobileBriefingReadinessLabel {
+    static func label(for value: String) -> String {
+        switch value.lowercased() {
+        case "ready": return String(localized: "Ready")
+        case "attention": return String(localized: "Needs attention")
+        case "incomplete": return String(localized: "Incomplete")
+        default: return String(localized: "Plan status available")
+        }
+    }
+}
+
+enum MobileBriefingTargetRoleLabel {
+    static func label(for value: String) -> String {
+        switch value.lowercased() {
+        case "primary": return String(localized: "Primary target")
+        case "backup": return String(localized: "Backup target")
+        default: return String(localized: "Target")
+        }
+    }
+}
+
+enum MobileBriefingSelection {
+    enum Kind: Equatable, Sendable {
+        case tonight
+        case upcoming
+        case past
+        case saved
+    }
+
+    struct Result: Equatable, Sendable {
+        let briefing: MobileBriefing
+        let kind: Kind
+    }
+
+    static func select(briefings: [MobileBriefing], now: Date, calendar: Calendar = .current) -> Result? {
+        let stable = briefings.sorted { lhs, rhs in
+            lhs.savedAt == rhs.savedAt ? lhs.id.uuidString < rhs.id.uuidString : lhs.savedAt > rhs.savedAt
+        }
+        let today = calendar.startOfDay(for: now)
+        if let tonight = stable.filter({ briefing in
+            guard let date = briefing.nightDate else { return false }
+            return calendar.isDate(date, inSameDayAs: today)
+        }).first {
+            return Result(briefing: tonight, kind: .tonight)
+        }
+        if let upcoming = stable.filter({ briefing in
+            guard let date = briefing.nightDate else { return false }
+            return date > now
+        }).sorted(by: upcomingSort).first {
+            return Result(briefing: upcoming, kind: .upcoming)
+        }
+        if let past = stable.filter({ briefing in
+            guard let date = briefing.nightDate else { return false }
+            return date <= now
+        }).sorted(by: pastSort).first {
+            return Result(briefing: past, kind: .past)
+        }
+        return stable.first.map { Result(briefing: $0, kind: .saved) }
+    }
+
+    static func timeZone(for date: Date, nights: [MobileNight]) -> TimeZone? {
+        let matches = nights.filter { night in
+            guard let zone = TimeZone(identifier: night.timeZoneID) else { return false }
+            var calendar = Calendar(identifier: .gregorian)
+            calendar.timeZone = zone
+            let formatter = DateFormatter()
+            formatter.calendar = calendar
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = zone
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.string(from: date) == night.localDate
+        }
+        guard matches.count == 1 else { return nil }
+        return TimeZone(identifier: matches[0].timeZoneID)
+    }
+
+    private static func upcomingSort(_ lhs: MobileBriefing, _ rhs: MobileBriefing) -> Bool {
+        guard let left = lhs.nightDate, let right = rhs.nightDate else { return lhs.id.uuidString < rhs.id.uuidString }
+        return left == right ? lhs.savedAt > rhs.savedAt : left < right
+    }
+
+    private static func pastSort(_ lhs: MobileBriefing, _ rhs: MobileBriefing) -> Bool {
+        guard let left = lhs.nightDate, let right = rhs.nightDate else { return lhs.id.uuidString < rhs.id.uuidString }
+        return left == right ? lhs.savedAt > rhs.savedAt : left > right
+    }
 }
 
 @MainActor
@@ -112,6 +207,16 @@ struct MobileRootView: View {
                         Spacer()
                         Button("Dismiss") { self.intakeError = nil; message = nil }
                     }.padding(10).background(.red.opacity(0.15)).accessibilityIdentifier("mobile-intake-error")
+                }
+                if let message, intakeError == nil {
+                    HStack {
+                        Text(LocalizedStringKey(message)).font(.footnote)
+                        Spacer()
+                        Button("Dismiss") { self.message = nil }
+                    }
+                    .padding(10)
+                    .background(.red.opacity(0.15))
+                    .accessibilityIdentifier("mobile-action-error")
                 }
                 if durabilityWarning || durabilityAttemptWarning || durabilityAmbiguousWarning {
                     Label(durabilityWarning ? "The latest change was saved, but iPhone storage needs attention. Keep the app open and make a backup before the next import." : durabilityAttemptWarning ? "A save attempt may need attention. Keep the app open and try the same action again." : "AstroTool could not confirm whether the latest save reached iPhone storage. Keep this iPhone data unchanged and restore from a trusted backup before retrying.", systemImage: "externaldrive.badge.exclamationmark")
@@ -250,12 +355,6 @@ struct MobileRootView: View {
                 }
                 .padding()
                 .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
-            }
-            if let message {
-                Text(LocalizedStringKey(message))
-                    .foregroundStyle(.red)
-                    .font(.callout)
-                    .accessibilityIdentifier("mobile-import-error")
             }
         }
     }

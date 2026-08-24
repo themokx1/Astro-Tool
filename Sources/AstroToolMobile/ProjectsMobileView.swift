@@ -24,15 +24,20 @@ struct ProjectsMobileView: View {
         snapshot.projects.sorted { lhs, rhs in
             switch sortMode {
             case .name:
-                return lhs.displayName.localizedStandardCompare(rhs.displayName) == .orderedAscending
+                let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
+                return comparison == .orderedSame ? lhs.id.uuidString < rhs.id.uuidString : comparison == .orderedAscending
             case .phase:
-                let leftPhase = phaseLabel(lhs.phase)
-                let rightPhase = phaseLabel(rhs.phase)
-                return leftPhase == rightPhase ? lhs.displayName < rhs.displayName : leftPhase < rightPhase
+                let leftPhase = phaseRank(lhs.phase)
+                let rightPhase = phaseRank(rhs.phase)
+                if leftPhase != rightPhase { return leftPhase < rightPhase }
+                let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
+                return comparison == .orderedSame ? lhs.id.uuidString < rhs.id.uuidString : comparison == .orderedAscending
             case .progress:
                 let left = MobileProjectProgress.fraction(integrationSeconds: lhs.integrationSeconds, goalHours: lhs.goalHours) ?? -1
                 let right = MobileProjectProgress.fraction(integrationSeconds: rhs.integrationSeconds, goalHours: rhs.goalHours) ?? -1
-                return left == right ? lhs.displayName < rhs.displayName : left > right
+                if left != right { return left > right }
+                let comparison = lhs.displayName.localizedStandardCompare(rhs.displayName)
+                return comparison == .orderedSame ? lhs.id.uuidString < rhs.id.uuidString : comparison == .orderedAscending
             }
         }
     }
@@ -66,11 +71,17 @@ struct ProjectsMobileView: View {
     }
 
     private func phaseLabel(_ value: String) -> String {
+        MobileProjectPhaseLabel.label(for: value)
+    }
+
+    private func phaseRank(_ value: String) -> Int {
         switch value.lowercased() {
-        case "ready", "complete", "completed": return String(localized: "Ready")
-        case "active", "inprogress", "in_progress": return String(localized: "In progress")
-        case "paused": return String(localized: "Paused")
-        default: return String(localized: "Planned")
+        case "planned": return 0
+        case "collecting": return 1
+        case "processing": return 2
+        case "complete": return 3
+        case "archived": return 4
+        default: return 5
         }
     }
 }
@@ -90,6 +101,10 @@ private struct ProjectRow: View {
             HStack {
                 Text(phaseLabel(project.phase)).font(.footnote).foregroundStyle(.secondary)
                 Spacer()
+                Text(collectedIntegration(project.integrationSeconds))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer()
                 if let fraction = MobileProjectProgress.fraction(integrationSeconds: project.integrationSeconds, goalHours: project.goalHours) {
                     Text("\(Int(fraction * 100))%")
                         .font(.footnote.monospacedDigit())
@@ -101,19 +116,23 @@ private struct ProjectRow: View {
             if let fraction = MobileProjectProgress.fraction(integrationSeconds: project.integrationSeconds, goalHours: project.goalHours) {
                 ProgressView(value: fraction)
                     .tint(Color(red: 0.373, green: 0.906, blue: 0.949))
-                    .accessibilityValue("\(Int(fraction * 100)) percent")
+                    .accessibilityValue(String.localizedStringWithFormat(NSLocalizedString("%d percent", comment: "Progress accessibility"), Int(fraction * 100)))
             }
         }
         .padding(.vertical, 5)
     }
 
     private func phaseLabel(_ value: String) -> String {
-        switch value.lowercased() {
-        case "ready", "complete", "completed": return String(localized: "Ready")
-        case "active", "inprogress", "in_progress": return String(localized: "In progress")
-        case "paused": return String(localized: "Paused")
-        default: return String(localized: "Planned")
+        MobileProjectPhaseLabel.label(for: value)
+    }
+
+    private func collectedIntegration(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds >= 0 else { return String(localized: "Integration unavailable") }
+        let minutes = Int(seconds / 60)
+        if minutes >= 60 {
+            return String.localizedStringWithFormat(NSLocalizedString("%d h %d min collected", comment: "Collected integration"), minutes / 60, minutes % 60)
         }
+        return String.localizedStringWithFormat(NSLocalizedString("%d min collected", comment: "Collected integration"), minutes)
     }
 }
 
@@ -138,7 +157,7 @@ private struct ProjectMobileDetailView: View {
                 LabeledContent("Phase", value: phaseLabel(project.phase))
                 LabeledContent("Integration", value: duration(project.integrationSeconds))
                 if let goal = project.goalHours, goal.isFinite, goal > 0 {
-                    LabeledContent("Goal", value: "\(goal.formatted(.number.precision(.fractionLength(1)))) hours")
+                    LabeledContent("Goal", value: String.localizedStringWithFormat(NSLocalizedString("%.1f hours", comment: "Integration goal"), goal))
                 }
             }
             Section("Image sets") {
@@ -151,7 +170,7 @@ private struct ProjectMobileDetailView: View {
                             HStack {
                                 Text(capture.filterName ?? "Unfiltered")
                                 Spacer()
-                                Text("\(duration(capture.integrationSeconds)) · \(capture.exposureSeconds.formatted(.number.precision(.fractionLength(1))) ) s exposures")
+                                Text(captureSummary(capture))
                             }
                             .font(.footnote).foregroundStyle(.secondary)
                         }
@@ -194,22 +213,25 @@ private struct ProjectMobileDetailView: View {
                 await onStoreChange()
             } catch MobileLibraryStoreError.noOpChange {
                 editingNote = false
-            } catch { message = "This note could not be saved yet." }
+            } catch { message = String(localized: "This note could not be saved yet.") }
         }
     }
 
     private func duration(_ seconds: Double) -> String {
-        guard seconds.isFinite, seconds >= 0 else { return "Not available" }
+        guard seconds.isFinite, seconds >= 0 else { return String(localized: "Not available") }
         let minutes = Int(seconds / 60)
-        return minutes >= 60 ? "\(minutes / 60) h \(minutes % 60) min" : "\(minutes) min"
+        if minutes >= 60 {
+            return String.localizedStringWithFormat(NSLocalizedString("%d h %d min", comment: "Duration"), minutes / 60, minutes % 60)
+        }
+        return String.localizedStringWithFormat(NSLocalizedString("%d min", comment: "Duration"), minutes)
     }
 
     private func phaseLabel(_ value: String) -> String {
-        switch value.lowercased() {
-        case "ready", "complete", "completed": return String(localized: "Ready")
-        case "active", "inprogress", "in_progress": return String(localized: "In progress")
-        case "paused": return String(localized: "Paused")
-        default: return String(localized: "Planned")
-        }
+        MobileProjectPhaseLabel.label(for: value)
+    }
+
+    private func captureSummary(_ capture: MobileCapture) -> String {
+        let exposure = String.localizedStringWithFormat(NSLocalizedString("%.1f s exposures", comment: "Exposure summary"), capture.exposureSeconds)
+        return "\(duration(capture.integrationSeconds)) · \(exposure)"
     }
 }

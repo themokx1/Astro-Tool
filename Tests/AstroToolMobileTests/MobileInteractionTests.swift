@@ -43,10 +43,35 @@ func projectProgressNeverProducesInvalidUIValues() {
     #expect(MobileProjectProgress.fraction(integrationSeconds: 1, goalHours: nil) == nil)
 }
 
-@Test("mobile surface language names only the two permitted phone edits")
-func mobileSurfaceSafetyContract() {
-    #expect(MobileSurfaceSafety.permittedMutationMethods == ["toggleChecklistItem", "editNote"])
-    #expect(MobileSurfaceSafety.forbiddenTerms.contains("Finder"))
-    #expect(MobileSurfaceSafety.forbiddenTerms.contains("path"))
-    #expect(MobileSurfaceSafety.forbiddenTerms.contains("delete"))
+@Test("mobile labels use the production project, readiness, and target values")
+func productionDomainValuesHaveHumanLabels() {
+    #expect(MobileProjectPhaseLabel.label(for: "planned") == "Planned")
+    #expect(MobileProjectPhaseLabel.label(for: "collecting") == "Collecting")
+    #expect(MobileProjectPhaseLabel.label(for: "processing") == "Processing")
+    #expect(MobileProjectPhaseLabel.label(for: "complete") == "Complete")
+    #expect(MobileProjectPhaseLabel.label(for: "archived") == "Archived")
+    #expect(MobileBriefingReadinessLabel.label(for: "attention") == "Needs attention")
+    #expect(MobileBriefingReadinessLabel.label(for: "incomplete") == "Incomplete")
+    #expect(MobileBriefingTargetRoleLabel.label(for: "primary") == "Primary target")
+    #expect(MobileBriefingTargetRoleLabel.label(for: "backup") == "Backup target")
+}
+
+@Test("briefing selection labels tonight, upcoming, past, and undated plans deterministically")
+func briefingSelectionIsHonestAndStable() {
+    let now = Date(timeIntervalSince1970: 2_000_000)
+    let calendar = Calendar(identifier: .gregorian)
+    let past = MobileBriefing(id: UUID(), revision: 1, savedAt: now.addingTimeInterval(-100), nightDate: now.addingTimeInterval(-86_400), readiness: "ready", targets: [], checklist: [], noteID: "past")
+    let future = MobileBriefing(id: UUID(), revision: 1, savedAt: now.addingTimeInterval(-50), nightDate: now.addingTimeInterval(86_400), readiness: "ready", targets: [], checklist: [], noteID: "future")
+    let undated = MobileBriefing(id: UUID(), revision: 1, savedAt: now, nightDate: nil, readiness: "ready", targets: [], checklist: [], noteID: "undated")
+    #expect(MobileBriefingSelection.select(briefings: [future, past], now: now, calendar: calendar)?.kind == .upcoming)
+    #expect(MobileBriefingSelection.select(briefings: [past], now: now, calendar: calendar)?.kind == .past)
+    #expect(MobileBriefingSelection.select(briefings: [undated], now: now, calendar: calendar)?.kind == .saved)
+}
+
+@Test("night timezone resolves by its local date instead of first-night order")
+func briefingTimezoneUsesMatchingNight() {
+    let date = Date(timeIntervalSince1970: 1_700_000_000)
+    let matching = MobileNight(id: UUID(), localDate: "2023-11-14", timeZoneID: "Europe/Budapest")
+    let unrelated = MobileNight(id: UUID(), localDate: "2026-08-23", timeZoneID: "America/Los_Angeles")
+    #expect(MobileBriefingSelection.timeZone(for: date, nights: [unrelated, matching])?.identifier == "Europe/Budapest")
 }

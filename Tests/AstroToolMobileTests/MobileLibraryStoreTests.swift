@@ -107,12 +107,16 @@ import Testing
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let first = fixture.store
     try await first.editNote(id: "night-note", text: "Field note")
+    try await first.toggleChecklistItem(briefingID: fixture.briefingID, itemID: "focus", isCompleted: true)
     let deviceID = await first.deviceID
 
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
     #expect(await relaunched.activeSnapshot?.revision == 1)
-    #expect(await relaunched.queuedChanges.count == 1)
+    #expect(await relaunched.queuedChanges.count == 2)
     #expect(await relaunched.deviceID == deviceID)
+    let changes = await relaunched.queuedChanges
+    #expect(MobileEffectiveState.noteText(noteID: "night-note", snapshotText: "", changes: changes) == "Field note")
+    #expect(MobileEffectiveState.checklistValue(briefingID: fixture.briefingID, itemID: "focus", snapshotValue: false, changes: changes))
 }
 
 @Test func corruptDeviceIdentityLocksWritesWithoutReplacingBytes() async throws {
@@ -676,7 +680,7 @@ private final class MobileStoreFixture {
             snapshotID: UUID(),
             revision: snapshotRevision,
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            projects: [MobileProject(id: projectID, displayName: "M31", catalogID: "M31", phase: "ready", integrationSeconds: 60, goalHours: nil)],
+            projects: [MobileProject(id: projectID, displayName: "M31", catalogID: "M31", phase: "collecting", integrationSeconds: 60, goalHours: nil)],
             nights: [MobileNight(id: nightID, localDate: "2026-08-23", timeZoneID: "Europe/Budapest")],
             captures: [],
             briefings: [MobileBriefing(

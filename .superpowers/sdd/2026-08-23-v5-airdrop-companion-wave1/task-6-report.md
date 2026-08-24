@@ -64,3 +64,27 @@ The shell stays intentionally quiet for outdoor use: one freshness signal, one v
 ## Runtime gate / concerns
 
 No Xcode build, simulator launch, XCTest execution, camera path, or UI-test runtime pass is claimed in this task. The host's current Xcode account/CoreSimulator gate blocks the fresh iOS build/runtime requested in the brief; it was not retried or escalated. The next verification should build the three mobile targets and run the focused unit/UI journeys on an available iOS 26.x runtime or Personal-Team device.
+
+## Fix round 1 — reviewer closure
+
+- Reconciled presentation with production mobile payload values: project phases `planned`, `collecting`, `processing`, `complete`, `archived`; briefing readiness `ready`, `attention`, `incomplete`; target roles `primary`, `backup`. The imported fixture now uses `collecting`, `ready`, and `primary`.
+- Tonight selection is deterministic: local-today briefing first, then nearest upcoming plan, then most recent past plan, then most recently saved undated plan. The title says Tonight, Upcoming plan, Saved plan from the past, or Saved plan honestly.
+- Planned date/time formatting resolves the matching `MobileNight.localDate` and `timeZoneID`; it never assumes the first night or silently chooses an unrelated zone.
+- Scanner/import action errors are rendered in the root safe-area banner for both empty and existing-library states. Constructed dates, durations, progress values, VoiceOver states/hints, plan windows, revisions, and save errors use localized keys in both EN/HU tables.
+- The horizon band now uses dynamic label color against the deep-sky surface and retains an icon/text stale signal; freshness shows both absolute and relative snapshot timestamps.
+- Sync says “Mac plan saved on this iPhone”, which describes persisted offline state without claiming a live Mac connection.
+- Removed the hand-written mutation/safety allowlist test. Interaction tests now cover real domain labels, deterministic briefing selection, matching-night timezone lookup, and effective queue overlays; the store relaunch test asserts the exact two-change queue and both effective note/checklist values.
+- Project rows show collected integration and use stable ID tie-breakers after name/phase/progress comparisons. Briefing rows display saved date plus planned date. Detail note styling follows the effective queued note text.
+- UI journeys now verify effective note display, exact queued count, production phase wording, and imported Hungarian navigation/safety wording. Runtime execution remains gated by Xcode account/CoreSimulator availability.
+
+Fix-round safe verification:
+
+```text
+xcodegen generate                                      # passed
+swiftc -typecheck <all iOS mobile sources>             # passed against iOS 26 SDK
+swiftc -frontend -parse <mobile sources/tests/UI tests> # passed
+localization key parity (EN/HU)                        # passed
+swift test --disable-sandbox --filter MobilePackageServiceTests --no-parallel
+                                                       # 39 tests passed
+git diff --check                                       # passed
+```

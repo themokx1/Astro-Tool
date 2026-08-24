@@ -13,16 +13,11 @@ struct TonightMobileView: View {
     @State private var actionMessage: String?
     @State private var now = Date()
 
-    private var briefing: MobileBriefing? {
-        let calendar = Calendar.current
-        let today = calendar.startOfDay(for: now)
-        return snapshot.briefings
-            .sorted { $0.savedAt == $1.savedAt ? $0.id.uuidString < $1.id.uuidString : $0.savedAt > $1.savedAt }
-            .first(where: { briefing in
-                guard let date = briefing.nightDate else { return false }
-                return calendar.isDate(date, inSameDayAs: today)
-            }) ?? snapshot.briefings.first
+    private var selection: MobileBriefingSelection.Result? {
+        MobileBriefingSelection.select(briefings: snapshot.briefings, now: now)
     }
+
+    private var briefing: MobileBriefing? { selection?.briefing }
 
     private var briefingNote: MobileNote? {
         guard let briefing else { return nil }
@@ -37,8 +32,8 @@ struct TonightMobileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 horizonBand
-                if let briefing {
-                    briefingContent(briefing)
+                if let selection {
+                    briefingContent(selection)
                 } else {
                     ContentUnavailableView("No briefing saved yet", systemImage: "moon.stars", description: Text("Your Mac-prepared plans will appear here after the next import."))
                         .frame(maxWidth: .infinity)
@@ -67,7 +62,10 @@ struct TonightMobileView: View {
                 .font(.subheadline.weight(.semibold))
             HStack(spacing: 5) {
                 Text("Updated")
+                Text(snapshot.createdAt, format: .dateTime.year().month(.abbreviated).day().hour().minute())
+                Text("(")
                 Text(snapshot.createdAt, style: .relative)
+                Text(")")
                 Text("·")
                 Text(freshness == .stale ? "Needs a newer plan" : "Ready for tonight")
             }
@@ -77,16 +75,17 @@ struct TonightMobileView: View {
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(freshness == .stale ? Color(uiColor: .systemOrange).opacity(0.16) : Color(red: 0.043, green: 0.063, blue: 0.125).opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .foregroundStyle(freshness == .stale ? .primary : Color(uiColor: .systemBackground))
+        .foregroundStyle(freshness == .stale ? .primary : Color(uiColor: .label))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(freshness == .stale ? "Plan from Mac, needs a newer plan" : "Plan from Mac, ready for tonight")
         .accessibilityIdentifier(freshness == .stale ? "v5.mobile.stale" : "v5.mobile.fresh")
     }
 
     @ViewBuilder
-    private func briefingContent(_ briefing: MobileBriefing) -> some View {
+    private func briefingContent(_ selection: MobileBriefingSelection.Result) -> some View {
+        let briefing = selection.briefing
         VStack(alignment: .leading, spacing: 6) {
-            Text("Tonight's plan")
+            Text(selectionTitle(selection.kind))
                 .font(.system(.largeTitle, design: .rounded).weight(.semibold))
                 .accessibilityAddTraits(.isHeader)
             Text(readinessLabel(briefing.readiness))
@@ -107,11 +106,11 @@ struct TonightMobileView: View {
                                 .font(.footnote.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
-                        Text("Planned · \(plannedTime(target.start, for: briefing))–\(plannedTime(target.end, for: briefing))")
+                        Text(plannedWindow(start: plannedTime(target.start, for: briefing), end: plannedTime(target.end, for: briefing)))
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                         ForEach(target.warnings, id: \.self) { warning in
-                            Label(warning, systemImage: "exclamationmark.triangle")
+                            Label(warningLabel(warning), systemImage: "exclamationmark.triangle")
                                 .font(.footnote)
                                 .foregroundStyle(Color(uiColor: .systemOrange))
                         }
@@ -134,7 +133,7 @@ struct TonightMobileView: View {
                 Text("Checklist").font(.headline)
                 ForEach(briefing.checklist) { section in
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(section.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                        Text(sectionTitle(section.title)).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                         ForEach(section.items) { item in
                             let completed = MobileEffectiveState.checklistValue(briefingID: briefing.id, itemID: item.id, snapshotValue: item.isCompleted, changes: changes)
                             Button {
@@ -145,7 +144,7 @@ struct TonightMobileView: View {
                                         .foregroundStyle(completed ? Color(uiColor: .systemGreen) : .secondary)
                                         .font(.title3)
                                     VStack(alignment: .leading, spacing: 3) {
-                                        Text(item.title)
+                                        Text(itemTitle(item.title))
                                             .strikethrough(completed)
                                             .foregroundStyle(.primary)
                                         if let explanation = item.explanation {
@@ -158,8 +157,8 @@ struct TonightMobileView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .accessibilityValue(completed ? "Completed" : "Not completed")
-                            .accessibilityHint("Double-tap to mark this checklist item \(completed ? "not completed" : "completed")")
+                            .accessibilityValue(String(localized: completed ? "Completed" : "Not completed"))
+                            .accessibilityHint(String(localized: completed ? "Double-tap to mark this checklist item not completed" : "Double-tap to mark this checklist item completed"))
                             .accessibilityIdentifier("mobile-checklist-\(item.id)")
                         }
                     }
@@ -227,7 +226,7 @@ struct TonightMobileView: View {
                 try await store.toggleChecklistItem(briefingID: briefingID, itemID: item.id, isCompleted: !completed)
                 await onStoreChange()
             } catch {
-                actionMessage = "This checklist item could not be saved yet."
+                actionMessage = String(localized: "This checklist item could not be saved yet.")
             }
         }
     }
@@ -241,27 +240,42 @@ struct TonightMobileView: View {
             } catch MobileLibraryStoreError.noOpChange {
                 editingNote = false
             } catch {
-                actionMessage = "This note could not be saved yet."
+                actionMessage = String(localized: "This note could not be saved yet.")
             }
         }
     }
 
     private func readinessLabel(_ value: String) -> String {
-        switch value.lowercased() {
-        case "ready", "good": return String(localized: "Ready")
-        case "warning", "needsattention", "needs_attention": return String(localized: "Needs attention")
-        case "blocked": return String(localized: "Not ready")
-        default: return String(localized: "Plan status available")
+        MobileBriefingReadinessLabel.label(for: value)
+    }
+
+    private func selectionTitle(_ kind: MobileBriefingSelection.Kind) -> String {
+        switch kind {
+        case .tonight: return String(localized: "Tonight's plan")
+        case .upcoming: return String(localized: "Upcoming plan")
+        case .past: return String(localized: "Saved plan from the past")
+        case .saved: return String(localized: "Saved plan")
         }
     }
 
+    private func plannedWindow(start: String, end: String) -> String {
+        String.localizedStringWithFormat(NSLocalizedString("Planned %@–%@", comment: "Planned time window"), start, end)
+    }
+
+    private func warningLabel(_ value: String) -> String {
+        value == "Planned time only" ? String(localized: "Planned time only") : value
+    }
+
+    private func sectionTitle(_ value: String) -> String {
+        value == "Before capture" ? String(localized: "Before capture") : value
+    }
+
+    private func itemTitle(_ value: String) -> String {
+        value == "Check focus" ? String(localized: "Check focus") : value
+    }
+
     private func plannedTime(_ date: Date, for briefing: MobileBriefing) -> String {
-        let timeZone = snapshot.nights.first(where: { night in
-            guard let zone = TimeZone(identifier: night.timeZoneID) else { return false }
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = zone
-            return calendar.dateComponents([.year, .month, .day], from: date) == calendar.dateComponents([.year, .month, .day], from: briefing.nightDate ?? date)
-        }).flatMap { TimeZone(identifier: $0.timeZoneID) } ?? .current
+        let timeZone = MobileBriefingSelection.timeZone(for: briefing.nightDate ?? date, nights: snapshot.nights) ?? .current
         let formatter = DateFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .short

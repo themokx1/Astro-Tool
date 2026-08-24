@@ -24,7 +24,7 @@ struct SyncMobileView: View {
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                Label("Mac library connected", systemImage: "checkmark.circle.fill")
+                Label("Mac plan saved on this iPhone", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(Color(uiColor: .systemGreen))
                     .accessibilityIdentifier("mobile-mac-library-status")
             }
@@ -36,7 +36,7 @@ struct SyncMobileView: View {
                 countRow("Briefings", value: snapshot.briefings.count)
                 countRow("Notes", value: snapshot.notes.count)
                 countRow("Checklist items", value: checklistCount)
-                countRow("Phone changes waiting", value: queuedChangeCount)
+                countRow("Phone changes waiting", value: queuedChangeCount, identifier: "mobile-queued-count")
                 if queuedChangeCount > 0 {
                     Text("Ready to send back in the next step.")
                         .font(.footnote)
@@ -89,9 +89,13 @@ struct SyncMobileView: View {
         .accessibilityIdentifier("mobile-sync-surface")
     }
 
-    private func countRow(_ title: LocalizedStringKey, value: Int) -> some View {
+    private func countRow(_ title: LocalizedStringKey, value: Int, identifier: String? = nil) -> some View {
         LabeledContent(title) {
-            Text("\(value)").font(.body.monospacedDigit())
+            if let identifier {
+                Text("\(value)").font(.body.monospacedDigit()).accessibilityIdentifier(identifier)
+            } else {
+                Text("\(value)").font(.body.monospacedDigit())
+            }
         }
     }
 }

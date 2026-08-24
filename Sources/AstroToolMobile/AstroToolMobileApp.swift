@@ -84,13 +84,13 @@ private enum MobileLaunchFixture {
         let noteID = "fixture-note"
         let captureID = UUID()
         let checklistItem = MobileChecklistItem(id: "focus", title: "Check focus", explanation: "Confirm the first test exposure before the planned sequence.", isCompleted: false, baseRevision: 1)
-        let target = MobileBriefingTarget(id: UUID(), name: "M31", role: "Target", start: Date(timeIntervalSince1970: 1_700_000_100), end: Date(timeIntervalSince1970: 1_700_003_700), warnings: ["Planned time only"])
+        let target = MobileBriefingTarget(id: UUID(), name: "M31", role: "primary", start: Date(timeIntervalSince1970: 1_700_000_100), end: Date(timeIntervalSince1970: 1_700_003_700), warnings: ["Planned time only"])
         let snapshot = MobileLibrarySnapshot(
             schemaVersion: MobileLibrarySnapshot.currentSchemaVersion,
             libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 1,
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
-            projects: [MobileProject(id: projectID, displayName: "M31", catalogID: "M31", phase: "ready", integrationSeconds: 1_800, goalHours: 1)],
-            nights: [MobileNight(id: nightID, localDate: "2026-08-23", timeZoneID: "Europe/Budapest")],
+            projects: [MobileProject(id: projectID, displayName: "M31", catalogID: "M31", phase: "collecting", integrationSeconds: 1_800, goalHours: 1)],
+            nights: [MobileNight(id: nightID, localDate: "2023-11-14", timeZoneID: "Europe/Budapest")],
             captures: [MobileCapture(id: captureID, projectID: projectID, nightID: nightID, displayName: "M31 luminance", filterName: "L", exposureSeconds: 180, integrationSeconds: 1_800)],
             briefings: [MobileBriefing(id: briefingID, revision: 1, savedAt: Date(timeIntervalSince1970: 1_700_000_001), nightDate: Date(timeIntervalSince1970: 1_700_000_000), readiness: "ready", targets: [target], checklist: [MobileChecklistSection(id: "setup", title: "Before capture", items: [checklistItem])], noteID: noteID)],
             notes: [MobileNote(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "Bring the dew heater.", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_700_000_002), isEditableOnPhone: true)]

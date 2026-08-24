@@ -47,15 +47,34 @@ final class AstroToolMobileLaunchTests: XCTestCase {
         editor.tap()
         editor.typeText(" On phone")
         app.buttons["v5.mobile.note.save"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "On phone")).firstMatch.waitForExistence(timeout: 5))
 
         app.tabBars.buttons["Projects"].tap()
         XCTAssertTrue(app.otherElements["mobile-projects-surface"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Collecting"].exists)
         app.tabBars.buttons["Briefings"].tap()
         XCTAssertTrue(app.otherElements["mobile-briefings-surface"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Sync"].tap()
         XCTAssertTrue(app.otherElements["mobile-sync-surface"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Phone changes waiting"].exists)
         XCTAssertTrue(app.staticTexts["Ready to send back in the next step."].exists)
+        XCTAssertTrue(app.staticTexts["mobile-queued-count"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["mobile-queued-count"].label, "2")
         XCTAssertTrue(app.staticTexts["Original photos stay on your Mac or external drive."].exists)
+    }
+
+    func testImportedFixtureSupportsHungarianPlanJourney() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--astrotool-mobile-ui-fixture", "imported", "-AppleLanguages", "(hu)", "-AppleLocale", "hu_HU"]
+        app.launch()
+
+        XCTAssertTrue(app.staticTexts["Ma este"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Projektek"].tap()
+        XCTAssertTrue(app.staticTexts["Gyűjtés"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Tervek"].tap()
+        XCTAssertTrue(app.otherElements["mobile-briefings-surface"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Átvitel"].tap()
+        XCTAssertTrue(app.staticTexts["A Mac-terv mentve ezen az iPhone-on"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Az eredeti fotók a Macen vagy a külső meghajtón maradnak."].exists)
     }
 }

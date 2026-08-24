@@ -26,12 +26,13 @@ struct BriefingsMobileView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 5) {
                                 HStack {
-                                    Text(briefingTitle(briefing)).font(.body.weight(.semibold))
+                                    Text(savedDate(briefing.savedAt)).font(.body.weight(.semibold))
                                     Spacer()
-                                    Text("v\(briefing.revision)").font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
+                                    Text(String.localizedStringWithFormat(NSLocalizedString("Revision %@", comment: "Briefing revision"), "\(briefing.revision)"))
+                                        .font(.footnote.monospacedDigit()).foregroundStyle(.secondary)
                                 }
                                 HStack {
-                                    Text(briefing.nightDate.map { plannedDate($0) } ?? "Planned date not set")
+                                    Text(briefing.nightDate.map { plannedDate($0) } ?? String(localized: "Planned date not set"))
                                     Spacer()
                                     Text(readinessLabel(briefing.readiness))
                                 }
@@ -48,21 +49,20 @@ struct BriefingsMobileView: View {
         .accessibilityIdentifier("mobile-briefings-surface")
     }
 
-    private func briefingTitle(_ briefing: MobileBriefing) -> String {
-        briefing.nightDate.map { $0.formatted(.dateTime.month(.abbreviated).day().year()) } ?? "Saved briefing"
+    private func savedDate(_ date: Date) -> String {
+        String.localizedStringWithFormat(NSLocalizedString("Saved %@", comment: "Saved briefing date"), date.formatted(.dateTime.month(.abbreviated).day().year().hour().minute()))
     }
 
     private func plannedDate(_ date: Date) -> String {
-        "Planned · \(date.formatted(.dateTime.month(.abbreviated).day().year().hour().minute()))"
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.timeZone = MobileBriefingSelection.timeZone(for: date, nights: snapshot.nights) ?? .current
+        return String.localizedStringWithFormat(NSLocalizedString("Planned · %@", comment: "Planned briefing date"), formatter.string(from: date))
     }
 
     private func readinessLabel(_ value: String) -> String {
-        switch value.lowercased() {
-        case "ready", "good": return String(localized: "Ready")
-        case "warning", "needsattention", "needs_attention": return String(localized: "Needs attention")
-        case "blocked": return String(localized: "Not ready")
-        default: return String(localized: "Plan status available")
-        }
+        MobileBriefingReadinessLabel.label(for: value)
     }
 }
 
@@ -80,7 +80,7 @@ private struct BriefingMobileDetailView: View {
         List {
             Section("Plan") {
                 if let nightDate = briefing.nightDate {
-                    LabeledContent("Planned", value: nightDate.formatted(.dateTime.month(.wide).day().year().hour().minute()))
+                    LabeledContent("Planned", value: plannedDateTime(nightDate))
                 } else {
                     LabeledContent("Planned", value: "Date not set")
                 }
@@ -94,12 +94,12 @@ private struct BriefingMobileDetailView: View {
                             HStack {
                                 Text(target.name).font(.body.weight(.medium))
                                 Spacer()
-                                Text(targetRoleLabel(target.role)).foregroundStyle(.secondary)
+                                Text(MobileBriefingTargetRoleLabel.label(for: target.role)).foregroundStyle(.secondary)
                             }
-                            Text("Planned · \(plannedTime(target.start))–\(plannedTime(target.end))")
+                            Text(plannedWindow(start: plannedTime(target.start), end: plannedTime(target.end)))
                                 .font(.footnote).foregroundStyle(.secondary)
                             ForEach(target.warnings, id: \.self) { warning in
-                                Label(warning, systemImage: "exclamationmark.triangle")
+                                Label(warning == "Planned time only" ? String(localized: "Planned time only") : warning, systemImage: "exclamationmark.triangle")
                                     .font(.footnote).foregroundStyle(Color(uiColor: .systemOrange))
                             }
                         }
@@ -111,7 +111,7 @@ private struct BriefingMobileDetailView: View {
                 Section("Checklist") {
                     ForEach(briefing.checklist) { section in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(section.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                            Text(section.title == "Before capture" ? String(localized: "Before capture") : section.title).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                             ForEach(section.items) { item in
                                 let completed = MobileEffectiveState.checklistValue(briefingID: briefing.id, itemID: item.id, snapshotValue: item.isCompleted, changes: changes)
                                 Button {
@@ -120,13 +120,13 @@ private struct BriefingMobileDetailView: View {
                                     HStack(spacing: 10) {
                                         Image(systemName: completed ? "checkmark.circle.fill" : "circle")
                                             .foregroundStyle(completed ? Color(uiColor: .systemGreen) : .secondary)
-                                        Text(item.title).strikethrough(completed)
+                                        Text(item.title == "Check focus" ? String(localized: "Check focus") : item.title).strikethrough(completed)
                                         Spacer()
                                     }
                                     .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                                 }
                                 .buttonStyle(.plain)
-                                .accessibilityValue(completed ? "Completed" : "Not completed")
+                                .accessibilityValue(String(localized: completed ? "Completed" : "Not completed"))
                                 .accessibilityIdentifier("mobile-briefing-checklist-\(item.id)")
                             }
                         }
@@ -135,8 +135,9 @@ private struct BriefingMobileDetailView: View {
             }
             if let note {
                 Section("Note") {
-                    Text(MobileEffectiveState.noteText(noteID: note.id, snapshotText: note.text, changes: changes).isEmpty ? "No note yet" : MobileEffectiveState.noteText(noteID: note.id, snapshotText: note.text, changes: changes))
-                        .foregroundStyle(note.text.isEmpty ? .secondary : .primary)
+                    let effectiveText = MobileEffectiveState.noteText(noteID: note.id, snapshotText: note.text, changes: changes)
+                    Text(effectiveText.isEmpty ? String(localized: "No note yet") : effectiveText)
+                        .foregroundStyle(effectiveText.isEmpty ? .secondary : .primary)
                 }
             }
         }
@@ -152,39 +153,33 @@ private struct BriefingMobileDetailView: View {
             do {
                 try await store.toggleChecklistItem(briefingID: briefing.id, itemID: item.id, isCompleted: !completed)
                 await onStoreChange()
-            } catch { message = "This checklist item could not be saved yet." }
+            } catch { message = String(localized: "This checklist item could not be saved yet.") }
         }
     }
 
     private func readinessLabel(_ value: String) -> String {
-        switch value.lowercased() {
-        case "ready", "good": return String(localized: "Ready")
-        case "warning", "needsattention", "needs_attention": return String(localized: "Needs attention")
-        case "blocked": return String(localized: "Not ready")
-        default: return String(localized: "Plan status available")
-        }
-    }
-
-    private func targetRoleLabel(_ value: String) -> String {
-        switch value.lowercased() {
-        case "target", "science": return String(localized: "Target")
-        case "calibration", "calibrationtarget": return String(localized: "Calibration")
-        case "focus": return String(localized: "Focus")
-        default: return String(localized: "Target")
-        }
+        MobileBriefingReadinessLabel.label(for: value)
     }
 
     private func plannedTime(_ date: Date) -> String {
-        let timeZone = snapshot.nights.first(where: { night in
-            guard let zone = TimeZone(identifier: night.timeZoneID) else { return false }
-            var calendar = Calendar(identifier: .gregorian)
-            calendar.timeZone = zone
-            return calendar.dateComponents([.year, .month, .day], from: date) == calendar.dateComponents([.year, .month, .day], from: briefing.nightDate ?? date)
-        }).flatMap { TimeZone(identifier: $0.timeZoneID) } ?? .current
+        let timeZone = MobileBriefingSelection.timeZone(for: briefing.nightDate ?? date, nights: snapshot.nights) ?? .current
         let formatter = DateFormatter()
         formatter.dateStyle = .none
         formatter.timeStyle = .short
         formatter.timeZone = timeZone
         return formatter.string(from: date)
+    }
+
+    private func plannedDateTime(_ date: Date) -> String {
+        let timeZone = MobileBriefingSelection.timeZone(for: briefing.nightDate ?? date, nights: snapshot.nights) ?? .current
+        let formatter = DateFormatter()
+        formatter.dateStyle = .long
+        formatter.timeStyle = .short
+        formatter.timeZone = timeZone
+        return formatter.string(from: date)
+    }
+
+    private func plannedWindow(start: String, end: String) -> String {
+        String.localizedStringWithFormat(NSLocalizedString("Planned %@–%@", comment: "Planned time window"), start, end)
     }
 }
