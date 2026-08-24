@@ -138,6 +138,37 @@ calibration_library/
       </div>
     </section>
 
+    <section class="section tint" id="iphone-companion">
+      <div class="shell">
+        <div class="section-head">
+          <div class="eyebrow">V5 · prototípus a saját iPhone-odra</div>
+          <h2>Vidd magaddal a briefinget és a checklistát — teljesen offline.</h2>
+          <p class="section-lead">Az AstroTool V5 egy iPhone-kísérőt ad a Mac mellé. Magad fordítod le és telepíted Xcode-ból a saját telefonodra; a Mac és a telefon egy titkosított <code>.astromobile</code> csomaggal, AirDroppal beszélget egymással, internet és Apple-fiókos szinkron nélkül.</p>
+        </div>
+        <div class="choice-grid">
+          <article class="choice-card"><span class="choice-number">01</span><h3>Mire lesz szükséged</h3><p>Egy Mac az AstroTool-lal, egy iPhone (iOS 26), egy ingyenes Apple Account és a Mac App Store-ból telepíthető Xcode.</p></article>
+          <article class="choice-card"><span class="choice-number">02</span><h3>Egyszeri telepítés</h3><p>Jelentkezz be Xcode-ba a saját Apple Accounttal, válaszd ki magadat mint <strong>Personal Team</strong>-et, csatlakoztasd az iPhone-t, majd futtasd rá az AstroTool iPhone-kísérőt. Ha az iOS megkérdezi, engedd meg a fejlesztői build megbízhatóságát a Beállításokban.</p></article>
+          <article class="choice-card"><span class="choice-number">03</span><h3>A hét napos korlát</h3><p>Az ingyenes Apple Account provisioningja <strong>hét nap</strong> után lejár. Az app a telefonon marad, de ismét futtatnod kell Xcode-ból, azaz <strong>újra kell telepíteni</strong>, hogy elinduljon. Az addig felvett checklist-pipák és jegyzetek nem vesznek el.</p></article>
+        </div>
+        <ol class="compact-flow">
+          <li><span>1</span><div><strong>Csomag küldése a Macről</strong><p>Nyisd meg a Beállítások → iPhone menüt (vagy az Éjszakai briefing exportja mellett az iPhone Sync gombot), nézd át a pontos, emberi nyelvű előnézetet arról, mi kerül bele és mi nem, majd hozz létre egy titkosított <code>.astromobile</code> csomagot. Küldd át <strong>AirDroppal</strong> a telefonra, és olvasd be rajta a Macen megjelenő egyszer használatos <strong>QR</strong>-kódot — ez oldja fel a csomagot.</p></div></li>
+          <li><span>2</span><div><strong>Terepen, offline</strong><p>A briefing, a célpontok és a capture-terv repülőgép módban is elérhetők. Pipáld a checklistát, és írj jegyzetet, amíg a terepen vagy — mindez egyelőre csak a telefonon van meg.</p></div></li>
+          <li><span>3</span><div><strong>Visszaküldés a Macnek</strong><p>A telefonon exportálod a válaszcsomagot, majd AirDroppal visszaküldöd a Macnek. A Mac megmutatja pontosan, mi változott, és csak a jóváhagyásod után alkalmazza. Ütközésnél a jegyzetek alapértelmezett választása a mindkettő megtartása. A telefon várólistája csak akkor ürül ki, ha egy későbbi Mac-csomag visszaigazolja, mely elemek kerültek alkalmazásra.</p></div></li>
+        </ol>
+        <div class="safety-strip large" role="note" aria-label="Az iPhone-kísérő biztonsági ígéretei">
+          <strong>Mi utazik, és mi soha?</strong>
+          <span>Az eredeti fotók nem kerülnek át. Az iPhone nem módosíthatja a képkönyvtár fájljait — a Mac marad az egyetlen tulajdonos. Csak ellenőrzőlista és jegyzetek jönnek vissza a telefonról; törlést, mozgatást vagy átnevezést a telefon soha nem kezdeményez. Nincs CloudKit, nincs iCloud-szinkron és nincs háttérben futó frissítés — ez egy helyi prototípus a saját eszközödre.</span>
+        </div>
+        <details>
+          <summary>Fejlesztői részletek és hibaelhárítás</summary>
+          <p>A projektet a repó gyökeréből <code>xcodegen generate</code> hozza létre <code>project.yml</code> alapján; az iPhone-appot az Xcode <code>AstroToolMobile</code> sémájával futtathatod rá a telefonra.</p>
+          <p>Ha a hét napos provisioning lejárt, csatlakoztasd újra az iPhone-t a Machez, és futtasd rá ismét ugyanazt a sémát Xcode-ból — ez nem törli a telefonon addig gyűjtött checklist- és jegyzetadatot.</p>
+          <p>A QR-kód beolvasásához az app egyszeri kameraengedélyt kér; ezt kizárólag az egyszer használatos csomagkulcs beolvasására használja.</p>
+          <p>Ha egy csomag sérültnek vagy manipuláltnak bizonyul, az app nem nyitja meg részlegesen, hanem elutasítja — ilyenkor kérj friss csomagot a Macről.</p>
+        </details>
+      </div>
+    </section>
+
     <section class="section" id="reopen">
       <div class="shell closing-cta">
         <div><div class="eyebrow">Nem egyszer használatos</div><h2>Az Első lépések bármikor visszahívható.</h2><p>A <strong>Súgó → Első lépések</strong> menü ugyanazt a teljes folyamatot nyitja meg később is.</p></div>

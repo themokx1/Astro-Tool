@@ -83,6 +83,33 @@ struct PublicWebsiteSurfaceTests {
         #expect(englishHomepage.contains("href=\"first-steps.html\""))
     }
 
+    @Test("First Steps documents the V5 iPhone companion prototype truthfully")
+    func firstStepsDocumentsTheIPhoneCompanion() throws {
+        let hungarian = try source("docs/first-steps.html")
+        for text in [
+            "hét nap", "újra kell telepíteni",
+            "AirDrop", ".astromobile",
+            "Az eredeti fotók nem kerülnek át",
+            "CloudKit",
+            "ellenőrzőlista", "jegyzet",
+            "QR",
+        ] {
+            #expect(hungarian.contains(text), Comment(rawValue: text))
+        }
+
+        let english = try source("docs/en/first-steps.html")
+        for text in [
+            "seven days", "reinstall",
+            "AirDrop", ".astromobile",
+            "Original photos are not transferred",
+            "CloudKit",
+            "checklist", "note",
+            "QR",
+        ] {
+            #expect(english.contains(text), Comment(rawValue: text))
+        }
+    }
+
     @Test("Homepage describes the real stable 4.0 product and Universal download")
     func accurateHomepage() throws {
         let html = try source("docs/index.html")

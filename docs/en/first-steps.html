@@ -93,6 +93,30 @@ calibration_library/
       <p><strong>No guessing:</strong> missing weather, setup or backup target stays visibly missing in the document.</p>
       <p><a class="btn btn-secondary" href="night-briefing.html">Read the complete Night Briefing guide</a></p>
     </div>
+
+    <div class="panel" id="iphone-companion">
+      <h2><span class="dot" aria-hidden="true"></span>V5 prototype: an offline iPhone companion</h2>
+      <p>AstroTool V5 adds a companion app for your own iPhone. You build and install it yourself from Xcode; the Mac and the phone then talk only through an encrypted <code>.astromobile</code> file shared by AirDrop — no internet account, no cloud sync.</p>
+      <ol class="steps">
+        <li><strong>What you need</strong><span class="detail">A Mac running AstroTool, an iPhone on iOS 26, a free Apple Account, and Xcode from the Mac App Store.</span></li>
+        <li><strong>One-time install</strong><span class="detail">Sign in to Xcode with your Apple Account, select yourself as the <strong>Personal Team</strong>, connect the iPhone, and build the AstroTool companion onto it. If iOS asks, trust the developer app in Settings.</span></li>
+        <li><strong>The seven-day limit</strong><span class="detail">A free Apple Account's provisioning expires after <strong>seven days</strong>. The app stays installed, but you must build and run it from Xcode again — that is, <strong>reinstall</strong> it — before it will open. Your checklist ticks and notes on the phone are not lost.</span></li>
+      </ol>
+      <p><strong>Daily use.</strong> On the Mac, open Settings → iPhone (or the iPhone Sync button next to the Night Briefing export), review the exact, plain-language preview of what is included and what is not, then create a sealed <code>.astromobile</code> package. Share it over <strong>AirDrop</strong>, and on the phone scan the one-time <strong>QR</strong> code shown on the Mac to unlock it.</p>
+      <p><strong>In the field.</strong> The briefing, targets, and capture plan stay readable in Airplane Mode. Tick checklist items and write notes offline; they live only on the phone until you send them back.</p>
+      <p><strong>Returning changes.</strong> Export a return package on the phone and AirDrop it to the Mac. The Mac shows exactly what changed and applies nothing until you approve it; conflicting notes default to keeping both. The phone's queue only clears once a later Mac package confirms which items were applied.</p>
+      <div class="callout">
+        <h2>What travels, and what never does</h2>
+        <p>Original photos are not transferred. iPhone cannot modify files in the image library — the Mac stays the sole owner. Checklist and notes only come back from the phone; it never initiates a delete, move, or rename. There is no CloudKit, no iCloud sync, and no background refresh — this is a local prototype for your own device.</p>
+      </div>
+      <details>
+        <summary>Developer details and troubleshooting</summary>
+        <p>The project is generated from the repository root with <code>xcodegen generate</code> using <code>project.yml</code>; run the iPhone app onto your device with Xcode's <code>AstroToolMobile</code> scheme.</p>
+        <p>If the seven-day provisioning has expired, reconnect the iPhone and run the same scheme from Xcode again — this does not erase the checklist and note data already on the phone.</p>
+        <p>Scanning the QR code requires a one-time camera permission, used only to read the one-time package key.</p>
+        <p>If a package turns out to be corrupted or tampered with, the app refuses it outright rather than opening it partially — request a fresh package from the Mac.</p>
+      </details>
+    </div>
   </div>
   <p class="closing-note">You can reopen the complete guide at any time from <strong>Help → First steps</strong>.</p>
 </main>

@@ -79,6 +79,25 @@ Minden részletes oldal kihagyható és később a Beállításokból újranyith
 Tiszta telepítéskor nincs előre felvett felszerelés, szűrő, helyszín vagy
 képkönyvtár.
 
+## V5 prototípus: iPhone-kísérő
+
+Az AstroTool V5 egy önállóan lefordítható, offline iPhone-kísérőt ad a Mac
+mellé — ez **nem egy kiadott vagy letölthető funkció**, hanem egy
+prototípus, amit magad fordítasz le Xcode-ból a saját telefonodra, ingyenes
+Apple Accounttal és Xcode Personal Teammel. A provisioning hét nap után
+lejár, ezért a prototípust időnként újra kell telepíteni.
+
+A Mac és a telefon kizárólag egy titkosított `.astromobile` fájllal,
+AirDroppal beszélget egymással — nincs CloudKit, nincs iCloud-szinkron és
+nincs TestFlight vagy App Store-terjesztés. Az eredeti fotók soha nem
+kerülnek át, és az iPhone nem módosíthatja a képkönyvtár fájljait; a
+telefonról kizárólag ellenőrzőlista-pipálások és jegyzetek jönnek vissza,
+minden változást a Mac mutat meg jóváhagyás előtt.
+
+Részletes, nem-technikai útmutató: [Első lépések — iPhone-kísérő
+prototípus](https://themokx1.github.io/Astro-Tool/first-steps.html#iphone-companion)
+([English](https://themokx1.github.io/Astro-Tool/en/first-steps.html#iphone-companion)).
+
 ## Integrációs cél
 
 Explicit `goal:` címke hiányában az alap referencia:
