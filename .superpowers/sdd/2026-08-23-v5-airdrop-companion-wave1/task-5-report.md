@@ -161,6 +161,21 @@ git diff --check                                                    # passed
 
 The iOS build and XCTest/UI runtime remain blocked by the host Xcode/account gate; no iOS build success is claimed.
 
+## Final minor closure — migration warning state and hash ambiguity
+
+- Initial migration now uses the injected durability seam and explicitly clears all live durability flags after a matching `.clear` record is successfully written. Clear-write failure or uncertainty retains the conservative attempted/warning state.
+- Added regression coverage for a syntactically valid pending journal whose current state matches neither bound hash (ambiguous, never retryable), and for injected initial-migration pending uncertainty followed by a successful clear (no stale live warning flags).
+
+Final closure verification:
+
+```text
+swiftc -frontend -parse <changed mobile source/test>                 # passed
+swift test --disable-sandbox --filter MobilePackageServiceTests       # 39 tests passed
+git diff --check                                                     # passed
+```
+
+The Xcode iOS build/runtime gate was not run in this minor closure, per the host/account block noted above; no blocked build result is claimed.
+
 ## Closure fix round 3 — hash-bound durability recovery
 
 - Replaced bare journal strings with versioned `MobileDurabilityJournalRecord` values containing phase, operation ID, prior-state SHA-256 (nil for initial migration), and intended-state SHA-256. Pending is durably written before the state replacement; clear is written only after confirmed state-parent sync and is bound to the same operation.

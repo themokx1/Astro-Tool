@@ -142,7 +142,7 @@ public actor MobileLibraryStore {
         self.keyFingerprints = [:]
         self.currentStagedPackage = nil
         self.pendingImport = nil
-        let initial = Self.bootstrap(applicationSupportURL: self.applicationSupportURL, fallbackDeviceID: self.deviceID)
+        let initial = Self.bootstrap(applicationSupportURL: self.applicationSupportURL, fallbackDeviceID: self.deviceID, testingDurability: self.testingDurability)
         self.activeSnapshot = initial.snapshot
         self.queuedChanges = initial.queue
         self.deviceID = initial.deviceID
@@ -174,7 +174,7 @@ public actor MobileLibraryStore {
         self.keyFingerprints = [:]
         self.currentStagedPackage = nil
         self.pendingImport = nil
-        let initial = Self.bootstrap(applicationSupportURL: applicationSupportURL, fallbackDeviceID: self.deviceID)
+        let initial = Self.bootstrap(applicationSupportURL: applicationSupportURL, fallbackDeviceID: self.deviceID, testingDurability: self.testingDurability)
         self.activeSnapshot = initial.snapshot
         self.queuedChanges = initial.queue
         self.deviceID = initial.deviceID
@@ -648,7 +648,7 @@ public actor MobileLibraryStore {
         hash.count == 64 && hash.allSatisfy { "0123456789abcdef".contains($0) }
     }
 
-    private static func bootstrap(applicationSupportURL: URL, fallbackDeviceID: UUID?) -> BootstrapState {
+    private static func bootstrap(applicationSupportURL: URL, fallbackDeviceID: UUID?, testingDurability: @Sendable (MobileDurabilityWritePhase) -> MobileDurabilityTestResult = { _ in .proceed }) -> BootstrapState {
         let fileManager = FileManager.default
         let activeDirectory = applicationSupportURL.appendingPathComponent("active", isDirectory: true)
         let changesDirectory = applicationSupportURL.appendingPathComponent("changes", isDirectory: true)
@@ -660,6 +660,17 @@ public actor MobileLibraryStore {
         let consumedURL = receiptsDirectory.appendingPathComponent("consumed.json")
         let stateURL = applicationSupportURL.appendingPathComponent("state.json")
         let durabilityURL = applicationSupportURL.appendingPathComponent(".state-durability")
+        func migrationDurableWrite(_ data: Data, to destination: URL, phase: MobileDurabilityWritePhase) throws -> Bool {
+            switch testingDurability(phase) {
+            case .proceed:
+                return try durableWrite(data, to: destination)
+            case .fail:
+                throw MobileLibraryStoreError.persistenceFailed
+            case .uncertain:
+                _ = try durableWrite(data, to: destination)
+                return true
+            }
+        }
         do {
             for url in [applicationSupportURL, activeDirectory, changesDirectory, stagingDirectory, receiptsDirectory] {
                 try fileManager.createDirectory(at: url, withIntermediateDirectories: true)
@@ -750,22 +761,26 @@ public actor MobileLibraryStore {
                 let record = MobileDurabilityJournalRecord(version: MobileDurabilityJournalRecord.currentVersion, phase: .pending, priorStateSHA256: nil, intendedStateSHA256: Self.sha256Hex(encoded), operationID: operationID)
                 let pendingRecord = try! MobileJSON.encoder.encode(record)
                 do {
-                    let pendingUncertain = try durableWrite(pendingRecord, to: durabilityURL)
+                    let pendingUncertain = try migrationDurableWrite(pendingRecord, to: durabilityURL, phase: .pending)
                     guard !pendingUncertain else {
                         _ = try? durableWrite(try MobileJSON.encoder.encode(record.withPhase(.attempted)), to: durabilityURL)
                         durabilityAttemptWarning = true
                         throw MobileLibraryStoreError.persistenceFailed
                     }
-                    let stateUncertain = try durableWrite(encoded, to: stateURL)
+                    let stateUncertain = try migrationDurableWrite(encoded, to: stateURL, phase: .state)
                     if stateUncertain {
                         _ = try? durableWrite(try MobileJSON.encoder.encode(record.withPhase(.uncertain)), to: durabilityURL)
                         durabilityWarning = true
                     } else {
                         do {
-                            let clearUncertain = try durableWrite(try MobileJSON.encoder.encode(record.withPhase(.clear)), to: durabilityURL)
+                            let clearUncertain = try migrationDurableWrite(try MobileJSON.encoder.encode(record.withPhase(.clear)), to: durabilityURL, phase: .clear)
                             if clearUncertain {
                                 _ = try? durableWrite(try MobileJSON.encoder.encode(record.withPhase(.uncertain)), to: durabilityURL)
                                 durabilityWarning = true
+                            } else {
+                                durabilityWarning = false
+                                durabilityAttemptWarning = false
+                                durabilityAmbiguousWarning = false
                             }
                         } catch {
                             _ = try? durableWrite(try MobileJSON.encoder.encode(record.withPhase(.uncertain)), to: durabilityURL)
@@ -778,10 +793,14 @@ public actor MobileLibraryStore {
                     // only if the clear itself cannot be confirmed.
                     if (try? MobileJSON.decoder.decode(MobileDurabilityJournalRecord.self, from: Data(contentsOf: durabilityURL)))?.operationID == operationID {
                         do {
-                            let clearUncertain = try durableWrite(try MobileJSON.encoder.encode(record.withPhase(.clear)), to: durabilityURL)
+                            let clearUncertain = try migrationDurableWrite(try MobileJSON.encoder.encode(record.withPhase(.clear)), to: durabilityURL, phase: .clear)
                             if clearUncertain {
                                 _ = try? durableWrite(try MobileJSON.encoder.encode(record.withPhase(.attempted)), to: durabilityURL)
                                 durabilityAttemptWarning = true
+                            } else {
+                                durabilityWarning = false
+                                durabilityAttemptWarning = false
+                                durabilityAmbiguousWarning = false
                             }
                         } catch {
                             _ = try? durableWrite(try MobileJSON.encoder.encode(record.withPhase(.attempted)), to: durabilityURL)

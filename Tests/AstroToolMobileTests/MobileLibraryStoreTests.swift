@@ -165,6 +165,21 @@ import Testing
     #expect(await relaunched.activeSnapshot?.revision == 1)
 }
 
+@Test func validPendingJournalWithNeitherStateHashIsAmbiguousAndNotRetryable() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    let stateData = try Data(contentsOf: fixture.rootURL.appendingPathComponent("state.json"))
+    let record = MobileDurabilityJournalRecord(version: MobileDurabilityJournalRecord.currentVersion, phase: .pending, priorStateSHA256: String(repeating: "a", count: 64), intendedStateSHA256: String(repeating: "b", count: 64), operationID: UUID())
+    try MobileJSON.encoder.encode(record).write(to: fixture.rootURL.appendingPathComponent(".state-durability"), options: .atomic)
+
+    let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
+
+    #expect(journalHash(stateData) != record.priorStateSHA256)
+    #expect(journalHash(stateData) != record.intendedStateSHA256)
+    #expect(await relaunched.durabilityAmbiguousWarning)
+    #expect(!(await relaunched.durabilityAttemptWarning))
+    #expect(!(await relaunched.durabilityWarning))
+}
+
 @Test func crashWindowJournalWithNewStateShowsSavedWarning() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let stateURL = fixture.rootURL.appendingPathComponent("state.json")
@@ -212,6 +227,25 @@ import Testing
     #expect(record.phase == .clear)
     #expect(record.priorStateSHA256 == nil)
     #expect(record.intendedStateSHA256 == journalHash(stateData))
+}
+
+@Test func uncertainInitialMigrationPendingFollowedByClearDoesNotLeaveStaleWarning() async throws {
+    let fixture = try MobileStoreFixture(snapshotRevision: 1)
+    try FileManager.default.removeItem(at: fixture.rootURL.appendingPathComponent("state.json"))
+    try FileManager.default.removeItem(at: fixture.rootURL.appendingPathComponent(".state-durability"))
+
+    let store = MobileLibraryStore(
+        applicationSupportURL: fixture.rootURL,
+        packageService: MobilePackageService(),
+        testingBeforeStateCommit: {},
+        testingDurability: { phase in phase == .pending ? .uncertain : .proceed }
+    )
+
+    #expect(await store.activeSnapshot?.revision == 1)
+    #expect(!(await store.durabilityWarning))
+    #expect(!(await store.durabilityAttemptWarning))
+    #expect(!(await store.durabilityAmbiguousWarning))
+    #expect(try readJournal(fixture).phase == .clear)
 }
 
 @Test func reloadClearsStaleDurabilityFlagsAfterConfirmedClearRecord() async throws {
