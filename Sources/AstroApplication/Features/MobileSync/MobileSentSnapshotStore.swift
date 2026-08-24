@@ -257,10 +257,11 @@ package final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowled
     /// Apply-failure recovery path: gives a claimed base back to `.published`
     /// so it is neither leaked forever nor immediately usable by an unrelated
     /// package. The claim's whole purpose is mutual exclusion around the
-    /// domain write inside `importer.apply`; once that call has thrown, no
-    /// domain write happened (or, if a receipt exists, the caller uses a
-    /// different path than this one -- see `MobileReturnApplicationCoordinator
-    /// .apply`), so nothing is left in an inconsistent state by unclaiming.
+    /// domain write inside `importer.apply`; once that call has thrown, the
+    /// exclusive write attempt is over. Any domain writes that did land
+    /// before the failure (the importer's own `partialReceipt` case) remain
+    /// protected by their global change-ID markers, which make every replay
+    /// idempotent, so unclaiming leaves nothing in an inconsistent state.
     /// Exact-match on package and fingerprint is required so this can only
     /// release the specific claim its own failed apply attempt created, never
     /// a different in-flight apply's claim (e.g. a losing competitor's, which
