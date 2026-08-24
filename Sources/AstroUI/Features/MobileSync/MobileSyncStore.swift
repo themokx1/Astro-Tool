@@ -820,13 +820,23 @@ public final class MobileSyncStore {
         failure = nil
         phase = next
         cancellationRequested = false
+        // A previous attempt's receipt must never survive into a new
+        // preview operation: once this store starts re-previewing (retry,
+        // or scanning a fresh package), any prior appliedChangeReceipt is
+        // from a different transaction than the changePreview that is
+        // about to replace the current one. Leaving it in place would let
+        // `receiptTotals` pair a stale receipt with a fresh preview and
+        // render a false outcome on the `.importPreviewReady` review
+        // banner. This clears unconditionally, including for `.importing`,
+        // unlike the fields below that legitimately survive the brief
+        // in-flight window of a same-kind re-preview.
+        appliedChangeReceipt = nil
+        appliedChangeTotals = .init()
         if next != .importing {
             preview = nil
             incomingPreview = nil
             changePreview = nil
             changeResolutions = [:]
-            appliedChangeReceipt = nil
-            appliedChangeTotals = .init()
             exportedURL = nil
             packageID = nil
             encryptedByteCount = nil

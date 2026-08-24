@@ -342,6 +342,125 @@ struct MobileReturnApplicationCoordinatorTests {
         #expect(changed.notes == "Phone note")
     }
 
+    @Test("a successful apply that fails post-apply finalization keeps its claim; the same package can retry to a clean completion")
+    func postApplyFinalizationFailureRetainsClaimAndSamePackageRetrySucceeds() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("return-partial-finalize-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identityStore = PortableLibraryIdentityStore()
+        let libraryID = try identityStore.preview(root: root).proposedID
+        _ = try identityStore.loadOrCreate(root: root, confirmedID: libraryID)
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let briefingStore = NightBriefingRevisionStore(directory: paths.briefings)
+        let briefingID = UUID()
+        let noteID = "briefing-\(briefingID.uuidString.lowercased())"
+        let original = try await briefingStore.create(NightBriefingDraft(
+            id: briefingID,
+            savedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            notes: "Mac note"
+        ))
+        let base = MobileLibrarySnapshot(
+            schemaVersion: 1,
+            libraryID: libraryID,
+            snapshotID: UUID(),
+            revision: 1,
+            createdAt: original.savedAt,
+            projects: [], nights: [], captures: [],
+            briefings: [.init(id: briefingID, revision: original.revision, savedAt: original.savedAt, nightDate: nil, readiness: "ready", targets: [], checklist: [], noteID: noteID)],
+            notes: [.init(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: original.notes, baseRevision: original.revision, updatedAt: original.savedAt, isEditableOnPhone: true)]
+        )
+        let service = MobilePackageService()
+        let sentFileURL = root.appendingPathComponent(".astro-tool/mobile-sent-snapshot.json")
+        let sent = MobileSentSnapshotIdentityStore(fileURL: sentFileURL)
+        // A non-empty acknowledgement set is required so the coordinator's
+        // post-apply `acknowledgePhoneEvidence` call actually reaches the
+        // (failing) ledger store instead of short-circuiting on an empty set.
+        let acknowledgementID = UUID()
+        try sent.reserve(snapshotID: base.snapshotID, acknowledgementIDs: [acknowledgementID])
+        try sent.markPublished(snapshotID: base.snapshotID)
+        // Real domain commands (via `.production`), but a ledger store that
+        // fails only its 2nd `updateLedger` call. Call #1 is the importer's
+        // own atomic persistence of the applied change markers inside
+        // `importer.apply` (must succeed, so the note write really lands).
+        // Call #2 is `acknowledgePhoneEvidence`, invoked by the coordinator
+        // strictly after `importer.apply` has already returned a receipt -
+        // this is the "successful domain apply, failing post-apply
+        // finalization" seam the task asks for.
+        let failingLedger = FailOnceLedgerStore(failingCallIndex: 2)
+        let importer = try MobileChangeImporter.production(rootURL: root, recordStore: failingLedger)
+        let coordinator = MobileReturnApplicationCoordinator(
+            packageService: service,
+            importer: importer,
+            sentBases: sent,
+            currentSnapshotProvider: { base }
+        )
+        let changeID = UUID()
+        let returnURL = root.appendingPathComponent("return.astromobile", isDirectory: true)
+        let returnKey = OneTimePackageKey()
+        _ = try await service.export(
+            MobilePackageEnvelope(
+                purpose: .returnChanges,
+                snapshot: base,
+                baseSnapshotID: base.snapshotID,
+                changes: [.noteRevision(.init(changeID: changeID, deviceID: UUID(), noteID: noteID, ownerID: briefingID.uuidString, baseRevision: original.revision, text: "Phone note", createdAt: original.savedAt.addingTimeInterval(1)))],
+                acknowledgedChangeIDs: []
+            ),
+            to: returnURL,
+            wrapping: returnKey
+        )
+
+        let review = try await coordinator.preview(from: returnURL, wrapping: returnKey)
+
+        do {
+            _ = try await coordinator.apply(review, resolutions: [:], confirmed: true)
+            Issue.record("Expected the post-apply finalization to fail with partialReceipt")
+        } catch MobileChangeImportError.partialReceipt(let receipt) {
+            // The reviewed note change really landed before finalization
+            // failed.
+            #expect(receipt.appliedChangeIDs == [changeID])
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        // Pin: only the importer.apply failure path (the earlier catch in
+        // `MobileReturnApplicationCoordinator.apply`) releases the claim.
+        // A failure in the later finalization stage must leave the base
+        // `.claimed` for this exact package - not released back to
+        // `.published`, and not consumed/removed.
+        let recordsAfterFailure = try sent.loadRecords()
+        let claimedRecord = try #require(recordsAfterFailure.first { $0.snapshotID == base.snapshotID })
+        #expect(claimedRecord.state == .claimed)
+        #expect(claimedRecord.claimedPackageID == review.packagePreview.packageID)
+        #expect(claimedRecord.claimedSourceFingerprint == review.changePreview.sourceFingerprint)
+
+        // The domain write is durable even though the coordinator reported
+        // failure.
+        let afterFailure = try #require(await briefingStore.latest(id: briefingID))
+        #expect(afterFailure.notes == "Phone note")
+
+        // Retrying the very same package (source + key) must still complete:
+        // discard the stale session/capability, re-authenticate the exact
+        // same on-disk package, and re-apply. The already-applied change is
+        // now classified `alreadyApplied` (idempotent, no double domain
+        // write), the durable claim is reused rather than re-created, and
+        // this time finalization succeeds because the ledger store's single
+        // scripted failure was already spent.
+        await coordinator.discard(review)
+        let retryReview = try await coordinator.preview(from: returnURL, wrapping: returnKey)
+        #expect(retryReview.changePreview.applicable.isEmpty)
+        let receipt = try await coordinator.apply(retryReview, resolutions: [:], confirmed: true)
+        #expect(receipt.appliedChangeIDs.isEmpty)
+
+        // The base is now fully retired: no leaked claim, no way to reuse it.
+        let recordsAfterRetry = try sent.loadRecords()
+        #expect(recordsAfterRetry.first { $0.snapshotID == base.snapshotID } == nil)
+
+        // Still exactly the one note write from the original attempt.
+        let finalNote = try #require(await briefingStore.latest(id: briefingID))
+        #expect(finalNote.notes == "Phone note")
+    }
+
     @Test("competing packages for one published base perform exactly one domain write")
     func competingBaseHasOneApplyingSession() async throws {
         let root = FileManager.default.temporaryDirectory
@@ -414,6 +533,45 @@ private final class LockedCounter: @unchecked Sendable {
     private var storage = 0
     var value: Int { lock.withLock { storage } }
     func increment() { lock.withLock { storage += 1 } }
+}
+
+/// A `MobileChangeApplicationRecordStore` that persists normally except on
+/// one scripted `updateLedger` call (1-indexed across the store's lifetime),
+/// which fails outright. Used to simulate a ledger-write failure strictly
+/// after `importer.apply`'s own successful persistence, isolating the
+/// coordinator's separate post-apply finalization failure path.
+private final class FailOnceLedgerStore: MobileChangeApplicationRecordStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var ledger: MobileChangeApplicationLedger?
+    private var callCount = 0
+    private let failingCallIndex: Int
+
+    init(failingCallIndex: Int) {
+        self.failingCallIndex = failingCallIndex
+    }
+
+    func load() throws -> MobileChangeApplicationLedger? {
+        lock.withLock { ledger }
+    }
+
+    func save(_ ledger: MobileChangeApplicationLedger) throws {
+        lock.withLock { self.ledger = ledger }
+    }
+
+    func updateLedger(
+        _ mutation: (MobileChangeApplicationLedger?) throws -> MobileChangeApplicationLedger?
+    ) throws {
+        let (currentCall, current): (Int, MobileChangeApplicationLedger?) = lock.withLock {
+            callCount += 1
+            return (callCount, ledger)
+        }
+        guard currentCall != failingCallIndex else {
+            throw MobileChangeImportError.receiptFailed
+        }
+        if let next = try mutation(current) {
+            lock.withLock { ledger = next }
+        }
+    }
 }
 
 private extension MobileLibrarySnapshot {

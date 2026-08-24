@@ -199,6 +199,72 @@ struct MobileSyncStoreTests {
         #expect(store.phase == .failed)
     }
 
+    @Test("retrying a failed return re-preview never pairs the stale receipt with the fresh preview")
+    func retryAfterFailedReturnClearsStaleReceiptFromNewPreview() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identity = PortableLibraryID(rawValue: UUID())
+        let base = MobileLibrarySnapshot.empty(libraryID: identity)
+        let source = root.appendingPathComponent("phone-return.astromobile")
+        let key = OneTimePackageKey()
+        let packageService = MobilePackageService()
+        _ = try await packageService.export(
+            MobilePackageEnvelope(purpose: .returnChanges, snapshot: base, baseSnapshotID: base.snapshotID, changes: [], acknowledgedChangeIDs: []),
+            to: source,
+            wrapping: key
+        )
+        let sentBases = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent-bases.json"))
+        try sentBases.save(snapshotID: base.snapshotID)
+        let importer = MobileChangeImporter(commands: .init(applyBatch: { batch in
+            let ids: [UUID]
+            switch batch {
+            case .briefing(let briefing):
+                ids = briefing.mutations.map { mutation in
+                    switch mutation { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
+                }
+            case .projectAnnotation(let project): ids = project.mutations.map { $0.0.changeID }
+            }
+            return .init(appliedChangeIDs: ids, resultingRevisions: [:])
+        }))
+        // The commit closure always fails, so this store deterministically
+        // lands the first attempt in `.failed` with a retained
+        // `completedReceipt`-backed appliedChangeReceipt, matching
+        // `returnCommitFailureReportsSavedChanges` above.
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in .init(proposedID: identity, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in base },
+            packageAuthenticatePreview: { url, scannedKey in try await packageService.authenticatePreview(from: url, wrapping: scannedKey) },
+            packageAuthenticatedReturn: { token in try await packageService.authenticatedReturn(token: token) },
+            packageImportCommitReturn: { _ in throw MobilePackageError.duplicatePackageID },
+            packageImportDiscardReturn: { package in await packageService.discardAuthenticatedReturn(package) },
+            changeImporter: importer,
+            sentSnapshotStore: sentBases
+        )
+
+        await store.previewIncomingPackage(from: source, qrPayload: key.qrPayload)
+        await #expect(throws: MobilePackageError.duplicatePackageID) {
+            try await store.applyAuthenticatedReturnChanges(confirmed: true)
+        }
+        #expect(store.phase == .failed)
+        _ = try #require(store.appliedChangeReceipt)
+
+        // The phone package's staged import was released on the failure path
+        // (discardAuthenticatedReturn), so the same source/key can be
+        // re-authenticated and re-previewed on retry.
+        await store.retry()
+
+        #expect(store.phase == .importPreviewReady)
+        #expect(store.changePreview != nil)
+        // The fresh preview from retry must never be paired with the
+        // previous attempt's receipt: neither the raw receipt field nor the
+        // review-banner's disjoint totals may surface stale numbers here.
+        #expect(store.appliedChangeReceipt == nil)
+        #expect(store.receiptTotals == nil)
+        #expect(store.didApplyIncomingChanges == false)
+    }
+
     @Test("successful return is terminal and clears all reusable preview state")
     func successfulReturnClearsPreviewAndBecomesTerminal() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
