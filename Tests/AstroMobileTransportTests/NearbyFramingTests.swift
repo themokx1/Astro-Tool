@@ -67,9 +67,19 @@ import Testing
 
 @Test func everySessionMessageRoundTripsThroughItsOwnFrameKind() throws {
     let messages: [NearbySessionMessage] = [
-        .hello(NearbyHelloMessage(protocolVersion: 1, deviceID: UUID(), displayName: "Zoltán iPhone", sessionID: UUID())),
-        .keyExchange(NearbyKeyExchangeMessage(ephemeralPublicKey: Data([1, 2, 3]), identitySignature: Data([4, 5]))),
-        .pairingConfirm(NearbyPairingConfirmMessage(accepted: true)),
+        .hello(NearbyHelloMessage(
+            protocolVersion: 1,
+            deviceID: UUID(),
+            displayName: "Zoltán iPhone",
+            signingPublicKeyRawRepresentation: Data(repeating: 1, count: 32),
+            helloNonce: Data(repeating: 2, count: 16)
+        )),
+        .keyExchange(NearbyKeyExchangeMessage(
+            ephemeralPublicKey: Data(repeating: 3, count: 32),
+            sessionIDContribution: Data(repeating: 4, count: 16),
+            identitySignature: Data(repeating: 5, count: 64)
+        )),
+        .pairingConfirm(NearbyPairingConfirmMessage(proof: Data(repeating: 6, count: 32))),
         .packageManifest(NearbyPackageManifestMessage(packageID: UUID(), manifestJSON: Data("{}".utf8), totalChunkCount: 3, totalByteCount: 4096)),
         .packageChunk(NearbyPackageChunkMessage(index: 2, bytes: Data(repeating: 9, count: 32))),
         .packageComplete(NearbyPackageCompleteMessage(packageID: UUID(), sha256Hex: String(repeating: "a", count: 64))),

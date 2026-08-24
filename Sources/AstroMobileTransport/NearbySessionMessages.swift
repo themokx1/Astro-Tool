@@ -1,40 +1,66 @@
 import Foundation
 import AstroMobileDomain
 
-/// The initial handshake message: identifies the sender and starts a session.
+/// The initial handshake message: identifies the sender, carries the
+/// sender's persistent identity public key, and contributes a fresh random
+/// nonce to the pairing transcript. `helloNonce` is always exactly 16 bytes
+/// and `signingPublicKeyRawRepresentation` always exactly 32 — the pairing
+/// session validates a peer-supplied hello's field lengths before using them
+/// in any transcript so the transcript concatenation stays injective.
 public struct NearbyHelloMessage: Codable, Equatable, Sendable {
     public let protocolVersion: UInt8
     public let deviceID: UUID
     public let displayName: String
-    public let sessionID: UUID
+    public let signingPublicKeyRawRepresentation: Data
+    public let helloNonce: Data
 
-    public init(protocolVersion: UInt8, deviceID: UUID, displayName: String, sessionID: UUID) {
+    public init(
+        protocolVersion: UInt8,
+        deviceID: UUID,
+        displayName: String,
+        signingPublicKeyRawRepresentation: Data,
+        helloNonce: Data
+    ) {
         self.protocolVersion = protocolVersion
         self.deviceID = deviceID
         self.displayName = displayName
-        self.sessionID = sessionID
+        self.signingPublicKeyRawRepresentation = signingPublicKeyRawRepresentation
+        self.helloNonce = helloNonce
     }
 }
 
-/// Carries one side's ephemeral public key, and — for a known-peer session —
-/// that key's signature under the sender's persistent identity key.
+/// Carries one side's ephemeral key-agreement public key, its random
+/// contribution to the session ID, and a signature (always present) over the
+/// sender's view of the pairing transcript, made with the sender's
+/// persistent identity signing key. `ephemeralPublicKey` is always exactly
+/// 32 bytes, `sessionIDContribution` always exactly 16, and
+/// `identitySignature` always exactly 64 (a raw Ed25519 signature) — the
+/// pairing session validates a peer-supplied message's field lengths before
+/// verifying anything.
 public struct NearbyKeyExchangeMessage: Codable, Equatable, Sendable {
     public let ephemeralPublicKey: Data
-    public let identitySignature: Data?
+    public let sessionIDContribution: Data
+    public let identitySignature: Data
 
-    public init(ephemeralPublicKey: Data, identitySignature: Data? = nil) {
+    public init(ephemeralPublicKey: Data, sessionIDContribution: Data, identitySignature: Data) {
         self.ephemeralPublicKey = ephemeralPublicKey
+        self.sessionIDContribution = sessionIDContribution
         self.identitySignature = identitySignature
     }
 }
 
-/// Sent after a side has accepted (or rejected) the short authentication
-/// code shown for a first pairing.
+/// Sent only by a side that has locally accepted the short authentication
+/// code during a first pairing; a decline is reported as `.failure` instead,
+/// never as a `NearbyPairingConfirmMessage` with a negative flag. `proof` is
+/// `HMAC-SHA256(key: confirmKey, data: roleByte ‖ transcriptHash)` under the
+/// sender's own role byte, so the verifier's reflected-proof check (verifying
+/// under the PEER's role byte) fails closed against a replay of the
+/// verifier's own message.
 public struct NearbyPairingConfirmMessage: Codable, Equatable, Sendable {
-    public let accepted: Bool
+    public let proof: Data
 
-    public init(accepted: Bool) {
-        self.accepted = accepted
+    public init(proof: Data) {
+        self.proof = proof
     }
 }
 

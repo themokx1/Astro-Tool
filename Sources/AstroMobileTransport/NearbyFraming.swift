@@ -52,6 +52,44 @@ public enum NearbyTransportError: Error, Equatable, Sendable {
     /// identity or peer list (malformed JSON, wrong-length key material). The
     /// store fails closed rather than guessing at recovery.
     case identityStoreCorrupted
+
+    /// An await on the connection (send or receive) during the pairing
+    /// handshake did not complete within the session's configured timeout.
+    /// Terminal: the underlying connection is cancelled as part of raising
+    /// this error.
+    case handshakeTimeout
+    /// A `NearbyByteConnection` was cancelled (or otherwise closed) while a
+    /// `send`/`receive` was pending or subsequently attempted on it.
+    case connectionClosed
+    /// A frame decoded into a `NearbySessionMessage` of a kind the handshake
+    /// did not expect at this step (e.g. a `.packageChunk` where `.hello` was
+    /// required).
+    case unexpectedMessage
+    /// A peer's `.keyExchange` signature did not verify against the identity
+    /// key that applies for this session (the stored key for a known peer,
+    /// or the hello-supplied key for a first pairing) — or a peer-supplied
+    /// key/nonce field had the wrong byte length to be genuine. Terminal.
+    case signatureVerificationFailed
+    /// Either side declined the short authentication code during a first
+    /// pairing. Terminal; nothing is persisted to either trust store.
+    case pairingRejected
+    /// A first-pairing peer's `.pairingConfirm` HMAC proof did not match the
+    /// value expected from the shared transcript. Terminal.
+    case pairingConfirmationFailed
+    /// `shortAuthenticationCode` was awaited on a session that will never
+    /// produce one: a known-peer session authenticates purely from stored
+    /// identity keys and never prompts for a code.
+    case shortAuthenticationCodeUnavailable
+    /// A secure-channel operation failed authentication (tampering, replay,
+    /// out-of-order delivery, or a frame-kind swap), or the frame counter
+    /// would have wrapped past `UInt64.max`. Terminal: the channel latches
+    /// closed and every subsequent `send`/`receive` throws this same error
+    /// without touching the connection again.
+    case secureChannelFailed
+    /// A plaintext `NearbySessionMessage` encoding was too large to seal
+    /// under the channel's frame cap. Rejected before anything is sent; the
+    /// channel remains usable for subsequent, correctly sized messages.
+    case oversizedMessage
 }
 
 /// Encodes and decodes `NearbyFrame`s to and from the wire format.
