@@ -27,7 +27,35 @@ final class AstroToolMobileLaunchTests: XCTestCase {
         XCTAssertTrue(app.otherElements["mobile-imported-state"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["1"].exists)
         XCTAssertTrue(app.staticTexts["M31"].exists)
-        XCTAssertTrue(app.buttons["Import newer package"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["mobile-import-action"].exists)
+        app.tabBars.buttons["Sync"].tap()
+        XCTAssertTrue(app.otherElements["mobile-sync-surface"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Import newer plan"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Original photos stay on your Mac or external drive."].exists)
+    }
+
+    func testImportedFixtureSupportsAllFourTabsAndSafePhoneEdits() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--astrotool-mobile-ui-fixture", "imported"]
+        app.launch()
+
+        XCTAssertTrue(app.otherElements["mobile-tonight-surface"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["mobile-checklist-focus"].waitForExistence(timeout: 5))
+        app.buttons["mobile-checklist-focus"].tap()
+        app.buttons["mobile-note-edit"].tap()
+        let editor = app.textViews["v5.mobile.note.editor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText(" On phone")
+        app.buttons["v5.mobile.note.save"].tap()
+
+        app.tabBars.buttons["Projects"].tap()
+        XCTAssertTrue(app.otherElements["mobile-projects-surface"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Briefings"].tap()
+        XCTAssertTrue(app.otherElements["mobile-briefings-surface"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Sync"].tap()
+        XCTAssertTrue(app.otherElements["mobile-sync-surface"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Phone changes waiting"].exists)
+        XCTAssertTrue(app.staticTexts["Ready to send back in the next step."].exists)
+        XCTAssertTrue(app.staticTexts["Original photos stay on your Mac or external drive."].exists)
     }
 }

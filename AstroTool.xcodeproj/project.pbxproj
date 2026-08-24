@@ -39,12 +39,14 @@
 		578E4221A93AEA0F2AF95F11 /* ProductStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ABEE9EF3C25E7AB2AA65A1F /* ProductStyle.swift */; };
 		5DA60A885E2ACE3D59C2F903 /* PreviousNightPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DF4B8323B1DB6767465D7A /* PreviousNightPage.swift */; };
 		61D356BC0948C48B2CD4B93E /* FirstScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EEA40C4DF03ABB297618F10 /* FirstScanView.swift */; };
+		645183E09A1663041B54035B /* TonightMobileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37189B1D029AC15BF42BBBAE /* TonightMobileView.swift */; };
 		736F3090BF59F5C31F5C477E /* SessionNoteSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147728ED8B9225FB1D3CAA39 /* SessionNoteSheet.swift */; };
 		7B6BF6E6D6B7DE4A8D08803E /* MobileRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 537EC0A1C143D675F5FD9D78 /* MobileRootView.swift */; };
 		7E51D260F3FD7ECB34113235 /* TonightPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ED4F7C8220450BC5C50E05B /* TonightPage.swift */; };
 		80221E286A3F40B81C597B1A /* AstroToolLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A8A5EFF2ED30432AB7751E0 /* AstroToolLaunchTests.swift */; };
 		83B7F791E4389736589FE54D /* SessionsSegment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 424BB99C453395535178682F /* SessionsSegment.swift */; };
 		853C9440A8B911C89C41A611 /* BatchActionSheets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 616A196EDFE36848B3294530 /* BatchActionSheets.swift */; };
+		854124A6298A5B915D5FE91C /* SyncMobileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 640A6A141D03CD60EAA40B4E /* SyncMobileView.swift */; };
 		881E4787E6BB34F9EA261A0C /* AllTargetsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 95AD38D1500579B3238771F5 /* AllTargetsPage.swift */; };
 		8968166C4BCBFD1BB66BA761 /* SkyChartView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34CB072F9693E1D2999655D9 /* SkyChartView.swift */; };
 		8E015267067D5874BC5E73BA /* Shared.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7C333D164985BC2632441B7 /* Shared.swift */; };
@@ -56,9 +58,11 @@
 		A098B8A806327CA27876D597 /* VerifyConfirmationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92706D204E8A85DEFC0F8E38 /* VerifyConfirmationSheet.swift */; };
 		A0CC78DC01A13F48B31F66C6 /* NotesSegment.swift in Sources */ = {isa = PBXBuildFile; fileRef = E086EBB7225F5E3381220694 /* NotesSegment.swift */; };
 		A34304FAE2ACA8442E949888 /* QualitySegment.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFE3FE749A3740C2C61D07BC /* QualitySegment.swift */; };
+		A720BF9A04D48C84DC577B1D /* MobileInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E44C81CAFE458DD14DD754AD /* MobileInteractionTests.swift */; };
 		AC4E85DA5DB9FDE07E365E2F /* TargetDetailPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = AABC7F22396B6E2B9FEE5747 /* TargetDetailPage.swift */; };
 		AE6B9BB6E0E15D0484A9F793 /* AstroToolMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26B7A75E90C6BB56D03D05D0 /* AstroToolMobileApp.swift */; };
 		AE7CB7B555D623F567AFADC5 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55E36DB00A781CDFE160D171 /* AppState.swift */; };
+		B54D28906693ECBD9EFF8558 /* BriefingsMobileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A730EFB82804B903192C69E0 /* BriefingsMobileView.swift */; };
 		BBFEDA35D2178E2650E55198 /* FirstStepsChecklistView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 782D0E190D1AE5E003A9BAFA /* FirstStepsChecklistView.swift */; };
 		BDB5F5C44A3A44D927CA2F68 /* FilterProfileControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29028F20BE4F54A239CC6FBB /* FilterProfileControls.swift */; };
 		BF186E801D0C07E5004949EC /* NightsPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A54D2A0121693A265F5C8D /* NightsPage.swift */; };
@@ -75,6 +79,7 @@
 		E8081AE6EDFB53EC6341E099 /* LocationSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C6B9CE3C2F71327295BF595 /* LocationSettingsView.swift */; };
 		E992DCEB74E54E158283607D /* Commands.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94ADDCEAD8A1AC52B6C570C3 /* Commands.swift */; };
 		EFC4D9D4EC3E511505DDD53B /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = 72D32E2EE09B19222C70A32B /* Localizable.strings */; };
+		EFF7592BE9AB7E4E781427B5 /* ProjectsMobileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C7ED1E7B0CB179226C7F54 /* ProjectsMobileView.swift */; };
 		F09AA84861C72FD26A87FAAB /* MainShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74313B785388B238A3EEFA06 /* MainShellView.swift */; };
 		F0B95FCD8C8039AE9B2C2F77 /* SettingsShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB193E88D276AF0A7BF523FE /* SettingsShared.swift */; };
 		F15643060026A618172DA058 /* AuditPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCA4C8EB67054238E7DB1078 /* AuditPage.swift */; };
@@ -125,6 +130,7 @@
 		2C33BA156B671A44365C6B9A /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		34B0A836F6DC8BFAC648074F /* SettingsWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsWindow.swift; sourceTree = "<group>"; };
 		34CB072F9693E1D2999655D9 /* SkyChartView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkyChartView.swift; sourceTree = "<group>"; };
+		37189B1D029AC15BF42BBBAE /* TonightMobileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TonightMobileView.swift; sourceTree = "<group>"; };
 		3BC0FBA8B7FEEB82668255F1 /* QuickLookController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickLookController.swift; sourceTree = "<group>"; };
 		3C2173E433C466197C9DBABE /* AppState+Support.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+Support.swift"; sourceTree = "<group>"; };
 		424BB99C453395535178682F /* SessionsSegment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsSegment.swift; sourceTree = "<group>"; };
@@ -139,6 +145,7 @@
 		5CC6F785AA103818F3792007 /* AstroToolMobileLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AstroToolMobileLaunchTests.swift; sourceTree = "<group>"; };
 		616A196EDFE36848B3294530 /* BatchActionSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BatchActionSheets.swift; sourceTree = "<group>"; };
 		63ABB9714DFB216C52F82B6F /* ToastOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastOverlay.swift; sourceTree = "<group>"; };
+		640A6A141D03CD60EAA40B4E /* SyncMobileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncMobileView.swift; sourceTree = "<group>"; };
 		6506AA17E940B02F2B7EE272 /* MobileLibraryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileLibraryStore.swift; sourceTree = "<group>"; };
 		6B45172BB69C505F05DB1986 /* FolderStructureHelpSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderStructureHelpSheet.swift; sourceTree = "<group>"; };
 		6C6B9CE3C2F71327295BF595 /* LocationSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSettingsView.swift; sourceTree = "<group>"; };
@@ -160,8 +167,10 @@
 		9B743958FBEA9C25D973EF7F /* hu */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = hu; path = hu.lproj/Localizable.strings; sourceTree = "<group>"; };
 		9CEF9DFC08F996EC79513F02 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A03DD33D1EC84BB01DE53331 /* AstroToolApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AstroToolApp.swift; sourceTree = "<group>"; };
+		A1C7ED1E7B0CB179226C7F54 /* ProjectsMobileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectsMobileView.swift; sourceTree = "<group>"; };
 		A2DA2E22FA8897DE0D98678E /* AccessDeniedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessDeniedView.swift; sourceTree = "<group>"; };
 		A4355283208DED8791BF5F12 /* AstroTool.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AstroTool.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A730EFB82804B903192C69E0 /* BriefingsMobileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BriefingsMobileView.swift; sourceTree = "<group>"; };
 		A8AD694B72922B42FC930F17 /* AstroToolMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AstroToolMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AABC7F22396B6E2B9FEE5747 /* TargetDetailPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetDetailPage.swift; sourceTree = "<group>"; };
 		AB7CF9D430F24282E4A4B22F /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -176,6 +185,7 @@
 		D7A4D5D3D0634424C516456F /* FrameReviewSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrameReviewSheet.swift; sourceTree = "<group>"; };
 		DDDD288E9C81C398FD462828 /* StacksSegment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StacksSegment.swift; sourceTree = "<group>"; };
 		E086EBB7225F5E3381220694 /* NotesSegment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesSegment.swift; sourceTree = "<group>"; };
+		E44C81CAFE458DD14DD754AD /* MobileInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileInteractionTests.swift; sourceTree = "<group>"; };
 		EFE3FE749A3740C2C61D07BC /* QualitySegment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QualitySegment.swift; sourceTree = "<group>"; };
 		F2599A9E59D61B344A936267 /* CaptureWorkflowSheets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureWorkflowSheets.swift; sourceTree = "<group>"; };
 		F42EDEA15557865A79B87D99 /* NewSessionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSessionSheet.swift; sourceTree = "<group>"; };
@@ -358,6 +368,7 @@
 		A2813878E7361B65BB316FE1 /* AstroToolMobileTests */ = {
 			isa = PBXGroup;
 			children = (
+				E44C81CAFE458DD14DD754AD /* MobileInteractionTests.swift */,
 				6FC12F16DFD8D37CAD5E49FF /* MobileLibraryStoreTests.swift */,
 			);
 			path = AstroToolMobileTests;
@@ -367,11 +378,15 @@
 			isa = PBXGroup;
 			children = (
 				26B7A75E90C6BB56D03D05D0 /* AstroToolMobileApp.swift */,
+				A730EFB82804B903192C69E0 /* BriefingsMobileView.swift */,
 				8F5FD1E2A0196BF313079EFD /* CameraQRScanner.swift */,
 				9CEF9DFC08F996EC79513F02 /* Info.plist */,
 				1951B3823B698AF8B821643D /* MobileDocumentIntake.swift */,
 				6506AA17E940B02F2B7EE272 /* MobileLibraryStore.swift */,
 				537EC0A1C143D675F5FD9D78 /* MobileRootView.swift */,
+				A1C7ED1E7B0CB179226C7F54 /* ProjectsMobileView.swift */,
+				640A6A141D03CD60EAA40B4E /* SyncMobileView.swift */,
+				37189B1D029AC15BF42BBBAE /* TonightMobileView.swift */,
 				D6BD758C4A83B69BDFDC462B /* Resources */,
 			);
 			path = AstroToolMobile;
@@ -595,6 +610,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A720BF9A04D48C84DC577B1D /* MobileInteractionTests.swift in Sources */,
 				93E92C2E2E590F549108B947 /* MobileLibraryStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -676,10 +692,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				AE6B9BB6E0E15D0484A9F793 /* AstroToolMobileApp.swift in Sources */,
+				B54D28906693ECBD9EFF8558 /* BriefingsMobileView.swift in Sources */,
 				144D7A72C14F2071E5293BB5 /* CameraQRScanner.swift in Sources */,
 				9888BBE48D25824FDA23A49A /* MobileDocumentIntake.swift in Sources */,
 				E0CEE5655536EFA7F4889504 /* MobileLibraryStore.swift in Sources */,
 				7B6BF6E6D6B7DE4A8D08803E /* MobileRootView.swift in Sources */,
+				EFF7592BE9AB7E4E781427B5 /* ProjectsMobileView.swift in Sources */,
+				854124A6298A5B915D5FE91C /* SyncMobileView.swift in Sources */,
+				645183E09A1663041B54035B /* TonightMobileView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

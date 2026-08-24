@@ -3,11 +3,61 @@ import Foundation
 import AstroMobileDomain
 import AstroMobileTransport
 
+private enum MobileTab: Hashable {
+    case tonight, projects, briefings, sync
+}
+
+enum MobileSnapshotFreshness: Equatable, Sendable {
+    case fresh
+    case stale
+
+    static let staleThreshold: TimeInterval = 24 * 60 * 60
+
+    static func classification(snapshotDate: Date, now: Date) -> Self {
+        guard snapshotDate <= now,
+              now.timeIntervalSince(snapshotDate) >= staleThreshold else { return .fresh }
+        return .stale
+    }
+}
+
+enum MobileEffectiveState {
+    static func checklistValue(briefingID: UUID, itemID: String, snapshotValue: Bool, changes: [MobileChange]) -> Bool {
+        changes.reversed().compactMap { change in
+            guard case .checklistCompletion(let completion) = change,
+                  completion.briefingID == briefingID,
+                  completion.itemID == itemID else { return nil }
+            return completion.isCompleted
+        }.first ?? snapshotValue
+    }
+
+    static func noteText(noteID: String, snapshotText: String, changes: [MobileChange]) -> String {
+        changes.reversed().compactMap { change in
+            guard case .noteRevision(let revision) = change, revision.noteID == noteID else { return nil }
+            return revision.text
+        }.first ?? snapshotText
+    }
+}
+
+enum MobileProjectProgress {
+    static func fraction(integrationSeconds: Double, goalHours: Double?) -> Double? {
+        guard let goalHours, goalHours.isFinite, goalHours > 0,
+              integrationSeconds.isFinite else { return nil }
+        return min(max(integrationSeconds / (goalHours * 3_600), 0), 1)
+    }
+}
+
+enum MobileSurfaceSafety {
+    static let permittedMutationMethods = ["toggleChecklistItem", "editNote"]
+    static let forbiddenTerms = ["Finder", "path", "delete", "move", "rename", "original file"]
+}
+
+@MainActor
 struct MobileRootView: View {
     let store: MobileLibraryStore
     @Binding private var stagedPackageURL: URL?
     @Binding private var intakeError: MobileIntakeError?
     @State private var snapshot: MobileLibrarySnapshot?
+    @State private var changes: [MobileChange] = []
     @State private var queuedChangeCount = 0
     @State private var recoveryState: MobileLibraryStoreRecoveryState = .empty
     @State private var durabilityWarning = false
@@ -16,6 +66,7 @@ struct MobileRootView: View {
     @State private var keyPayload = ""
     @State private var message: String?
     @State private var showingScanner = false
+    @State private var selectedTab: MobileTab = .tonight
     private let scanner: any MobileQRScanner
     private let fixtureMode: String?
     private let fixtureQRPayload: String?
@@ -24,7 +75,8 @@ struct MobileRootView: View {
     @State private var fixturePrepared = false
     @Environment(\.scenePhase) private var scenePhase
 
-    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), intakeError: Binding<MobileIntakeError?> = .constant(nil), scanner: any MobileQRScanner = CameraQRScanner(), fixtureMode: String? = nil, fixtureQRPayload: String? = nil, fixtureRoot: URL? = nil) {
+    @MainActor
+    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), intakeError: Binding<MobileIntakeError?> = .constant(nil), scanner: any MobileQRScanner, fixtureMode: String? = nil, fixtureQRPayload: String? = nil, fixtureRoot: URL? = nil) {
         self.store = store
         _stagedPackageURL = stagedPackageURL
         _intakeError = intakeError
@@ -32,6 +84,11 @@ struct MobileRootView: View {
         self.fixtureMode = fixtureMode
         self.fixtureQRPayload = fixtureQRPayload
         self.fixtureRoot = fixtureRoot
+    }
+
+    @MainActor
+    init(store: MobileLibraryStore, stagedPackageURL: Binding<URL?> = .constant(nil), intakeError: Binding<MobileIntakeError?> = .constant(nil), fixtureMode: String? = nil, fixtureQRPayload: String? = nil, fixtureRoot: URL? = nil) {
+        self.init(store: store, stagedPackageURL: stagedPackageURL, intakeError: intakeError, scanner: CameraQRScanner(), fixtureMode: fixtureMode, fixtureQRPayload: fixtureQRPayload, fixtureRoot: fixtureRoot)
     }
 
     var body: some View {
@@ -64,6 +121,19 @@ struct MobileRootView: View {
                         .background(.yellow.opacity(0.2))
                         .accessibilityIdentifier("mobile-durability-warning")
                 }
+                if stagedPackageURL != nil && snapshot != nil {
+                    Button {
+                        selectedTab = .sync
+                    } label: {
+                        Label("A newer plan is ready to review in Sync.", systemImage: "arrow.down.circle")
+                            .font(.footnote.weight(.medium))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.borderless)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+                    .accessibilityIdentifier("mobile-staged-update-banner")
+                }
                 }
             }
             .navigationTitle("AstroTool")
@@ -82,6 +152,8 @@ struct MobileRootView: View {
                     importTask?.cancel()
                     importTask = nil
                     showingScanner = false
+                } else {
+                    Task { await refresh() }
                 }
             }
             .sheet(isPresented: $showingScanner, onDismiss: { scanner.stop() }) {
@@ -189,32 +261,44 @@ struct MobileRootView: View {
     }
 
     private func libraryState(_ snapshot: MobileLibrarySnapshot) -> some View {
-        List {
-            Section("Latest library") {
-                LabeledContent("Revision", value: "\(snapshot.revision)")
-                LabeledContent("Projects", value: "\(snapshot.projects.count)")
-                if let project = snapshot.projects.first { LabeledContent("Current project", value: project.displayName) }
-                LabeledContent("Queued changes", value: "\(queuedChangeCount)")
-            }
-            Section {
-                Text("Original photos stay on your Mac or external drive.")
-                    .foregroundStyle(.secondary)
-            }
-            if stagedPackageURL != nil {
-                Section { importSection }
-            }
+        TabView(selection: $selectedTab) {
+            TonightMobileView(snapshot: snapshot, changes: changes, store: store, onStoreChange: refresh)
+                .tabItem { Label("Tonight", systemImage: "moon.stars.fill") }
+                .tag(MobileTab.tonight)
+                .accessibilityIdentifier("v5.mobile.tab.today")
+            ProjectsMobileView(snapshot: snapshot, changes: changes, store: store, onStoreChange: refresh)
+                .tabItem { Label("Projects", systemImage: "square.stack.3d.up.fill") }
+                .tag(MobileTab.projects)
+                .accessibilityIdentifier("v5.mobile.tab.projects")
+            BriefingsMobileView(snapshot: snapshot, changes: changes, store: store, onStoreChange: refresh)
+                .tabItem { Label("Briefings", systemImage: "doc.text.fill") }
+                .tag(MobileTab.briefings)
+                .accessibilityIdentifier("v5.mobile.tab.briefings")
+            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage)
+                .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
+                .tag(MobileTab.sync)
+                .accessibilityIdentifier("v5.mobile.tab.sync")
         }
         .accessibilityIdentifier("mobile-imported-state")
     }
 
     private func refresh() async {
         snapshot = await store.activeSnapshot
+        changes = await store.queuedChanges
         queuedChangeCount = await store.queuedChanges.count
         recoveryState = await store.recoveryState
         durabilityWarning = await store.durabilityWarning
         durabilityAttemptWarning = await store.durabilityAttemptWarning
         durabilityAmbiguousWarning = await store.durabilityAmbiguousWarning
         stagedPackageURL = await store.stagedPackageURL
+    }
+
+    private func primaryImportAction() {
+        if keyPayload.isEmpty {
+            showingScanner = true
+        } else {
+            importPackage()
+        }
     }
 
     private func prepareImportedFixtureIfNeeded() async {
