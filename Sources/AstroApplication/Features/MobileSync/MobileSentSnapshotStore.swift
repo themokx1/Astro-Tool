@@ -10,6 +10,7 @@ public protocol MobileSentSnapshotStore: Sendable {
 }
 
 public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotStore, @unchecked Sendable {
+    private static let maximumBases = 128
     private struct Payload: Codable, Sendable {
         let schemaVersion: Int
         let snapshotIDs: [UUID]
@@ -53,7 +54,8 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotStore, @un
             guard !data.isEmpty else { throw MobileChangeImportError.receiptFailed }
             let payload = try MobileJSON.decoder.decode(Payload.self, from: data)
             guard payload.schemaVersion == 1 else { throw MobileChangeImportError.receiptFailed }
-            return Array(payload.snapshotIDs.suffix(16))
+            guard payload.snapshotIDs.count <= Self.maximumBases else { throw MobileChangeImportError.limitsExceeded }
+            return payload.snapshotIDs
         } catch let error as MobileChangeImportError {
             throw error
         } catch {
@@ -67,10 +69,13 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotStore, @un
         do {
             var ids = try loadUnlocked()
             ids.removeAll { $0 == snapshotID }
+            guard ids.count < Self.maximumBases else { throw MobileChangeImportError.limitsExceeded }
             ids.append(snapshotID)
-            let data = try MobileJSON.encoder.encode(Payload(schemaVersion: 1, snapshotIDs: Array(ids.suffix(16))))
+            let data = try MobileJSON.encoder.encode(Payload(schemaVersion: 1, snapshotIDs: ids))
             try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
             try data.write(to: fileURL, options: [.atomic])
+        } catch let error as MobileChangeImportError {
+            throw error
         } catch {
             throw MobileChangeImportError.receiptFailed
         }
@@ -81,7 +86,8 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotStore, @un
         do {
             let payload = try MobileJSON.decoder.decode(Payload.self, from: Data(contentsOf: fileURL))
             guard payload.schemaVersion == 1 else { throw MobileChangeImportError.receiptFailed }
-            return Array(payload.snapshotIDs.suffix(16))
+            guard payload.snapshotIDs.count <= Self.maximumBases else { throw MobileChangeImportError.limitsExceeded }
+            return payload.snapshotIDs
         } catch let error as MobileChangeImportError { throw error }
         catch { throw MobileChangeImportError.receiptFailed }
     }

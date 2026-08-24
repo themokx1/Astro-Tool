@@ -2806,3 +2806,11 @@
 "Duplicate change IDs were shown for review and were not applied." = "A duplikált módosításazonosítók megjelentek az ellenőrzéshez, de nem kerültek alkalmazásra.";
 "Older edits were superseded by the latest edit for the same target." = "A régebbi módosításokat ugyanazon cél legfrissebb módosítása váltotta fel.";
 "The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved." = "A Mac csak az ellenőrzött ellenőrzőlista- és jegyzetparancsokat írja. Tartsa nyitva ezt az ablakot a bizonylat mentéséig.";
+"Duplicate change ID: none of those records was applied." = "Duplikált módosításazonosító: egyik ilyen rekord sem került alkalmazásra.";
+"The target is no longer available on this Mac." = "A cél már nem érhető el ezen a Macen.";
+"The phone note was empty and was not imported." = "A telefonjegyzet üres volt, ezért nem lett importálva.";
+"The change record was incomplete." = "A módosítási rekord hiányos volt.";
+"The package contains changes from more than one phone." = "A csomag több telefon módosításait tartalmazza.";
+"This change was not accepted." = "A módosítás nem lett elfogadva.";
+"Some reviewed changes were saved before the receipt failed. Applied %lld; resolved %lld. Keep the phone package and create a fresh forward snapshot after recovery." = "Néhány ellenőrzött módosítás mentése sikerült, mielőtt a bizonylat mentése meghiúsult. Alkalmazva: %lld; rendezve: %lld. Őrizze meg a telefoncsomagot, és helyreállítás után készítsen új előre irányú pillanatképet.";
+"Saved before failure: applied %lld, resolved %lld. Keep the phone package, recover the Mac receipt, then create a fresh forward snapshot." = "Hiba előtt mentve: alkalmazva %lld, rendezve %lld. Őrizze meg a telefoncsomagot, állítsa helyre a Mac bizonylatát, majd készítsen új előre irányú pillanatképet.";

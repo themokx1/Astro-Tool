@@ -374,7 +374,7 @@ public struct MobileSyncView: View {
                             .font(.caption)
                     }
                     ForEach(changes.rejected, id: \.changeID) { rejected in
-                        Label(rejected.detail ?? "This change was not accepted.", systemImage: "nosign")
+                        Label(rejectionMessage(rejected), systemImage: "nosign")
                             .font(.caption)
                             .foregroundStyle(AstroTokens.Color.critical)
                     }
@@ -453,6 +453,17 @@ public struct MobileSyncView: View {
         )
     }
 
+    private func rejectionMessage(_ rejected: MobileRejectedChange) -> LocalizedStringKey {
+        switch rejected.reason {
+        case .duplicateChangeID: "Duplicate change ID: none of those records was applied."
+        case .unknownTarget: "The target is no longer available on this Mac."
+        case .noTextToImport: "The phone note was empty and was not imported."
+        case .malformedChange: "The change record was incomplete."
+        case .crossDeviceQueue: "The package contains changes from more than one phone."
+        default: "This change was not accepted."
+        }
+    }
+
     private func packageIDRow(_ packageID: UUID) -> some View {
         let value = packageID.uuidString
         return ViewThatFits(in: .horizontal) {
@@ -487,6 +498,11 @@ public struct MobileSyncView: View {
             Label(store.errorMessage ?? "Something needs attention.", systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(AstroTokens.Color.critical)
                 .accessibilityIdentifier("v5.mobile-sync.error")
+            if let receipt = store.appliedChangeReceipt, !receipt.appliedChangeIDs.isEmpty || !receipt.resolvedChangeIDs.isEmpty {
+                Text("Saved before failure: applied \(receipt.appliedChangeIDs.count), resolved \(receipt.resolvedChangeIDs.count). Keep the phone package, recover the Mac receipt, then create a fresh forward snapshot.")
+                    .font(.callout.weight(.semibold))
+                    .accessibilityIdentifier("v5.mobile-sync.partial-receipt")
+            }
             HStack {
                 Button("Try again", systemImage: "arrow.clockwise") {
                     store.startRetry()

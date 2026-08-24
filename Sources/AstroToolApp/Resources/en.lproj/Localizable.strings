@@ -204,3 +204,11 @@
 "Duplicate change IDs were shown for review and were not applied." = "Duplicate change IDs were shown for review and were not applied.";
 "Older edits were superseded by the latest edit for the same target." = "Older edits were superseded by the latest edit for the same target.";
 "The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved." = "The Mac is writing only the reviewed checklist and note commands. Keep this window open until the receipt is saved.";
+"Duplicate change ID: none of those records was applied." = "Duplicate change ID: none of those records was applied.";
+"The target is no longer available on this Mac." = "The target is no longer available on this Mac.";
+"The phone note was empty and was not imported." = "The phone note was empty and was not imported.";
+"The change record was incomplete." = "The change record was incomplete.";
+"The package contains changes from more than one phone." = "The package contains changes from more than one phone.";
+"This change was not accepted." = "This change was not accepted.";
+"Some reviewed changes were saved before the receipt failed. Applied %lld; resolved %lld. Keep the phone package and create a fresh forward snapshot after recovery." = "Some reviewed changes were saved before the receipt failed. Applied %lld; resolved %lld. Keep the phone package and create a fresh forward snapshot after recovery.";
+"Saved before failure: applied %lld, resolved %lld. Keep the phone package, recover the Mac receipt, then create a fresh forward snapshot." = "Saved before failure: applied %lld, resolved %lld. Keep the phone package, recover the Mac receipt, then create a fresh forward snapshot.";

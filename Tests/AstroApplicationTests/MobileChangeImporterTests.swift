@@ -99,6 +99,18 @@ struct MobileChangeImporterTests {
         #expect(commands.value == 0)
     }
 
+    @Test("a duplicate change ID collision rejects every colliding record before apply")
+    func duplicateCollisionCannotApplyFirstRecord() throws {
+        let fixture = Fixture()
+        let first = fixture.noteChange(id: UUID(uuidString: "00000000-0000-0000-0000-000000000099")!, text: "first")
+        let second = fixture.noteChange(id: first.changeID, text: "second")
+        let preview = try MobileChangeImporter().preview(envelope: fixture.envelope(changes: [first, second]), expectedLibraryID: fixture.libraryID, currentSnapshot: fixture.snapshot, sourcePackageID: fixture.packageID)
+        #expect(preview.applicable.isEmpty)
+        #expect(preview.conflicts.isEmpty)
+        #expect(preview.duplicates == [first.changeID])
+        #expect(preview.rejected.allSatisfy { $0.reason == .duplicateChangeID })
+    }
+
     @Test("apply requires explicit confirmation and records the narrow command receipt")
     func applyIsSecondPhase() async throws {
         let fixture = Fixture()

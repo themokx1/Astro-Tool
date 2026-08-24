@@ -32,4 +32,15 @@ public final class MobileSnapshotRevisionStore: @unchecked Sendable {
         } catch let error as MobileChangeImportError { throw error }
         catch { throw MobileChangeImportError.receiptFailed }
     }
+
+    public func current() throws -> Int {
+        lock.lock(); defer { lock.unlock() }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return 0 }
+        do {
+            let payload = try MobileJSON.decoder.decode(Payload.self, from: Data(contentsOf: fileURL))
+            guard payload.schemaVersion == 1, payload.revision >= 0 else { throw MobileChangeImportError.receiptFailed }
+            return payload.revision
+        } catch let error as MobileChangeImportError { throw error }
+        catch { throw MobileChangeImportError.receiptFailed }
+    }
 }

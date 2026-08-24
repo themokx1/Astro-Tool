@@ -121,11 +121,13 @@ public extension MobileChangeCommands {
         )
         let metadataStore = try MetadataStore(storagePaths: paths)
         let briefingStore = NightBriefingRevisionStore(directory: paths.briefings)
-        let bridge = MobileMacDomainCommandBridge(metadataStore: metadataStore, briefingStore: briefingStore)
+        let bridge = try MobileMacDomainCommandBridge(rootURL: rootURL, metadataStore: metadataStore, briefingStore: briefingStore)
         return .init(
             saveChecklist: { command in try await bridge.saveChecklist(command) },
             saveNote: { command in try await bridge.saveNote(command) },
-            addFieldNote: { command in try await bridge.addFieldNote(command) }
+            addFieldNote: { command in try await bridge.addFieldNote(command) },
+            beginApply: { try await bridge.beginApply() },
+            endApply: { try await bridge.endApply() }
         )
     }
 }
@@ -137,55 +139,80 @@ public extension MobileChangeCommands {
 private final class MobileMacDomainCommandBridge: @unchecked Sendable {
     private let metadataStore: MetadataStore
     private let briefingStore: NightBriefingRevisionStore
+    private let receipts: MobileDomainCommandReceiptStore
+    private let lock = NSLock()
+    private var briefingBatchRevisions: [UUID: Int] = [:]
 
-    init(metadataStore: MetadataStore, briefingStore: NightBriefingRevisionStore) {
+    init(rootURL: URL, metadataStore: MetadataStore, briefingStore: NightBriefingRevisionStore) throws {
         self.metadataStore = metadataStore
         self.briefingStore = briefingStore
+        self.receipts = try MobileDomainCommandReceiptStore(fileURL: rootURL.appendingPathComponent(".astro-tool/mobile-domain-command-receipts.json"))
     }
 
+    func beginApply() { lock.lock(); briefingBatchRevisions = [:]; lock.unlock() }
+    func endApply() { lock.lock(); briefingBatchRevisions = [:]; lock.unlock() }
+
     func saveChecklist(_ command: MobileChecklistRevisionCommand) async throws -> Int? {
-        guard var draft = try await briefingStore.latest(id: command.briefingID), draft.revision == command.expectedRevision else {
+        if let result = try receipts.result(for: command.changeID) { return result }
+        guard var draft = try await briefingStore.latest(id: command.briefingID) else {
             throw MobileChangeImportError.commandFailed(command.changeID)
         }
         guard let sectionIndex = draft.checklist.firstIndex(where: { $0.items.contains { $0.id == command.itemID } }),
               let itemIndex = draft.checklist[sectionIndex].items.firstIndex(where: { $0.id == command.itemID }) else {
             throw MobileChangeImportError.commandFailed(command.changeID)
         }
+        let expected = lock.withLock { briefingBatchRevisions[command.briefingID] ?? command.expectedRevision }
+        guard draft.revision == expected else { throw MobileChangeImportError.commandFailed(command.changeID) }
         draft.checklist[sectionIndex].items[itemIndex].isCompleted = command.isCompleted
+        draft.savedAt = command.createdAt
         let saved = try await briefingStore.save(draft)
+        lock.withLock { briefingBatchRevisions[command.briefingID] = saved.revision }
+        try receipts.record(command.changeID, result: saved.revision)
         return saved.revision
     }
 
     func saveNote(_ command: MobileNoteRevisionCommand) async throws -> Int? {
+        if let result = try receipts.result(for: command.changeID) { return result }
         if let briefingID = Self.briefingID(from: command.noteID) {
-            guard var draft = try await briefingStore.latest(id: briefingID), draft.revision == command.expectedRevision else {
+            guard var draft = try await briefingStore.latest(id: briefingID) else {
                 throw MobileChangeImportError.commandFailed(command.changeID)
             }
+            let expected = lock.withLock { briefingBatchRevisions[briefingID] ?? command.expectedRevision }
+            guard draft.revision == expected else { throw MobileChangeImportError.commandFailed(command.changeID) }
             draft.notes = command.text
+            draft.savedAt = command.createdAt
             let saved = try await briefingStore.save(draft)
+            lock.withLock { briefingBatchRevisions[briefingID] = saved.revision }
+            try receipts.record(command.changeID, result: saved.revision)
             return saved.revision
         }
         guard let projectID = UUID(uuidString: command.ownerID),
               let annotation = try await metadataStore.projectAnnotation(projectID: projectID) else {
             throw MobileChangeImportError.commandFailed(command.changeID)
         }
+        guard annotation.revision == command.expectedRevision else { throw MobileChangeImportError.commandFailed(command.changeID) }
         try await metadataStore.save(ProjectAnnotationRecord(
             projectID: annotation.projectID,
             integrationGoalHours: annotation.integrationGoalHours,
             notes: command.text,
-            updatedAt: command.createdAt
+            updatedAt: command.createdAt,
+            revision: annotation.revision + 1
         ))
+        try receipts.record(command.changeID, result: annotation.revision + 1)
         return command.resultingRevision
     }
 
     func addFieldNote(_ command: MobileFieldNoteCommand) async throws -> Int? {
+        if try receipts.contains(command.changeID) { return nil }
         let separator = "\n\n— Phone field note —\n"
         if let briefingID = Self.briefingID(from: command.noteID) {
             guard var draft = try await briefingStore.latest(id: briefingID) else {
                 throw MobileChangeImportError.commandFailed(command.changeID)
             }
-            draft.notes += separator + command.text
+            draft.notes += separator + Self.timestamp(command.createdAt) + "\n" + command.text
+            draft.savedAt = command.createdAt
             _ = try await briefingStore.save(draft)
+            try receipts.record(command.changeID, result: nil)
             return nil
         }
         guard let projectID = UUID(uuidString: command.ownerID),
@@ -195,14 +222,43 @@ private final class MobileMacDomainCommandBridge: @unchecked Sendable {
         try await metadataStore.save(ProjectAnnotationRecord(
             projectID: annotation.projectID,
             integrationGoalHours: annotation.integrationGoalHours,
-            notes: annotation.notes + separator + command.text,
-            updatedAt: command.createdAt
+            notes: annotation.notes + separator + Self.timestamp(command.createdAt) + "\n" + command.text,
+            updatedAt: command.createdAt,
+            revision: annotation.revision + 1
         ))
+        try receipts.record(command.changeID, result: nil)
         return nil
     }
 
     private static func briefingID(from noteID: String) -> UUID? {
         guard noteID.hasPrefix("briefing-") else { return nil }
         return UUID(uuidString: String(noteID.dropFirst("briefing-".count)))
+    }
+
+    private static func timestamp(_ date: Date) -> String { date.formatted(date: .abbreviated, time: .shortened) }
+}
+
+private final class MobileDomainCommandReceiptStore: @unchecked Sendable {
+    private struct Payload: Codable { var schemaVersion: Int = 1; var results: [UUID: Int?] = [:] }
+    private let fileURL: URL
+    private let lock = NSLock()
+    private var payload: Payload
+    init(fileURL: URL) throws {
+        self.fileURL = fileURL
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            payload = try MobileJSON.decoder.decode(Payload.self, from: Data(contentsOf: fileURL))
+        } else { payload = Payload() }
+    }
+    func contains(_ id: UUID) throws -> Bool { lock.lock(); defer { lock.unlock() }; return payload.results[id] != nil || payload.results.keys.contains(id) }
+    func result(for id: UUID) throws -> Int?? {
+        lock.lock(); defer { lock.unlock() }
+        guard payload.results.keys.contains(id) else { return nil }
+        return payload.results[id]
+    }
+    func record(_ id: UUID, result: Int?) throws {
+        lock.lock(); defer { lock.unlock() }
+        payload.results[id] = result
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try MobileJSON.encoder.encode(payload).write(to: fileURL, options: [.atomic])
     }
 }

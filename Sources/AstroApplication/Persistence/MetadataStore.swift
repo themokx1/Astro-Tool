@@ -252,7 +252,7 @@ public actor MetadataStore {
     public func projectAnnotation(projectID: UUID) throws -> ProjectAnnotationRecord? {
         var record: ProjectAnnotationRecord?
         try database.query(
-            "SELECT project_id, integration_goal_hours, notes, updated_at FROM project_annotations WHERE project_id = ?;",
+            "SELECT project_id, integration_goal_hours, notes, updated_at, revision FROM project_annotations WHERE project_id = ?;",
             bind: [.text(projectID.databaseText)]
         ) { row in
             guard let id = row.string(0).flatMap(UUID.init(uuidString:)),
@@ -263,7 +263,8 @@ public actor MetadataStore {
                 projectID: id,
                 integrationGoalHours: row.double(1),
                 notes: notes,
-                updatedAt: Date(timeIntervalSince1970: updatedAt)
+                updatedAt: Date(timeIntervalSince1970: updatedAt),
+                revision: Int(row.int64(4) ?? 0)
             )
         }
         return record
@@ -972,18 +973,20 @@ public actor MetadataStore {
         try Self.validateFinite(record.updatedAt.timeIntervalSince1970, record: "project_annotations", field: "updated_at")
         try database.run(
             """
-            INSERT INTO project_annotations(project_id, integration_goal_hours, notes, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO project_annotations(project_id, integration_goal_hours, notes, updated_at, revision)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(project_id) DO UPDATE SET
               integration_goal_hours = excluded.integration_goal_hours,
               notes = excluded.notes,
-              updated_at = excluded.updated_at;
+              updated_at = excluded.updated_at,
+              revision = excluded.revision;
             """,
             bind: [
                 .text(record.projectID.databaseText),
                 record.integrationGoalHours.map(SQLiteValue.real) ?? .null,
                 .text(record.notes),
                 .real(record.updatedAt.timeIntervalSince1970),
+                .int(Int64(record.revision)),
             ]
         )
     }

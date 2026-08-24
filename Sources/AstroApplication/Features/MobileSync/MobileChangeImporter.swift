@@ -9,21 +9,28 @@ public struct MobileChangeCommands: Sendable {
     public typealias SaveChecklist = @Sendable (MobileChecklistRevisionCommand) async throws -> Int?
     public typealias SaveNote = @Sendable (MobileNoteRevisionCommand) async throws -> Int?
     public typealias AddFieldNote = @Sendable (MobileFieldNoteCommand) async throws -> Int?
+    public typealias ApplyBoundary = @Sendable () async throws -> Void
 
     public let saveChecklist: SaveChecklist
     public let saveNote: SaveNote
     public let addFieldNote: AddFieldNote
+    public let beginApply: ApplyBoundary
+    public let endApply: ApplyBoundary
     fileprivate let isConfigured: Bool
 
     public init(
         saveChecklist: SaveChecklist? = nil,
         saveNote: SaveNote? = nil,
         addFieldNote: AddFieldNote? = nil
+        , beginApply: ApplyBoundary? = nil
+        , endApply: ApplyBoundary? = nil
     ) {
         self.isConfigured = saveChecklist != nil && saveNote != nil && addFieldNote != nil
         self.saveChecklist = saveChecklist ?? { _ in throw MobileChangeImportError.configurationMissing }
         self.saveNote = saveNote ?? { _ in throw MobileChangeImportError.configurationMissing }
         self.addFieldNote = addFieldNote ?? { _ in throw MobileChangeImportError.configurationMissing }
+        self.beginApply = beginApply ?? {}
+        self.endApply = endApply ?? {}
     }
 }
 
@@ -34,14 +41,16 @@ public struct MobileChecklistRevisionCommand: Codable, Equatable, Sendable {
     public let isCompleted: Bool
     public let expectedRevision: Int
     public let resultingRevision: Int
+    public let createdAt: Date
 
-    public init(changeID: UUID, briefingID: UUID, itemID: String, isCompleted: Bool, expectedRevision: Int, resultingRevision: Int) {
+    public init(changeID: UUID, briefingID: UUID, itemID: String, isCompleted: Bool, expectedRevision: Int, resultingRevision: Int, createdAt: Date = Date()) {
         self.changeID = changeID
         self.briefingID = briefingID
         self.itemID = itemID
         self.isCompleted = isCompleted
         self.expectedRevision = expectedRevision
         self.resultingRevision = resultingRevision
+        self.createdAt = createdAt
     }
 }
 
@@ -242,9 +251,9 @@ public struct MobileChangeApplicationLedger: Codable, Equatable, Sendable {
         self.schemaVersion = Self.currentSchemaVersion
         self.libraryID = libraryID
         self.records = Array(records.suffix(256))
-        self.appliedChangeIDs = Array(Array(Set(appliedChangeIDs)).sorted { $0.uuidString < $1.uuidString }.suffix(10_000))
-        self.resolvedChangeIDs = Array(Array(Set(resolvedChangeIDs)).sorted { $0.uuidString < $1.uuidString }.suffix(10_000))
-        self.resultingRevisions = Dictionary(uniqueKeysWithValues: resultingRevisions.sorted { $0.key < $1.key }.suffix(10_000))
+        self.appliedChangeIDs = Array(Set(appliedChangeIDs)).sorted { $0.uuidString < $1.uuidString }
+        self.resolvedChangeIDs = Array(Set(resolvedChangeIDs)).sorted { $0.uuidString < $1.uuidString }
+        self.resultingRevisions = resultingRevisions
     }
 }
 
@@ -357,11 +366,15 @@ public final class MobileChangeImporter: @unchecked Sendable {
         var rejected: [MobileRejectedChange] = []
         var seen = Set<UUID>()
         var uniqueChanges: [MobileChange] = []
+        var occurrences: [UUID: Int] = [:]
         for change in envelope.changes {
             let id = change.mobileChangeID
-            guard seen.insert(id).inserted else { duplicates.append(id); continue }
+            occurrences[id, default: 0] += 1
+            guard seen.insert(id).inserted else { continue }
             uniqueChanges.append(change)
         }
+        let collisionIDs = Set(occurrences.compactMap { $0.value > 1 ? $0.key : nil })
+        duplicates = Array(collisionIDs)
         var latestByTarget: [String: MobileChange] = [:]
         for change in uniqueChanges {
             let key = change.mobileTargetKey
@@ -375,6 +388,10 @@ public final class MobileChangeImporter: @unchecked Sendable {
 
         for change in uniqueChanges where selectedIDs.contains(change.mobileChangeID) {
             let id = change.mobileChangeID
+            if collisionIDs.contains(id) {
+                rejected.append(.init(changeID: id, reason: .duplicateChangeID, detail: "This change ID appears more than once; none of those records can be applied."))
+                continue
+            }
             if allApplied.contains(id) {
                 alreadyApplied.append(id)
                 continue
@@ -463,6 +480,11 @@ public final class MobileChangeImporter: @unchecked Sendable {
 
         let applicable = refreshed.applicable
         let conflicts = refreshed.conflicts
+        let existingAcknowledgements = Set((ledger?.appliedChangeIDs ?? []) + (ledger?.resolvedChangeIDs ?? []))
+        let incomingAcknowledgements = Set(applicable.map(\.mobileChangeID) + conflicts.map(\.changeID) + refreshed.superseded)
+        guard existingAcknowledgements.union(incomingAcknowledgements).count <= 10_000 else {
+            throw MobileChangeImportError.limitsExceeded
+        }
         for conflict in conflicts where resolutions[conflict.changeID] == nil {
             throw MobileChangeImportError.conflictResolutionRequired(conflict.changeID)
         }
@@ -498,6 +520,7 @@ public final class MobileChangeImporter: @unchecked Sendable {
         }
 
         do {
+            try await commands.beginApply()
             for change in applicable {
                 try await apply(change, resolution: .applyPhone, currentRevisionByTarget: &currentRevisionByTarget, persist: persist)
             }
@@ -512,7 +535,9 @@ public final class MobileChangeImporter: @unchecked Sendable {
                 try await apply(conflict.change, resolution: resolution, currentRevisionByTarget: &currentRevisionByTarget, persist: persist)
                 }
             }
+            try await commands.endApply()
         } catch let error as MobileChangeImportError {
+            try? await commands.endApply()
             if case .partialReceipt = error { throw error }
             if !applied.isEmpty {
                 let partial = MobileChangeApplicationRecord(libraryID: preview.libraryID, sourcePackageID: preview.sourcePackageID, sourceFingerprint: preview.sourceFingerprint, appliedChangeIDs: applied, resolvedChangeIDs: resolved, resultingRevisions: resulting)
@@ -520,6 +545,7 @@ public final class MobileChangeImporter: @unchecked Sendable {
             }
             throw error
         } catch {
+            try? await commands.endApply()
             if !applied.isEmpty {
                 let partial = MobileChangeApplicationRecord(libraryID: preview.libraryID, sourcePackageID: preview.sourcePackageID, sourceFingerprint: preview.sourceFingerprint, appliedChangeIDs: applied, resolvedChangeIDs: resolved, resultingRevisions: resulting)
                 throw MobileChangeImportError.partialReceipt(partial)
@@ -528,7 +554,7 @@ public final class MobileChangeImporter: @unchecked Sendable {
         }
 
         for id in refreshed.superseded where !applied.contains(id) && !resolved.contains(id) {
-            applied.append(id)
+            resolved.append(id)
             resulting[id.uuidString] = currentRevisionByTarget.values.max() ?? 0
         }
         if !refreshed.superseded.isEmpty || !resolved.isEmpty {
@@ -555,7 +581,7 @@ public final class MobileChangeImporter: @unchecked Sendable {
             let expected = currentRevisionByTarget[key, default: value.baseRevision]
             let next: Int
             do {
-                guard let resulting = try await commands.saveChecklist(.init(changeID: value.changeID, briefingID: value.briefingID, itemID: value.itemID, isCompleted: value.isCompleted, expectedRevision: expected, resultingRevision: expected + 1)) else {
+                guard let resulting = try await commands.saveChecklist(.init(changeID: value.changeID, briefingID: value.briefingID, itemID: value.itemID, isCompleted: value.isCompleted, expectedRevision: expected, resultingRevision: expected + 1, createdAt: value.createdAt)) else {
                     throw MobileChangeImportError.commandFailed(value.changeID)
                 }
                 next = resulting

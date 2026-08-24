@@ -354,11 +354,12 @@ struct MobileSyncStoreTests {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let store = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent.json"))
-        let ids = (0..<20).map { _ in UUID() }
-        for id in ids { try store.save(snapshotID: id) }
+        let ids = (0..<130).map { _ in UUID() }
+        for id in ids.prefix(128) { try store.save(snapshotID: id) }
+        #expect(throws: MobileChangeImportError.limitsExceeded) { try store.save(snapshotID: ids[128]) }
         let loaded = try store.load()
-        #expect(loaded.count == 16)
-        #expect(Set(loaded) == Set(ids.suffix(16)))
+        #expect(loaded.count == 128)
+        #expect(Set(loaded) == Set(ids.prefix(128)))
     }
 
     @Test("Destination preparation never removes an existing package")

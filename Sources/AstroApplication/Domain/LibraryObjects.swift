@@ -27,12 +27,24 @@ public struct ProjectAnnotationRecord: Codable, Equatable, Hashable, Sendable {
     public let integrationGoalHours: Double?
     public let notes: String
     public let updatedAt: Date
+    public let revision: Int
 
-    public init(projectID: UUID, integrationGoalHours: Double?, notes: String, updatedAt: Date) {
+    public init(projectID: UUID, integrationGoalHours: Double?, notes: String, updatedAt: Date, revision: Int = 0) {
         self.projectID = projectID
         self.integrationGoalHours = integrationGoalHours
         self.notes = notes
         self.updatedAt = updatedAt
+        self.revision = revision
+    }
+
+    private enum CodingKeys: String, CodingKey { case projectID, integrationGoalHours, notes, updatedAt, revision }
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        projectID = try c.decode(UUID.self, forKey: .projectID)
+        integrationGoalHours = try c.decodeIfPresent(Double.self, forKey: .integrationGoalHours)
+        notes = try c.decode(String.self, forKey: .notes)
+        updatedAt = try c.decode(Date.self, forKey: .updatedAt)
+        revision = try c.decodeIfPresent(Int.self, forKey: .revision) ?? 0
     }
 }
 

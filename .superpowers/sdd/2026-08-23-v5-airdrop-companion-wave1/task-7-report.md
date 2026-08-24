@@ -1,33 +1,28 @@
-# Task 7 — Encrypted return leg review-round-2 closure
+# Task 7 — Encrypted return leg review-round-3 closure
 
 ## Outcome
 
-The authenticated return path now previews the complete typed result before a separate final confirmation, then enters an explicit applying phase that cannot be cancelled or dismissed mid-apply. Only the three allowlisted checklist, note, and field-note commands run, and production commands write the briefing revision store and metadata project-annotation store used by the forward snapshot composer.
+The authenticated Mac return path retains the opaque package capability, previews typed changes, requires final confirmation, and uses an explicit non-cancellable applying phase. Duplicate change-ID collisions now reject every colliding record before commands. Latest-invalid chronology remains fail-closed.
 
-Snapshot revisions are persisted monotonic values (including identical and acknowledgement-only compositions). Sent forward bases are durable, bounded history rather than a single last ID, and the phone exporter rejects an existing destination before writing. Return duplicate IDs reach typed preview; forward envelopes remain strict. Effective chronology selects the latest record before validating it, so a malformed latest edit cannot fall back to an older edit. Receipt IDs and cumulative ledger data are bounded.
+Production domain commands now write the stores consumed by forward snapshot composition. Briefing checklist/note commands share a batch revision chain, update truthful saved timestamps, and use durable change-ID receipts. Project annotations have an independent persisted revision with compare-and-set semantics; snapshot composition exports that revision rather than the snapshot counter. Field-note timestamps are included in the saved text.
 
-## Security and durability
+Receipt failure preserves exact partial applied/resolved totals and recovery guidance. Applied/resolved acknowledgement IDs are never silently suffix-truncated; the importer fails closed before mutation at the 10,000 outstanding-ID bound. Sent-base history is bounded without blind eviction and rejects capacity overflow. Forward snapshot publication rejects an older preview after a newer persisted revision exists. iPhone return export cancellation/background lifecycle clears its task/key state while preserving the queued changes.
 
-- The opaque authenticated package capability remains the only production authority for return envelope, package ID, and fingerprint; raw envelope preview/apply seams were removed.
-- Production domain writes use `NightBriefingRevisionStore` and `MetadataStore.projectAnnotation`, with expected-revision checks and atomic revision-file/database writes. The fixture sidecar retains rollback-safe write-before-memory behavior but is not selected by production construction.
-- Ledger writes remain durable before in-memory replacement. Partial receipt errors carry exact applied/resolved IDs and resulting revisions, including receipt-store failure after a command.
-- Mac and iPhone destination writers reject existing files. Phone queue pruning remains exact acknowledged-ID pruning after the durable forward snapshot commit.
+## UI / localization / accessibility
 
-## UI / localization
-
-- Mac shows applicable, conflict, already-applied, superseded, duplicate, and rejected counts with reasons, human target names, both values/timestamps, resolution pickers, an applying progress phase, and honest receipt totals.
-- Mac apply errors are handled explicitly; the store retains the failure state and does not acknowledge the phone package on failure.
-- New round-2 Mac strings have EN/HU entries. The localization audit reports only the repository's existing seven explicit brand/domain allowlist keys.
-- iPhone return export continues to preserve queued changes through cancellation/failure and rejects overwrite through `FileDocument.WriteConfiguration.existingFile`.
+- Mac renders duplicate, rejected, superseded, conflict, applying, partial-receipt, and result states with stable identifiers; apply errors are handled explicitly.
+- Rejection messages are typed by reason and localized in Mac EN/HU resources. New partial/result and duplicate-collision strings are covered.
+- Existing code, conflict, result, confirmation, and safety identifiers/labels remain in place; iPhone return export retains overwrite protection and queue-preserving failure behavior.
 
 ## Verification evidence
 
-- `swift test --filter 'MobileChangeImporterTests|MobileSyncStoreTests|MobilePackageServiceTests'` — passed, 66 tests in 2 suites.
-- `swift test` — passed, 3,466 tests in 219 suites.
-- `git diff --check` — clean.
-- `swift scripts/extract-localizable-strings.swift --missing` — only the existing allowlist remains: AstroTool, Bias, Dark, FWHM, Flat, Light, OK.
-- `xcodebuild -project AstroTool.xcodeproj -scheme AstroTool -destination platform=macOS -derivedDataPath /tmp/astro-v5-round2 build` — BUILD SUCCEEDED.
+- Focused `MobileChangeImporterTests|MobileSyncStoreTests` — passed, 27 tests in 2 suites.
+- Focused `MobileSnapshotComposerTests|MetadataStoreTests` — passed, 41 tests in 2 suites.
+- Full `swift test` — passed on the final rerun, 3,467 tests in 219 suites. One earlier parallel run had a pre-existing descriptor-test race; the final rerun passed.
+- `git diff --check` — clean before commit.
+- `swift scripts/extract-localizable-strings.swift --missing` — existing explicit allowlist only.
+- `xcodebuild -project AstroTool.xcodeproj -scheme AstroTool -destination platform=macOS -derivedDataPath /tmp/astro-v5-round3 build` — BUILD SUCCEEDED.
 
 ## External gate / concern
 
-The official iOS simulator/device runtime gate remains external and unclaimed; this environment does not provide a usable iOS destination. Mac SwiftPM and the checked-in `AstroTool` macOS scheme are the verified checks.
+The official iOS simulator/device runtime gate remains external and unclaimed. The checked-in `AstroTool` macOS scheme and SwiftPM suites are the verified evidence.

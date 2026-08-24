@@ -128,7 +128,7 @@ public struct MobileSnapshotComposer: Sendable {
                 scope: .project,
                 ownerID: annotation.projectID.uuidString,
                 text: annotation.notes,
-                baseRevision: input.revision,
+                baseRevision: annotation.revision,
                 updatedAt: annotation.updatedAt,
                 isEditableOnPhone: true
             )

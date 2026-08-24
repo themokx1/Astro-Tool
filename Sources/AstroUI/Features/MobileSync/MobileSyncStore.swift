@@ -268,12 +268,21 @@ public final class MobileSyncStore {
             guard generation == operationGeneration, phase == .applying else { throw MobileChangeImportError.stalePreview }
             _ = try await packageImportCommit(capability)
         } catch {
+            if case let MobileChangeImportError.partialReceipt(partial) = error {
+                appliedChangeReceipt = partial
+                appliedChangeTotals = (partial.appliedChangeIDs.count, partial.resolvedChangeIDs.count, changePreview.rejected.count)
+                errorMessage = String(localized: "Some reviewed changes were saved before the receipt failed. Applied \(partial.appliedChangeIDs.count); resolved \(partial.resolvedChangeIDs.count). Keep the phone package and create a fresh forward snapshot after recovery.")
+            }
             await packageImportDiscardCapability(capability)
             incomingCapability = nil
             incomingEnvelope = nil
             incomingPreview = nil
             failure = .importFailed
-            errorMessage = String(localized: "The reviewed changes were not applied. No phone changes were acknowledged.")
+            if let importError = error as? MobileChangeImportError, case .partialReceipt = importError {
+                // Preserve exact partial totals and the recovery action above.
+            } else {
+                errorMessage = String(localized: "The reviewed changes were not applied. No phone changes were acknowledged.")
+            }
             phase = .failed
             throw error
         }
@@ -436,17 +445,18 @@ public final class MobileSyncStore {
         let key = OneTimePackageKey()
         let envelope = MobilePackageEnvelope(snapshot: preview.snapshot, changes: [], acknowledgedChangeIDs: changeImporter.acknowledgementIDs)
         do {
+            let revisions = MobileSnapshotRevisionStore(fileURL: (rootURL ?? destination.deletingLastPathComponent()).appendingPathComponent(".astro-tool/mobile-snapshot-revision.json"))
+            guard try revisions.current() == preview.snapshot.revision else {
+                throw MobileChangeImportError.stalePreview
+            }
             try prepareDestination(destination)
-            // Persist the base identity before publication. A return package
-            // can therefore never become externally visible without a
-            // durable authorization record for its exact snapshot.
-            try sentSnapshotStore?.save(snapshotID: preview.snapshot.snapshotID)
             let result = try await packageExport(envelope, destination, key)
             guard token == generation, (phase == .exporting || phase == .finishing) else { return }
             packageID = result.packageID
             exportedAt = result.createdAt
             encryptedByteCount = result.encryptedByteCount
             exportedURL = destination
+            try sentSnapshotStore?.save(snapshotID: preview.snapshot.snapshotID)
             sentBaseSnapshotIDs.insert(preview.snapshot.snapshotID)
             oneTimeQRPayload = key.qrPayload
             errorMessage = nil

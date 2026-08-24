@@ -164,6 +164,7 @@ struct MobileRootView: View {
     @State private var showingScanner = false
     @State private var showingReturnExporter = false
     @State private var returnQRPayload: String?
+    @State private var returnExportTask: Task<Void, Never>?
     @State private var selectedTab: MobileTab = .tonight
     private let scanner: any MobileQRScanner
     private let fixtureMode: String?
@@ -253,7 +254,7 @@ struct MobileRootView: View {
             ) { result in
                 switch result {
                 case .success(let url):
-                    Task { @MainActor in
+                    returnExportTask = Task { @MainActor in
                         do {
                             try MobileReturnPackagePlaceholderDocument.removePlaceholder(at: url)
                             let exported = try await store.exportReturnPackage(to: url)
@@ -263,6 +264,7 @@ struct MobileRootView: View {
                         } catch {
                             message = "The return package was not created. Your queued changes are still here."
                         }
+                        returnExportTask = nil
                     }
                 case .failure(let error):
                     guard (error as NSError).code != NSUserCancelledError else { return }
@@ -284,9 +286,18 @@ struct MobileRootView: View {
                     importTask?.cancel()
                     importTask = nil
                     showingScanner = false
+                    returnExportTask?.cancel()
+                    returnExportTask = nil
+                    returnQRPayload = nil
+                    showingReturnExporter = false
                 } else {
                     Task { await refresh() }
                 }
+            }
+            .onDisappear {
+                returnExportTask?.cancel()
+                returnExportTask = nil
+                returnQRPayload = nil
             }
             .sheet(isPresented: $showingScanner, onDismiss: { scanner.stop() }) {
                 VStack {
