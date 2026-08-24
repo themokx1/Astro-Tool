@@ -14,10 +14,17 @@ struct ReleasePackagingSurfaceTests {
         return try String(contentsOf: root.appendingPathComponent(relative), encoding: .utf8)
     }
 
-    private func run(_ relative: String, arguments: [String]) throws -> (status: Int32, output: String) {
+    private func run(
+        _ relative: String,
+        arguments: [String],
+        environment: [String: String]? = nil
+    ) throws -> (status: Int32, output: String) {
         let process = Process()
         process.executableURL = root.appendingPathComponent(relative)
         process.arguments = arguments
+        if let environment {
+            process.environment = ProcessInfo.processInfo.environment.merging(environment) { _, new in new }
+        }
         let output = Pipe()
         process.standardOutput = output
         process.standardError = output
@@ -25,6 +32,31 @@ struct ReleasePackagingSurfaceTests {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    }
+
+    @Test("Release publication fails unless GitHub latest matches the pushed tag")
+    func githubLatestReleaseGate() throws {
+        let relative = "scripts/check-github-latest-release.sh"
+        guard FileManager.default.fileExists(atPath: root.appendingPathComponent(relative).path) else {
+            Issue.record("missing executable latest-release gate: \(relative)")
+            return
+        }
+
+        let matching = try run(
+            relative,
+            arguments: ["v4.0.2"],
+            environment: ["ASTROTOOL_LATEST_RELEASE_JSON": #"{"tag_name":"v4.0.2"}"#]
+        )
+        #expect(matching.status == 0)
+        #expect(matching.output.contains("GitHub latest release is v4.0.2"))
+
+        let stale = try run(
+            relative,
+            arguments: ["v4.0.2"],
+            environment: ["ASTROTOOL_LATEST_RELEASE_JSON": #"{"tag_name":"v2.0.0"}"#]
+        )
+        #expect(stale.status != 0)
+        #expect(stale.output.contains("expected v4.0.2, got v2.0.0"))
     }
 
     @Test("Normal builds are Universal and never install as a side effect")
