@@ -180,7 +180,15 @@ struct PlanningStoreTests {
 
     @Test("Changing focal length recalculates framing and preserves useful-first ordering")
     func focalLengthRecalculatesRecommendations() async {
-        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
+        // Zero debounce: this test is about the recompute's OUTCOME, not the
+        // debounce timing itself, so there is no reason to pay a real
+        // ~200ms sleep per run.
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            catalogProvider: { TargetCatalog.all },
+            skyContextProvider: fixedSkyContext,
+            focalLengthDebounceInterval: .zero
+        )
         store.activate()
         await store.pendingRefresh?.value
         let initial = store.recommendations
@@ -320,10 +328,19 @@ struct PlanningStoreTests {
     @Test("Changing focalLength triggers exactly one recompute")
     func focalLengthChangeTriggersExactlyOneRecompute() async {
         let counter = CallCounter()
-        let store = PlanningStore(setups: [.apsCReference]) { query in
-            counter.increment()
-            return query.recommendations()
-        }
+        // Zero debounce: a single tick recomputing exactly once holds
+        // regardless of the debounce window's length -- the multi-tick
+        // coalescing story itself is `debouncesABurstOfFocalLengthTicksIntoOneRecompute`
+        // below, which needs a real (if tiny) window to prove the burst
+        // lands as ONE recompute rather than one per tick.
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            computeRecommendations: { query in
+                counter.increment()
+                return query.recommendations()
+            },
+            focalLengthDebounceInterval: .zero
+        )
         store.activate()
         await store.pendingRefresh?.value
         #expect(counter.current == 1)
@@ -331,6 +348,120 @@ struct PlanningStoreTests {
         store.setFocalLength(350)
         await store.pendingRefresh?.value
 
+        #expect(counter.current == 2)
+    }
+
+    // MARK: - Focal-length slider debounce (macOS UI gate: quiescence)
+    //
+    // `testPlanningStaysResponsiveUnderRepeatedEntryAndSliderDrag` measured
+    // the Planning page as never quiescing during a focal-length slider
+    // drag: `setFocalLength` fired the WHOLE heavy pipeline (sky-context
+    // lookup, measured-sky lookup, weather resolve, a detached full ranking
+    // compute over the catalog, then four more recomputes on completion) on
+    // every one of the dozens of ticks a drag produces, each one
+    // immediately superseded by the next. `scheduleDebouncedFocalLengthRefresh()`
+    // now coalesces a burst of ticks into exactly one recompute, once the
+    // drag settles -- these tests pin that contract directly, the same way
+    // `focalLengthChangeTriggersExactlyOneRecompute` above already pins the
+    // single-tick case.
+
+    @Test("A burst of focal-length ticks (a slider drag) triggers exactly one recompute, after the debounce window, at the final value")
+    func debouncesABurstOfFocalLengthTicksIntoOneRecompute() async {
+        let counter = CallCounter()
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            computeRecommendations: { query in
+                counter.increment()
+                return query.recommendations()
+            },
+            focalLengthDebounceInterval: .milliseconds(20)
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(counter.current == 1)
+
+        // Simulate a drag: dozens of ticks fired back to back, with no
+        // suspension point between them -- exactly how `PlanningView`'s
+        // `Slider` drives `setFocalLength` today.
+        for tick in 1...30 {
+            store.setFocalLength(100 + Double(tick))
+        }
+
+        // `focalLength` itself is never debounced -- the mm label and
+        // `fieldOfView` must already show the drag's LAST value, even
+        // though the heavy recompute for it hasn't run yet.
+        #expect(store.focalLength == 130)
+        #expect(counter.current == 1)
+
+        await store.pendingRefresh?.value
+
+        #expect(counter.current == 2)
+        #expect(store.focalLength == 130)
+        #expect(!store.isComputing)
+    }
+
+    @Test("isComputing does not flicker on during the focal-length debounce window, only once the real recompute starts")
+    func isComputingStaysFalseDuringFocalLengthDebounceWindow() async {
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            focalLengthDebounceInterval: .milliseconds(50)
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(!store.isComputing)
+
+        store.setFocalLength(250)
+
+        // Still inside the debounce window -- no recompute has started, so
+        // the "Finding matches…" spinner `PlanningView` shows while
+        // `isComputing` is true must NOT be flickering on yet. A brief
+        // real sleep, well under the 50ms window above, stands in for
+        // however long it takes the drag's LAST tick to be followed by
+        // this assertion.
+        try? await Task.sleep(for: .milliseconds(10))
+        #expect(!store.isComputing)
+
+        await store.pendingRefresh?.value
+        #expect(!store.isComputing)
+        #expect(store.focalLength == 250)
+    }
+
+    @Test("A discrete refresh trigger during a pending focal-length debounce still recomputes immediately, and drops the stale debounce")
+    func discreteRefreshDuringPendingDebounceStaysImmediate() async {
+        let counter = CallCounter()
+        let setups: [ImagingSetupProfile] = [.apsCReference, .canonR8Zoom]
+        let store = PlanningStore(
+            setups: setups,
+            computeRecommendations: { query in
+                counter.increment()
+                return query.recommendations()
+            },
+            focalLengthDebounceInterval: .milliseconds(200)
+        )
+        store.activate()
+        await store.pendingRefresh?.value
+        #expect(counter.current == 1)
+
+        // Start a slider drag (schedules a debounce, does not recompute yet)...
+        store.setFocalLength(300)
+        #expect(counter.current == 1)
+
+        // ...then a DISCRETE trigger fires mid-drag (e.g. the setup picker),
+        // which must recompute immediately -- `isComputing` flips true
+        // synchronously, with no debounce wait, exactly like every other
+        // discrete trigger in this file (`selectedSetupChangeTriggersExactlyOneRecompute`
+        // above never waited on a timer either).
+        store.selectedSetupID = ImagingSetupProfile.canonR8Zoom.id
+        #expect(store.isComputing)
+        await store.pendingRefresh?.value
+
+        #expect(counter.current == 2)
+
+        // The debounce that was pending when the discrete trigger fired
+        // must have been dropped -- letting it fire later would silently
+        // re-run the pipeline for a focal length the user already moved
+        // away from, and flip `isComputing` a third time for nothing.
+        try? await Task.sleep(for: .milliseconds(400))
         #expect(counter.current == 2)
     }
 
@@ -383,16 +514,27 @@ struct PlanningStoreTests {
     @Test("A stale completed recompute does not overwrite a newer one's result")
     func staleCompletionDoesNotOverwriteNewer() async {
         let counter = CallCounter()
-        let store = PlanningStore(setups: [.apsCReference]) { query in
-            let call = counter.increment()
-            if call == 1 {
-                // The FIRST (init-triggered) compute is the slow one, so it
-                // completes AFTER the second, faster, `setFocalLength`-
-                // triggered compute below.
-                Thread.sleep(forTimeInterval: 0.2)
-            }
-            return query.recommendations()
-        }
+        // Zero debounce: this test is about `recomputeGeneration`'s own
+        // staleness guard, not about the focal-length debounce window --
+        // with the production ~200ms default, the `setFocalLength`-triggered
+        // compute below wouldn't even START until well after this comment's
+        // "faster" premise needs it to have FINISHED, turning a deterministic
+        // ordering into a coin flip against the slow first compute's own
+        // 0.2s sleep.
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            computeRecommendations: { query in
+                let call = counter.increment()
+                if call == 1 {
+                    // The FIRST (init-triggered) compute is the slow one, so
+                    // it completes AFTER the second, faster,
+                    // `setFocalLength`-triggered compute below.
+                    Thread.sleep(forTimeInterval: 0.2)
+                }
+                return query.recommendations()
+            },
+            focalLengthDebounceInterval: .zero
+        )
         store.activate()
 
         store.setFocalLength(300)
@@ -551,7 +693,12 @@ struct PlanningStoreTests {
 
     @Test("filteredRecommendations reflects a fresh recommendations pipeline result after refresh")
     func filteredRecommendationsTracksRecommendationsAcrossRefresh() async {
-        let store = PlanningStore(setups: [.apsCReference], catalogProvider: { TargetCatalog.all }, skyContextProvider: fixedSkyContext)
+        let store = PlanningStore(
+            setups: [.apsCReference],
+            catalogProvider: { TargetCatalog.all },
+            skyContextProvider: fixedSkyContext,
+            focalLengthDebounceInterval: .zero
+        )
         store.activate()
         await store.pendingRefresh?.value
         let initialFiltered = store.filteredRecommendations

@@ -373,8 +373,25 @@ public final class PlanningStore {
     /// Test-only handle to the in-flight recompute `Task`, so
     /// `PlanningStoreTests` can deterministically `await` a
     /// `didSet`/preference-triggered `refresh()` instead of polling
-    /// `isComputing`. Never read by production code.
+    /// `isComputing`. Never read by production code. Also set by
+    /// `scheduleDebouncedFocalLengthRefresh()` below, once its own debounce
+    /// window elapses and it actually calls `refresh()` -- so awaiting this,
+    /// same as every other test in this file already does, still covers a
+    /// slider-driven refresh end to end, sleep included.
     private(set) var pendingRefresh: Task<Void, Never>?
+    /// How long `setFocalLength` waits for a slider drag to settle before
+    /// letting `refresh()`'s heavy pipeline run -- see
+    /// `scheduleDebouncedFocalLengthRefresh()`. `PlanningStoreTests` injects
+    /// near-zero (via `init`) to exercise the real cancel-and-replace code
+    /// path without an actual multi-hundred-millisecond sleep per test.
+    private let focalLengthDebounceInterval: Duration
+    /// The in-flight "waiting for the drag to settle" `Task`, so a fresh
+    /// `setFocalLength` tick can cancel the PREVIOUS tick's wait before it
+    /// ever reaches `refresh()` -- see `scheduleDebouncedFocalLengthRefresh()`.
+    /// Distinct from `pendingRefresh` above (which this sets once the wait
+    /// elapses): this one exists purely for cancel-and-replace bookkeeping,
+    /// never awaited directly by production code or tests.
+    private var pendingFocalLengthRefresh: Task<Void, Never>?
     /// The three `v2.planning.reference*` values as last read when a
     /// recompute was kicked off -- compared against the live values in
     /// `handleDefaultsChange()` so an unrelated `UserDefaults` write (the
@@ -405,20 +422,62 @@ public final class PlanningStore {
     /// is what crosses the isolation boundary, not this closure.
     public typealias CatalogProvider = @MainActor () -> [CatalogTarget]
 
+    /// Cache key for `productionCatalog()`'s memoization immediately below --
+    /// captures exactly the two inputs that can change what it returns: the
+    /// opt-in toggle, and the on-disk cache file's own modification date (a
+    /// cheap `stat`, not a re-read). The catalog itself never depends on
+    /// focal length or anything else `refresh()` juggles, so between a
+    /// toggle flip and a fresh "Update Catalog" fetch (which rewrites the
+    /// file) there is nothing to invalidate.
+    private struct CatalogCacheKey: Equatable {
+        let enabled: Bool
+        let modificationDate: Date?
+    }
+
+    /// `nonisolated(unsafe)`: `productionCatalog()` is declared `nonisolated`
+    /// so it can serve as a plain default-argument value, but its only two
+    /// call sites (this type's own `init` default and `SavedTargetsStore`'s)
+    /// are both `@MainActor`, so in practice this is only ever read or
+    /// written from the main actor -- same invariant `defaultsObserver`
+    /// above already relies on, for the same reason.
+    private nonisolated(unsafe) static var cachedCatalog: (key: CatalogCacheKey, targets: [CatalogTarget])?
+
     /// Reads the cache only when the user opted in. A missing, corrupt or
     /// version-mismatched cache falls back to the built-in catalog rather
     /// than failing (`CatalogCache.load()` returns `nil` for all three).
     /// `nonisolated` and parameterless so the default search closure — which
     /// must be `@Sendable` — can call it without capturing anything.
+    ///
+    /// Memoized by `CatalogCacheKey` above: `refresh()` calls this
+    /// synchronously on the main actor on every single focal-length tick
+    /// (a slider drag fires dozens of these), and re-reading + re-decoding
+    /// the whole extended catalog from disk and re-merging it with the
+    /// built-in one on EVERY tick is exactly the "heavy work re-run on every
+    /// access" defect class `recommendations`/`filteredRecommendations`'s
+    /// own doc comments already describe for this same page -- measured at
+    /// ~39ms per call with a real extended-catalog cache on disk, which is
+    /// what made `testPlanningStaysResponsiveUnderRepeatedEntryAndSliderDrag`
+    /// blow its budget. A cache hit costs one `stat()`.
     nonisolated public static func productionCatalog() -> [CatalogTarget] {
         // Absent key means "never touched the toggle", and the toggle now
         // defaults to on -- `bool(forKey:)` alone would read that as off.
         let enabled = UserDefaults.standard.object(forKey: extendedCatalogEnabledKey) as? Bool ?? true
-        guard enabled,
-              let fileURL = try? CatalogCache.productionFileURL(),
-              let payload = CatalogCache(fileURL: fileURL).load()
-        else { return TargetCatalog.all }
-        return TargetCatalog.merged(cached: payload.targets)
+        let fileURL = enabled ? try? CatalogCache.productionFileURL() : nil
+        let modificationDate: Date? = fileURL.flatMap { url in
+            (try? FileManager.default.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
+        }
+        let key = CatalogCacheKey(enabled: enabled, modificationDate: modificationDate)
+        if let cached = cachedCatalog, cached.key == key {
+            return cached.targets
+        }
+        let targets: [CatalogTarget]
+        if let fileURL, let payload = CatalogCache(fileURL: fileURL).load() {
+            targets = TargetCatalog.merged(cached: payload.targets)
+        } else {
+            targets = TargetCatalog.all
+        }
+        cachedCatalog = (key, targets)
+        return targets
     }
 
     /// Mirrors `V2SettingsView`'s `@AppStorage` key for the opt-in toggle.
@@ -471,7 +530,12 @@ public final class PlanningStore {
         weatherProvider: WeatherProvider? = nil,
         /// Same `Optional`-not-async-default shape as `skyContextProvider`
         /// immediately above, for the identical reason.
-        measuredSkyProvider: MeasuredSkyProvider? = nil
+        measuredSkyProvider: MeasuredSkyProvider? = nil,
+        /// See `focalLengthDebounceInterval`'s own doc comment. A plain
+        /// defaulted `Duration`, not `Optional`-with-a-static-fallback like
+        /// the three providers above -- it isn't `async`, so it doesn't hit
+        /// the async-default-argument bug those work around.
+        focalLengthDebounceInterval: Duration = .milliseconds(200)
     ) {
         let safeSetups = setups.isEmpty ? PlanningStore.defaultSetups : setups
         self.setups = safeSetups
@@ -483,6 +547,7 @@ public final class PlanningStore {
         self.weatherProvider = weatherProvider ?? PlanningStore.productionWeather
         self.measuredSkyProvider = measuredSkyProvider ?? PlanningStore.productionMeasuredSky
         self.catalogProvider = catalogProvider ?? { PlanningStore.productionCatalog() }
+        self.focalLengthDebounceInterval = focalLengthDebounceInterval
         // Search the SAME catalog the ranking uses, so a target that appears
         // in the table can always be found by name and vice versa.
         // Searches whatever catalog the ranking actually used (passed in by
@@ -674,7 +739,57 @@ public final class PlanningStore {
         // observable mutation and re-invalidate the view (see selectedSetupID).
         guard clamped != focalLength else { return }
         focalLength = clamped
-        refresh()
+        scheduleDebouncedFocalLengthRefresh()
+    }
+
+    /// Coalesces the `refresh()` calls a focal-length slider drag would
+    /// otherwise fire on every tick into ONE, once the drag settles.
+    ///
+    /// A drag fires dozens of `setFocalLength` calls, and before this fix
+    /// EVERY one called `refresh()` directly: a sky-context lookup, a
+    /// measured-sky lookup, a weather resolve, and a detached full ranking
+    /// compute over the whole catalog, immediately superseded by the very
+    /// next tick, plus (on that compute's completion) four more recomputes
+    /// -- filtered/skyPath/seasonWindow/rigCompare. Chained back-to-back
+    /// across dozens of ticks, that kept `isComputing` (and the
+    /// `ProgressView` `PlanningView` shows while it's true) continuously
+    /// true for the whole drag, which is what made
+    /// `testPlanningStaysResponsiveUnderRepeatedEntryAndSliderDrag` measure
+    /// the app as never quiescing (XCUIElement.adjust's ~12.7s internal
+    /// wait-for-idle cap, blown on nearly every tick) -- identically on
+    /// released v4.0.2, so this was never a regression, just never fixed.
+    /// It was also pure waste even ignoring the test: `productionCatalog()`
+    /// and `selectedSetup`'s own memoized/no-op guards above only ever
+    /// addressed the CHEAP half of each tick.
+    ///
+    /// `focalLength` itself is already updated by the time this is called
+    /// (`setFocalLength` above writes it before calling this), so the mm
+    /// label and `fieldOfView` stay live on every tick -- only the
+    /// expensive, freely-supersedable ranking pipeline waits. Cancelling and
+    /// replacing `pendingFocalLengthRefresh` on every call is the same
+    /// "newest wins" shape `NightBriefingStore.scheduleAutosaveIfNeeded()`
+    /// uses; `refresh()`'s own `recomputeGeneration` guard is a second,
+    /// independent line of defense in case a debounced refresh and a
+    /// discrete one (e.g. a setup change mid-drag) ever race.
+    ///
+    /// Only THIS call path debounces. `refresh()` itself, and every other
+    /// caller of it (`setRootURL`, `setPlanningDate`, `selectedSetupID`'s
+    /// setter, `handleDefaultsChange()`, `activate()`), stays immediate --
+    /// none of those fire at slider-drag frequency, and `refresh()` cancels
+    /// any still-pending focal-length debounce as soon as it runs, so a
+    /// discrete trigger mid-drag doesn't leave a stale one to fire later.
+    @discardableResult
+    private func scheduleDebouncedFocalLengthRefresh() -> Task<Void, Never> {
+        pendingFocalLengthRefresh?.cancel()
+        let interval = focalLengthDebounceInterval
+        let task = Task { [weak self] in
+            try? await Task.sleep(for: interval)
+            guard !Task.isCancelled, let self else { return }
+            await self.refresh().value
+        }
+        pendingFocalLengthRefresh = task
+        pendingRefresh = task
+        return task
     }
 
     /// Recomputes `recommendations` off the main actor and publishes the
@@ -688,6 +803,14 @@ public final class PlanningStore {
     /// this `Task`, never in `body`.
     @discardableResult
     public func refresh() -> Task<Void, Never> {
+        // Any pending "waiting for the drag to settle" debounce is now moot
+        // -- either this IS that debounce's own call (see
+        // `scheduleDebouncedFocalLengthRefresh()`, harmless to cancel here),
+        // or it's a discrete trigger firing mid-drag, in which case a stale
+        // debounce running LATER would be wasted work at best and a
+        // needless second `isComputing` flip at worst.
+        pendingFocalLengthRefresh?.cancel()
+        pendingFocalLengthRefresh = nil
         reloadSetupsIfNeeded()
         lastObservedReferenceHours = referenceHours
         lastObservedReferenceFocalRatio = referenceFocalRatio
