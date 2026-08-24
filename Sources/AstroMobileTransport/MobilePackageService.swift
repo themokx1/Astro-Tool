@@ -467,6 +467,20 @@ public actor MobilePackageService {
         )
     }
 
+    /// Re-borrows a return capability only while this exact service still
+    /// owns its staged authenticated preview. Application coordinators use
+    /// this immediately before mutation so a copied value after discard or
+    /// commit cannot be replayed.
+    public func borrowLiveAuthenticatedReturn(
+        _ package: MobileAuthenticatedReturnPackage
+    ) throws -> MobileAuthenticatedReturnPackage {
+        guard package.serviceID == serviceID,
+              stagedImports[package.token.rawValue] != nil else {
+            throw MobilePackageError.duplicatePackageID
+        }
+        return try authenticatedReturn(token: package.token)
+    }
+
     /// Commits a return package only when it is the opaque capability minted
     /// by this exact service instance. The call intentionally does not expose
     /// the decrypted envelope to application mutation code.

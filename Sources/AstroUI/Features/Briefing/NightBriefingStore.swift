@@ -221,7 +221,20 @@ public final class NightBriefingStore {
         }
         var candidate = draft
         candidate.savedAt = now()
-        let saved = try await revisionStore.save(candidate)
+        let saved: NightBriefingDraft
+        do {
+            // A normal editor must save the exact revision it loaded. A
+            // phone return (or another window) can append a newer immutable
+            // revision while this editor is open; blindly appending here
+            // would erase its mobile markers and values.
+            saved = try await revisionStore.saveIfLatest(candidate, expectedRevision: draft.revision)
+        } catch let error as NightBriefingRevisionStoreError {
+            recentDrafts = try await revisionStore.latestRevisions()
+            errorMessage = draft.language == .hu
+                ? "Újabb briefing-változat érkezett. Töltsd újra, mielőtt mentenél."
+                : "A newer briefing revision exists. Reload it before saving."
+            throw error
+        }
         let currentContent = contentIdentity(draft)
         isApplyingPersistence = true
         if currentContent == identity {

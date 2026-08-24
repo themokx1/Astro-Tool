@@ -237,14 +237,22 @@ public final class ProjectsStore {
             projectID: selectedProjectID,
             integrationGoalHours: goalHours,
             notes: trimmedNotes,
-            updatedAt: .now
+            updatedAt: .now,
+            revision: selectedProjectAnnotation?.revision ?? 0
         )
         do {
-            try await metadata.save(annotation)
-            selectedProjectAnnotation = try await metadata.projectAnnotation(projectID: selectedProjectID)
+            selectedProjectAnnotation = try await metadata.saveProjectAnnotation(
+                annotation,
+                expectedRevision: annotation.revision
+            )
             errorMessage = nil
         } catch {
+            if case MetadataStoreError.staleProjectAnnotation = error {
+                selectedProjectAnnotation = try? await metadata.projectAnnotation(projectID: selectedProjectID)
+                errorMessage = "This project note changed in another window. Reloaded the latest note before retrying."
+            } else {
             errorMessage = error.localizedDescription
+            }
             throw error
         }
     }

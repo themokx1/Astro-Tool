@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import AstroMobileDomain
 
 /// The production bridge for the three deliberately narrow mobile domains.
@@ -174,6 +175,7 @@ private actor MobileMacDomainCommandBridge {
     }
 
     func apply(_ batch: MobileChangeDomainBatch) async throws -> MobileChangeDomainBatchResult {
+        try await validateGlobalMarkers(for: batch)
         switch batch {
         case .briefing(let briefing): return try await apply(briefing)
         case .projectAnnotation(let project): return try await metadataStore.applyMobileProjectAnnotationBatch(project)
@@ -189,6 +191,16 @@ private actor MobileMacDomainCommandBridge {
             throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID())
         }
         let existingIDs = Set(draft.mobileChangeIDs)
+        let ownerID = "briefing:\(batch.briefingID.uuidString.lowercased())"
+        let requestedMarkers = batch.mutations.map {
+            Self.marker(for: $0, ownerID: ownerID, resultingRevision: batch.expectedRevision + 1)
+        }
+        let existingMarkers = Dictionary(uniqueKeysWithValues: draft.mobileChangeMarkers.map { ($0.changeID, $0) })
+        guard existingIDs.isSubset(of: Set(existingMarkers.keys)),
+              requestedMarkers.allSatisfy({ marker in
+                  existingMarkers[marker.changeID].map { $0.ownerID == marker.ownerID && $0.payloadFingerprint == marker.payloadFingerprint } ?? true
+              })
+        else { throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID()) }
         if Set(requestedIDs).isSubset(of: existingIDs) {
             return .init(appliedChangeIDs: requestedIDs, resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, draft.revision) }))
         }
@@ -215,6 +227,7 @@ private actor MobileMacDomainCommandBridge {
         }
         draft.savedAt = savedAt
         draft.mobileChangeIDs = Array(existingIDs.union(requestedIDs)).sorted { $0.uuidString < $1.uuidString }
+        draft.mobileChangeMarkers += requestedMarkers.filter { existingMarkers[$0.changeID] == nil }
         do {
             let saved = try await briefingStore.saveIfLatest(draft, expectedRevision: batch.expectedRevision)
             return .init(appliedChangeIDs: requestedIDs, resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, saved.revision) }))
@@ -233,5 +246,56 @@ private actor MobileMacDomainCommandBridge {
 
     private static func changeID(_ mutation: MobileBriefingBatchMutation) -> UUID {
         switch mutation { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
+    }
+
+    private func validateGlobalMarkers(for batch: MobileChangeDomainBatch) async throws {
+        let requested: [MobileChangeMarker]
+        switch batch {
+        case .briefing(let briefing):
+            let ownerID = "briefing:\(briefing.briefingID.uuidString.lowercased())"
+            requested = briefing.mutations.map { Self.marker(for: $0, ownerID: ownerID, resultingRevision: briefing.expectedRevision + 1) }
+        case .projectAnnotation(let project):
+            let ownerID = "project:\(project.projectID.uuidString.lowercased())"
+            requested = project.mutations.map { command, mode in
+                Self.marker(for: command, mode: mode, ownerID: ownerID, resultingRevision: project.expectedRevision + 1)
+            }
+        }
+        let briefs = try await briefingStore.latestRevisions()
+        let briefingMarkers = briefs.flatMap(\.mobileChangeMarkers)
+        let projectMarkers = try await metadataStore.allProjectAnnotationMarkers()
+        let all = briefingMarkers + projectMarkers
+        for marker in requested {
+            let matches = all.filter { $0.changeID == marker.changeID }
+            guard matches.allSatisfy({ $0.ownerID == marker.ownerID && $0.payloadFingerprint == marker.payloadFingerprint }) else {
+                throw MobileChangeImportError.commandFailed(marker.changeID)
+            }
+        }
+    }
+
+    private static func marker(for mutation: MobileBriefingBatchMutation, ownerID: String, resultingRevision: Int) -> MobileChangeMarker {
+        let changeID = changeID(mutation)
+        let encoded = (try? MobileJSON.encoder.encode(mutation)) ?? Data()
+        return MobileChangeMarker(
+            changeID: changeID,
+            ownerID: ownerID,
+            payloadFingerprint: SHA256.hash(data: encoded).map { String(format: "%02x", $0) }.joined(),
+            resultingRevision: resultingRevision
+        )
+    }
+
+    private static func marker(for command: MobileNoteRevisionCommand, mode: MobileNoteBatchMutationMode, ownerID: String, resultingRevision: Int) -> MobileChangeMarker {
+        let payload = ProjectMarkerPayload(command: command, mode: mode)
+        let encoded = (try? MobileJSON.encoder.encode(payload)) ?? Data()
+        return MobileChangeMarker(
+            changeID: command.changeID,
+            ownerID: ownerID,
+            payloadFingerprint: SHA256.hash(data: encoded).map { String(format: "%02x", $0) }.joined(),
+            resultingRevision: resultingRevision
+        )
+    }
+
+    private struct ProjectMarkerPayload: Codable {
+        let command: MobileNoteRevisionCommand
+        let mode: MobileNoteBatchMutationMode
     }
 }

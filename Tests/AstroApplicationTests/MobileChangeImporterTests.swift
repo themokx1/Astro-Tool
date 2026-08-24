@@ -126,6 +126,26 @@ struct MobileChangeImporterTests {
         #expect(!preview.alreadyApplied.contains(collidingID))
     }
 
+    @Test("duplicate collisions are removed before effective chronology is calculated")
+    func collisionCannotSupersedeAnOtherwiseValidEarlierChange() throws {
+        let fixture = Fixture()
+        let validID = UUID()
+        let valid = fixture.noteChange(id: validID, text: "valid earlier")
+        let collisionID = UUID()
+        let duplicateOne = fixture.noteChange(id: collisionID, text: "duplicate newer one")
+        let duplicateTwo = fixture.noteChange(id: collisionID, text: "duplicate newer two")
+        let preview = try MobileChangeImporter().preview(
+            envelope: fixture.envelope(changes: [valid, duplicateOne, duplicateTwo]),
+            expectedLibraryID: fixture.libraryID,
+            currentSnapshot: fixture.snapshot,
+            sourcePackageID: fixture.packageID
+        )
+
+        #expect(preview.applicable.map(\.changeID) == [validID])
+        #expect(preview.duplicates == [collisionID])
+        #expect(!preview.superseded.contains(validID))
+    }
+
     @Test("apply requires explicit confirmation and records the narrow command receipt")
     func applyIsSecondPhase() async throws {
         let fixture = Fixture()
@@ -264,6 +284,29 @@ struct MobileChangeImporterTests {
         )
         #expect(receipt.appliedChangeIDs == [changeID])
         #expect(receipt.resolvedChangeIDs.isEmpty)
+    }
+
+    @Test("two windows prune acknowledgement evidence without restoring each other's IDs")
+    func acknowledgementPruningReloadsBeforeEveryMutation() throws {
+        let fixture = Fixture()
+        let firstID = UUID()
+        let secondID = UUID()
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mobile-ledger-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let firstStore = MobileChangeReceiptStore(fileURL: fileURL)
+        let secondStore = MobileChangeReceiptStore(fileURL: fileURL)
+        try firstStore.save(.init(
+            libraryID: fixture.libraryID,
+            appliedChangeIDs: [firstID, secondID]
+        ))
+        let firstWindow = MobileChangeImporter(recordStore: firstStore)
+        let secondWindow = MobileChangeImporter(recordStore: secondStore)
+
+        try firstWindow.acknowledgePhoneEvidence([firstID])
+        try secondWindow.acknowledgePhoneEvidence([secondID])
+
+        #expect(try firstStore.load()?.appliedChangeIDs.isEmpty == true)
     }
 
     @Test("a receipt ledger from another library fails closed before preview")

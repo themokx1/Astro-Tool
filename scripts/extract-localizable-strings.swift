@@ -1,6 +1,7 @@
 #!/usr/bin/env swift
 // Extracts every user-facing literal that SwiftUI resolves as a
-// `LocalizedStringKey` from `Sources/AstroUI` -- the literal arguments to
+// `LocalizedStringKey` from `Sources/AstroUI` and `Sources/AstroToolMobile`
+// -- the literal arguments to
 // `Text`, `Button`, `Label`, `Toggle`, `Picker`, `TableColumn`, `GroupBox`,
 // `Section`, `LabeledContent`, `TextField`, `DatePicker`, `Stepper`, `Menu`,
 // `Link`, `.help`, `.accessibilityLabel`, `.navigationTitle`,
@@ -82,6 +83,7 @@ let repoRoot = scriptsDir.lastPathComponent == "scripts"
         : URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
 let sourcesRoot = repoRoot.appendingPathComponent("Sources")
 let astroUIRoot = sourcesRoot.appendingPathComponent("AstroUI")
+let astroToolMobileRoot = sourcesRoot.appendingPathComponent("AstroToolMobile")
 
 func swiftFiles(under root: URL) -> [URL] {
     guard let enumerator = FileManager.default.enumerator(
@@ -510,7 +512,11 @@ func extractAll(typeIndex: [String: TypeCategory], functionReturnTypeIndex: [Str
     let regex = try! NSRegularExpression(pattern: combinedPattern)
     var extractions: [Extraction] = []
 
-    for file in swiftFiles(under: astroUIRoot) {
+    // The Mac and iPhone targets bundle distinct localization tables. Keep
+    // each extraction's source path so `--missing` can check it against the
+    // table the shipped target actually uses rather than treating the Mac
+    // app's table as an accidental fallback for the iPhone.
+    for file in swiftFiles(under: astroUIRoot) + swiftFiles(under: astroToolMobileRoot) {
         guard let raw = try? String(contentsOf: file, encoding: .utf8) else { continue }
         let source = removingComments(raw)
         let relativePath = file.path.replacingOccurrences(of: repoRoot.path + "/", with: "")
@@ -565,13 +571,22 @@ let uniqueKeys = Set(extractions.map(\.key)).sorted()
 
 let arguments = Set(CommandLine.arguments.dropFirst())
 
-if arguments.contains("--missing") {
-    let stringsURL = sourcesRoot
-        .appendingPathComponent("AstroToolApp/Resources/hu.lproj/Localizable.strings")
-    let translated = parseStringsFile(stringsURL)
-    let missing = uniqueKeys.filter { !translated.contains($0) }
+if arguments.contains("--missing") || arguments.contains("--missing-en") {
+    let language = arguments.contains("--missing-en") ? "en" : "hu"
+    let macStrings = parseStringsFile(sourcesRoot
+        .appendingPathComponent("AstroToolApp/Resources/\(language).lproj/Localizable.strings"))
+    let mobileStrings = parseStringsFile(sourcesRoot
+        .appendingPathComponent("AstroToolMobile/Resources/\(language).lproj/Localizable.strings"))
+    let missing = uniqueKeys.filter { key in
+        let isMobileKey = extractions.contains { $0.key == key && $0.file.hasPrefix("Sources/AstroToolMobile/") }
+        // The Mac app deliberately relies on its development-language
+        // English strings, so an English source-table audit applies only to
+        // the separately-bundled iPhone target. Hungarian must cover both.
+        if language == "en" && !isMobileKey { return false }
+        return !(isMobileKey ? mobileStrings : macStrings).contains(key)
+    }
     for key in missing { print(key) }
-    FileHandle.standardError.write("\(missing.count) of \(uniqueKeys.count) keys have no hu.lproj entry\n".data(using: .utf8)!)
+    FileHandle.standardError.write("\(missing.count) of \(uniqueKeys.count) keys have no \(language).lproj entry in their target bundle\n".data(using: .utf8)!)
 } else if arguments.contains("--verbose") {
     for extraction in extractions.sorted(by: { ($0.file, $0.line) < ($1.file, $1.line) }) {
         print("\(extraction.file):\(extraction.line): \(extraction.key)")

@@ -1,5 +1,6 @@
 import AstroCore
 import AstroMobileDomain
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -127,17 +128,69 @@ public actor MetadataStore {
                 notes: annotation.notes,
                 updatedAt: existing.map { max($0.updatedAt, annotation.updatedAt) } ?? annotation.updatedAt,
                 revision: existing.map { max($0.revision + 1, annotation.revision) } ?? annotation.revision,
-                mobileChangeIDs: existing?.mobileChangeIDs ?? annotation.mobileChangeIDs
+                mobileChangeIDs: existing?.mobileChangeIDs ?? annotation.mobileChangeIDs,
+                mobileChangeMarkers: existing?.mobileChangeMarkers ?? annotation.mobileChangeMarkers
             )
             try upsert(normalized)
         }
+    }
+
+    /// Normal project-note editors must compare the revision they loaded in
+    /// the same SQLite transaction as their update.  This prevents a stale
+    /// window from overwriting a newer mobile (or second-window) note while
+    /// silently carrying only its old marker set forward.
+    @discardableResult
+    public func saveProjectAnnotation(
+        _ annotation: ProjectAnnotationRecord,
+        expectedRevision: Int
+    ) throws -> ProjectAnnotationRecord {
+        var saved: ProjectAnnotationRecord?
+        try transaction {
+            let existing = try projectAnnotation(projectID: annotation.projectID)
+            if let existing {
+                guard existing.revision == expectedRevision else {
+                    throw MetadataStoreError.staleProjectAnnotation(annotation.projectID)
+                }
+                let next = ProjectAnnotationRecord(
+                    projectID: annotation.projectID,
+                    integrationGoalHours: annotation.integrationGoalHours,
+                    notes: annotation.notes,
+                    updatedAt: max(existing.updatedAt, annotation.updatedAt),
+                    revision: existing.revision + 1,
+                    mobileChangeIDs: existing.mobileChangeIDs,
+                    mobileChangeMarkers: existing.mobileChangeMarkers
+                )
+                try upsert(next)
+                saved = next
+            } else {
+                guard expectedRevision == 0 else {
+                    throw MetadataStoreError.staleProjectAnnotation(annotation.projectID)
+                }
+                let initial = ProjectAnnotationRecord(
+                    projectID: annotation.projectID,
+                    integrationGoalHours: annotation.integrationGoalHours,
+                    notes: annotation.notes,
+                    updatedAt: annotation.updatedAt,
+                    revision: 0,
+                    mobileChangeIDs: annotation.mobileChangeIDs,
+                    mobileChangeMarkers: annotation.mobileChangeMarkers
+                )
+                try upsert(initial)
+                saved = initial
+            }
+        }
+        guard let saved else { throw MetadataStoreError.staleProjectAnnotation(annotation.projectID) }
+        return saved
     }
 
     /// Applies one closed, typed mobile annotation batch in the same SQLite
     /// transaction as its content and idempotency markers. A retry of any
     /// included change returns the exact stored revision without duplicating a
     /// field note.
-    public func applyMobileProjectAnnotationBatch(_ batch: MobileProjectAnnotationChangeBatch) throws -> MobileChangeDomainBatchResult {
+    /// Internal production bridge only. Public callers apply authenticated
+    /// returns through `MobileReturnApplicationCoordinator`; exposing this
+    /// raw batch would bypass its live-capability and sent-base checks.
+    func applyMobileProjectAnnotationBatch(_ batch: MobileProjectAnnotationChangeBatch) throws -> MobileChangeDomainBatchResult {
         var result: MobileChangeDomainBatchResult?
         try transaction {
             guard let existing = try projectAnnotation(projectID: batch.projectID) else {
@@ -148,6 +201,23 @@ public actor MetadataStore {
                 throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID())
             }
             let existingIDs = Set(existing.mobileChangeIDs)
+            let ownerID = "project:\(existing.projectID.uuidString.lowercased())"
+            let requestedMarkers = batch.mutations.map { command, mode in
+                MobileChangeMarker(
+                    changeID: command.changeID,
+                    ownerID: ownerID,
+                    payloadFingerprint: Self.mobileMarkerFingerprint(command: command, mode: mode),
+                    resultingRevision: existing.revision + 1
+                )
+            }
+            let existingMarkers = Dictionary(uniqueKeysWithValues: existing.mobileChangeMarkers.map { ($0.changeID, $0) })
+            // A legacy bare ID or a payload/owner disagreement is corrupt
+            // replay authority, not a reason to guess. Fail closed.
+            guard existingIDs.isSubset(of: Set(existingMarkers.keys)),
+                  requestedMarkers.allSatisfy({ marker in
+                      existingMarkers[marker.changeID].map { $0.ownerID == marker.ownerID && $0.payloadFingerprint == marker.payloadFingerprint } ?? true
+                  })
+            else { throw MobileChangeImportError.commandFailed(requestedIDs.first ?? UUID()) }
             if Set(requestedIDs).isSubset(of: existingIDs) {
                 result = MobileChangeDomainBatchResult(
                     appliedChangeIDs: requestedIDs,
@@ -176,7 +246,8 @@ public actor MetadataStore {
                 notes: notes,
                 updatedAt: savedAt,
                 revision: nextRevision,
-                mobileChangeIDs: existing.mobileChangeIDs + requestedIDs
+                mobileChangeIDs: existing.mobileChangeIDs + requestedIDs,
+                mobileChangeMarkers: existing.mobileChangeMarkers + requestedMarkers.filter { existingMarkers[$0.changeID] == nil }
             ))
             result = MobileChangeDomainBatchResult(
                 appliedChangeIDs: requestedIDs,
@@ -318,7 +389,7 @@ public actor MetadataStore {
     public func projectAnnotation(projectID: UUID) throws -> ProjectAnnotationRecord? {
         var record: ProjectAnnotationRecord?
         try database.query(
-            "SELECT project_id, integration_goal_hours, notes, updated_at, revision, mobile_change_ids FROM project_annotations WHERE project_id = ?;",
+            "SELECT project_id, integration_goal_hours, notes, updated_at, revision, mobile_change_ids, mobile_change_markers FROM project_annotations WHERE project_id = ?;",
             bind: [.text(projectID.databaseText)]
         ) { row in
             guard let id = row.string(0).flatMap(UUID.init(uuidString:)),
@@ -331,10 +402,25 @@ public actor MetadataStore {
                 notes: notes,
                 updatedAt: Date(timeIntervalSince1970: updatedAt),
                 revision: Int(row.int64(4) ?? 0),
-                mobileChangeIDs: (row.string(5).flatMap { try? MobileJSON.decoder.decode([UUID].self, from: Data($0.utf8)) }) ?? []
+                mobileChangeIDs: try Self.decodeMobileChangeIDs(row.string(5), projectID: projectID),
+                mobileChangeMarkers: try Self.decodeMobileChangeMarkers(row.string(6), projectID: projectID)
             )
         }
         return record
+    }
+
+    /// Internal bridge support for global change-ID authority validation.
+    /// Decoding failures propagate as corruption; they are never converted to
+    /// an empty marker list.
+    func allProjectAnnotationMarkers() throws -> [MobileChangeMarker] {
+        var markers: [MobileChangeMarker] = []
+        try database.query("SELECT project_id, mobile_change_markers FROM project_annotations;") { row in
+            guard let rawID = row.string(0), let projectID = UUID(uuidString: rawID) else {
+                throw MetadataStoreError.invalidRecord(table: "project_annotations", id: row.string(0) ?? "unknown")
+            }
+            markers.append(contentsOf: try Self.decodeMobileChangeMarkers(row.string(1), projectID: projectID))
+        }
+        return markers
     }
 
     public func night(id: UUID) throws -> NightRecord? {
@@ -1040,14 +1126,15 @@ public actor MetadataStore {
         try Self.validateFinite(record.updatedAt.timeIntervalSince1970, record: "project_annotations", field: "updated_at")
         try database.run(
             """
-            INSERT INTO project_annotations(project_id, integration_goal_hours, notes, updated_at, revision, mobile_change_ids)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO project_annotations(project_id, integration_goal_hours, notes, updated_at, revision, mobile_change_ids, mobile_change_markers)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(project_id) DO UPDATE SET
               integration_goal_hours = excluded.integration_goal_hours,
               notes = excluded.notes,
               updated_at = excluded.updated_at,
               revision = excluded.revision,
-              mobile_change_ids = excluded.mobile_change_ids;
+              mobile_change_ids = excluded.mobile_change_ids,
+              mobile_change_markers = excluded.mobile_change_markers;
             """,
             bind: [
                 .text(record.projectID.databaseText),
@@ -1056,8 +1143,31 @@ public actor MetadataStore {
                 .real(record.updatedAt.timeIntervalSince1970),
                 .int(Int64(record.revision)),
                 .text(String(decoding: try MobileJSON.encoder.encode(record.mobileChangeIDs), as: UTF8.self)),
+                .text(String(decoding: try MobileJSON.encoder.encode(record.mobileChangeMarkers), as: UTF8.self)),
             ]
         )
+    }
+
+    private static func decodeMobileChangeIDs(_ value: String?, projectID: UUID) throws -> [UUID] {
+        guard let value else { throw MetadataStoreError.invalidRecord(table: "project_annotations", id: projectID.databaseText) }
+        do { return try MobileJSON.decoder.decode([UUID].self, from: Data(value.utf8)) }
+        catch { throw MetadataStoreError.invalidRecord(table: "project_annotations", id: projectID.databaseText) }
+    }
+
+    private static func decodeMobileChangeMarkers(_ value: String?, projectID: UUID) throws -> [MobileChangeMarker] {
+        guard let value else { throw MetadataStoreError.invalidRecord(table: "project_annotations", id: projectID.databaseText) }
+        do { return try MobileJSON.decoder.decode([MobileChangeMarker].self, from: Data(value.utf8)) }
+        catch { throw MetadataStoreError.invalidRecord(table: "project_annotations", id: projectID.databaseText) }
+    }
+
+    private static func mobileMarkerFingerprint(command: MobileNoteRevisionCommand, mode: MobileNoteBatchMutationMode) -> String {
+        let encoded = (try? MobileJSON.encoder.encode(ProjectMobileMarkerPayload(command: command, mode: mode))) ?? Data()
+        return SHA256.hash(data: encoded).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private struct ProjectMobileMarkerPayload: Codable {
+        let command: MobileNoteRevisionCommand
+        let mode: MobileNoteBatchMutationMode
     }
 
     private func upsert(_ record: NightRecord) throws {

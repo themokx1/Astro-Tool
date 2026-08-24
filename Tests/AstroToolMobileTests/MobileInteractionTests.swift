@@ -147,6 +147,21 @@ func briefingRowsUseUniqueSemanticIdentifiers() throws {
     #expect(!source.contains("mobile-briefing-undated"))
 }
 
+@Test("return export UI guards task generations and exposes progress cancellation")
+func returnExportLifecycleHasGenerationAndAccessibleControls() throws {
+    let repository = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let root = try String(contentsOf: repository.appendingPathComponent("Sources/AstroToolMobile/MobileRootView.swift"), encoding: .utf8)
+    let sync = try String(contentsOf: repository.appendingPathComponent("Sources/AstroToolMobile/SyncMobileView.swift"), encoding: .utf8)
+    #expect(root.contains("returnExportGeneration"))
+    #expect(root.contains("Task.checkCancellation()"))
+    #expect(sync.contains("v5.mobile-sync.return.export"))
+    #expect(sync.contains("v5.mobile-sync.return.cancel"))
+    #expect(sync.contains("isExporting"))
+}
+
 private func visibleTextLiterals(in source: String) -> String {
     let expression = try! NSRegularExpression(
         pattern: #"(?:Text|Button|Label|LabeledContent|ContentUnavailableView|navigationTitle|alert)\(\s*(?:String\(localized:\s*)?\"([^\"]+)\""#

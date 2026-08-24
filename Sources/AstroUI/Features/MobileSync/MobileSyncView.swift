@@ -404,10 +404,14 @@ public struct MobileSyncView: View {
                             .accessibilityIdentifier("v5.mobile-sync.return.conflict.\(conflict.changeID.uuidString)")
                         }
                     }
-                    Button("Apply reviewed changes") { showsReturnConfirmation = true }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!changes.conflicts.allSatisfy { store.changeResolutions[$0.changeID] != nil })
-                        .accessibilityIdentifier("v5.mobile-sync.return.apply")
+                    if !store.didApplyIncomingChanges {
+                        Button("Apply reviewed changes") { showsReturnConfirmation = true }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!changes.conflicts.allSatisfy { store.changeResolutions[$0.changeID] != nil })
+                            .accessibilityLabel("Apply reviewed iPhone changes")
+                            .accessibilityHint("Shows a final confirmation before saving checklist and note changes.")
+                            .accessibilityIdentifier("v5.mobile-sync.return.apply")
+                    }
                 }
                 Text("Applying changes will be confirmed separately. Nothing in the image library has changed.")
                     .astroBody()
@@ -418,9 +422,12 @@ public struct MobileSyncView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("v5.mobile-sync.return.safety")
                 if let receipt = store.appliedChangeReceipt {
-                    Text("Applied \(receipt.appliedChangeIDs.count), kept on Mac \(receipt.resolvedChangeIDs.count), rejected \(store.changePreview?.rejected.count ?? 0). A new Mac-to-iPhone package is needed to acknowledge phone changes.")
+                    Text("Applied \(receipt.appliedChangeIDs.count), kept on Mac \(receipt.resolvedChangeIDs.count), superseded \(store.changePreview?.superseded.count ?? 0), already handled \(store.changePreview?.alreadyApplied.count ?? 0), duplicates \(store.changePreview?.duplicates.count ?? 0), rejected \(store.changePreview?.rejected.count ?? 0). A new Mac-to-iPhone package is needed to acknowledge phone changes.")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(AstroTokens.Color.ok)
+                        .accessibilityLabel("Return import result")
+                        .accessibilityValue("Applied \(receipt.appliedChangeIDs.count), kept on Mac \(receipt.resolvedChangeIDs.count), superseded \(store.changePreview?.superseded.count ?? 0), already handled \(store.changePreview?.alreadyApplied.count ?? 0), duplicates \(store.changePreview?.duplicates.count ?? 0), rejected \(store.changePreview?.rejected.count ?? 0)")
+                        .accessibilityIdentifier("v5.mobile-sync.return.result")
                 }
             }
             Button("Done") { cancelAndClear() }
@@ -440,6 +447,7 @@ public struct MobileSyncView: View {
                     }
                 }
             }
+            .accessibilityIdentifier("v5.mobile-sync.return.confirm")
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Mac review is required. Original photos stay on this Mac.")

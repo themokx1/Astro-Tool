@@ -194,11 +194,12 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
     /// A bounded idempotency marker set persisted in the same immutable
     /// briefing revision as mobile-originated checklist/note changes.
     public var mobileChangeIDs: [UUID]
+    public var mobileChangeMarkers: [MobileChangeMarker]
 
     private enum CodingKeys: String, CodingKey {
         case id, revision, savedAt, nightDate, arrival, departure, site, setup,
              powerRuntimeHours, weather, targets, checklist, notes, language,
-             mobileChangeIDs
+             mobileChangeIDs, mobileChangeMarkers
     }
 
     public init(
@@ -216,7 +217,8 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
         checklist: [BriefingChecklistSection] = [],
         notes: String = "",
         language: BriefingDocumentLanguage = .hu,
-        mobileChangeIDs: [UUID] = []
+        mobileChangeIDs: [UUID] = [],
+        mobileChangeMarkers: [MobileChangeMarker] = []
     ) {
         self.id = id
         self.revision = revision
@@ -232,7 +234,8 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
         self.checklist = checklist
         self.notes = notes
         self.language = language
-        self.mobileChangeIDs = Array(Set(mobileChangeIDs)).sorted { $0.uuidString < $1.uuidString }
+        self.mobileChangeMarkers = Array(Set(mobileChangeMarkers)).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
+        self.mobileChangeIDs = Array(Set(mobileChangeIDs).union(mobileChangeMarkers.map(\.changeID))).sorted { $0.uuidString < $1.uuidString }
     }
 
     public init(from decoder: Decoder) throws {
@@ -252,6 +255,7 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
         notes = try values.decode(String.self, forKey: .notes)
         language = try values.decode(BriefingDocumentLanguage.self, forKey: .language)
         mobileChangeIDs = Array(Set(try values.decodeIfPresent([UUID].self, forKey: .mobileChangeIDs) ?? [])).sorted { $0.uuidString < $1.uuidString }
+        mobileChangeMarkers = Array(Set(try values.decodeIfPresent([MobileChangeMarker].self, forKey: .mobileChangeMarkers) ?? [])).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
     }
 }
 

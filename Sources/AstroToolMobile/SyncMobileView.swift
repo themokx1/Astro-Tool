@@ -11,6 +11,8 @@ struct SyncMobileView: View {
     let onImport: () -> Void
     let onDiscard: () -> Void
     let onExport: () -> Void
+    let onCancelExport: () -> Void
+    let isExporting: Bool
     let returnQRPayload: String?
 
     private var checklistCount: Int { snapshot.briefings.flatMap(\.checklist).flatMap(\.items).count }
@@ -91,9 +93,25 @@ struct SyncMobileView: View {
                 Text("Only checklist progress and notes are included. Original photos stay on your Mac or external drive.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                Button("Create return package") { onExport() }
+                Button { onExport() } label: {
+                    if isExporting {
+                        Text("Creating return package…")
+                    } else {
+                        Text("Create return package")
+                    }
+                }
                     .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("v5.mobile.sync.return.export")
+                    .disabled(isExporting)
+                    .accessibilityLabel(isExporting ? "Creating return package" : "Create return package")
+                    .accessibilityHint("Creates an encrypted package containing only queued checklist and note changes.")
+                    .accessibilityIdentifier("v5.mobile-sync.return.export")
+                if isExporting {
+                    ProgressView()
+                        .accessibilityLabel("Creating return package")
+                    Button("Cancel return package") { onCancelExport() }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("v5.mobile-sync.return.cancel")
+                }
                 if let returnQRPayload {
                     Label("Ready to import on Mac", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(Color(uiColor: .systemGreen))
@@ -101,13 +119,13 @@ struct SyncMobileView: View {
                         .font(.footnote)
                     Text(returnQRPayload)
                         .font(.footnote.monospaced())
-                        .accessibilityIdentifier("v5.mobile.sync.return.code")
+                        .accessibilityIdentifier("v5.mobile-sync.return.code")
                     Text("Your queued changes remain here until a later Mac package confirms the exact IDs.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
             }
-            .accessibilityIdentifier("v5.mobile.sync.return")
+            .accessibilityIdentifier("v5.mobile-sync.return")
         }
         .navigationTitle("Sync")
         .accessibilityIdentifier("mobile-sync-surface")

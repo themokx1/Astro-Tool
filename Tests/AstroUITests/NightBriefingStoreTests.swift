@@ -93,6 +93,34 @@ struct NightBriefingStoreTests {
         #expect(store.recentDrafts.first?.notes == "Második változat")
     }
 
+    @Test("Ordinary Mac save refuses a phone revision loaded after the editor")
+    func staleOrdinarySavePreservesPhoneRevisionAndMarker() async throws {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let revisions = NightBriefingRevisionStore(directory: folder)
+        let editor = NightBriefingStore(
+            now: Date(timeIntervalSince1970: 1_700_000_000),
+            revisionStore: revisions
+        )
+        editor.startTonight()
+        try await editor.saveRevision()
+
+        let phoneChangeID = UUID()
+        var phone = editor.draft
+        phone.notes = "Phone field note"
+        phone.mobileChangeIDs = [phoneChangeID]
+        _ = try await revisions.saveIfLatest(phone, expectedRevision: editor.draft.revision)
+
+        editor.draft.notes = "Stale Mac edit"
+        await #expect(throws: NightBriefingRevisionStoreError.self) {
+            try await editor.saveRevision()
+        }
+        let latest = try #require(try await revisions.latest(id: editor.draft.id))
+        #expect(latest.notes == "Phone field note")
+        #expect(latest.mobileChangeIDs == [phoneChangeID])
+    }
+
     @Test("Saving an unchanged draft does not create a duplicate revision")
     func unchangedSaveIsANoOp() async throws {
         let folder = FileManager.default.temporaryDirectory

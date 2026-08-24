@@ -1,5 +1,23 @@
 import Foundation
 
+/// A mobile idempotency marker is self-authenticating domain metadata: the
+/// change ID is bound to its owning record, normalized command payload, and
+/// resulting revision in the same durable write as the user-visible change.
+/// Bare IDs are deliberately insufficient for replay authorization.
+public struct MobileChangeMarker: Codable, Equatable, Hashable, Sendable {
+    public let changeID: UUID
+    public let ownerID: String
+    public let payloadFingerprint: String
+    public let resultingRevision: Int
+
+    public init(changeID: UUID, ownerID: String, payloadFingerprint: String, resultingRevision: Int) {
+        self.changeID = changeID
+        self.ownerID = ownerID
+        self.payloadFingerprint = payloadFingerprint
+        self.resultingRevision = resultingRevision
+    }
+}
+
 public enum ProjectWorkflowPhase: String, CaseIterable, Codable, Sendable {
     case planned
     case collecting
@@ -31,17 +49,19 @@ public struct ProjectAnnotationRecord: Codable, Equatable, Hashable, Sendable {
     /// Durable idempotency markers for mobile-originated annotation edits.
     /// They live in the same SQLite row as the edited text/revision.
     public let mobileChangeIDs: [UUID]
+    public let mobileChangeMarkers: [MobileChangeMarker]
 
-    public init(projectID: UUID, integrationGoalHours: Double?, notes: String, updatedAt: Date, revision: Int = 0, mobileChangeIDs: [UUID] = []) {
+    public init(projectID: UUID, integrationGoalHours: Double?, notes: String, updatedAt: Date, revision: Int = 0, mobileChangeIDs: [UUID] = [], mobileChangeMarkers: [MobileChangeMarker] = []) {
         self.projectID = projectID
         self.integrationGoalHours = integrationGoalHours
         self.notes = notes
         self.updatedAt = updatedAt
         self.revision = revision
-        self.mobileChangeIDs = Array(Set(mobileChangeIDs)).sorted { $0.uuidString < $1.uuidString }
+        self.mobileChangeMarkers = Array(Set(mobileChangeMarkers)).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
+        self.mobileChangeIDs = Array(Set(mobileChangeIDs).union(mobileChangeMarkers.map(\.changeID))).sorted { $0.uuidString < $1.uuidString }
     }
 
-    private enum CodingKeys: String, CodingKey { case projectID, integrationGoalHours, notes, updatedAt, revision, mobileChangeIDs }
+    private enum CodingKeys: String, CodingKey { case projectID, integrationGoalHours, notes, updatedAt, revision, mobileChangeIDs, mobileChangeMarkers }
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         projectID = try c.decode(UUID.self, forKey: .projectID)
@@ -50,6 +70,7 @@ public struct ProjectAnnotationRecord: Codable, Equatable, Hashable, Sendable {
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         revision = try c.decodeIfPresent(Int.self, forKey: .revision) ?? 0
         mobileChangeIDs = Array(Set(try c.decodeIfPresent([UUID].self, forKey: .mobileChangeIDs) ?? [])).sorted { $0.uuidString < $1.uuidString }
+        mobileChangeMarkers = Array(Set(try c.decodeIfPresent([MobileChangeMarker].self, forKey: .mobileChangeMarkers) ?? [])).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
     }
 }
 

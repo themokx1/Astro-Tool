@@ -472,6 +472,45 @@ struct MobileSyncStoreTests {
         #expect(try store.loadRecords() == [.init(snapshotID: snapshotID, acknowledgementIDs: [first, second])])
     }
 
+    @Test("pending sent bases do not authorize a return and are reclaimable after publication")
+    func sentBasePublicationStateIsDurableAndReclaimable() throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent.json"))
+        let snapshotID = UUID()
+        let acknowledgementID = UUID()
+
+        try store.reserve(snapshotID: snapshotID, acknowledgementIDs: [acknowledgementID])
+        #expect(try store.loadPublishedRecords().isEmpty)
+        try store.markPublished(snapshotID: snapshotID)
+        #expect(try store.loadPublishedRecords() == [.init(snapshotID: snapshotID, acknowledgementIDs: [acknowledgementID], state: .published)])
+        try store.consumePublished(snapshotID: snapshotID)
+        #expect(try store.loadRecords().isEmpty)
+    }
+
+    @Test("a failed forward export leaves only recoverable pending evidence")
+    func failedForwardExportDoesNotAuthorizeItsBase() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identity = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: identity)
+        let sentBases = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent.json"))
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in .init(proposedID: identity, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot },
+            packageExport: { _, _, _ in throw MobilePackageError.stagingFailed },
+            sentSnapshotStore: sentBases
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+        await store.export(to: root.appendingPathComponent("failed.astromobile"))
+
+        #expect(try sentBases.loadPublishedRecords().isEmpty)
+        #expect(try sentBases.loadRecords() == [.init(snapshotID: snapshot.snapshotID, acknowledgementIDs: [], state: .pending)])
+    }
+
     @Test("Destination preparation never removes an existing package")
     func destinationNoOverwrite() throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)

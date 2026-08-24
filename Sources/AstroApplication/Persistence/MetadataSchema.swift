@@ -12,10 +12,11 @@ public enum MetadataStoreError: Error, Equatable, Sendable {
     case unsafeMetadataDatabase
     case metadataDestinationChanged
     case invalidField(record: String, field: String)
+    case staleProjectAnnotation(UUID)
 }
 
 public enum MetadataSchema {
-    public static let currentVersion = 10
+    public static let currentVersion = 11
 
     static let versionOneSQL = """
     CREATE TABLE projects(
@@ -219,6 +220,7 @@ public enum MetadataSchema {
 
     static let versionNineSQL = "ALTER TABLE project_annotations ADD COLUMN revision INTEGER NOT NULL DEFAULT 0;"
     static let versionTenSQL = "ALTER TABLE project_annotations ADD COLUMN mobile_change_ids TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(mobile_change_ids));"
+    static let versionElevenSQL = "ALTER TABLE project_annotations ADD COLUMN mobile_change_markers TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(mobile_change_markers));"
 
     static func migrate(_ database: SQLiteDB) throws {
         try transaction(in: database) {
@@ -312,6 +314,14 @@ public enum MetadataSchema {
                 try database.exec(versionTenSQL)
                 try database.run(
                     "UPDATE metadata_schema SET version = 10 WHERE singleton = 1;"
+                )
+                version = 10
+            }
+
+            if version < 11 {
+                try database.exec(versionElevenSQL)
+                try database.run(
+                    "UPDATE metadata_schema SET version = 11 WHERE singleton = 1;"
                 )
             }
         }

@@ -1,32 +1,26 @@
-# Task 7 — encrypted return leg review-round-4 replacement
+# Task 7 — encrypted return leg review-round-5 closure
 
 ## Outcome
 
-The Mac return path now accepts only `MobileAuthenticatedReturnPackage`, an opaque capability minted by `MobilePackageService` after package authentication and return-shape validation. Raw envelope preview/apply and the caller-supplied command factory are internal test seams; the public mutating importer is constructed only with the production domain store. The importer has one narrow typed batch operation and no generic execute or begin/end hooks.
+The normal Mac return route now goes through `MobileReturnApplicationCoordinator`. Its public review value contains only a private session identity; the coordinator retains the authenticated package capability, reloads published sent-base evidence, and borrows the live service capability immediately before applying. Discarded or copied review values fail closed. Legacy package/import seams remain solely for hermetic UI fixtures without a production root.
 
-Each briefing batch writes checklist/note changes, a single monotonic revision, `savedAt = max(existing, phone changes)`, and its change-ID markers in the same immutable revision. The production bridge uses a process-wide revision compare-and-set: a stale phone batch cannot overwrite an intervening Mac revision, and a same-ID concurrent/relaunch retry returns the already-written result without duplicating a field note. Project annotation text, monotonic revision, and mobile markers are updated in one `BEGIN IMMEDIATE` SQLite transaction; schema version 10 adds the persisted marker column.
+Normal briefing and project editors now compare the revision they loaded in their durable store transaction. A stale Mac editor reports a conflict and reloads instead of replacing a phone revision or its mobile evidence.
 
-The separate receipt ledger is now an acknowledgement summary only. Its applied/resolved sets are normalized disjoint, bounded at 10,000 combined IDs, library-bound, and encoded-size preflighted before mutation. Ledger write failure returns an honest partial receipt; replay safety remains with the atomic domain markers. Duplicate IDs are rejected before target supersession. Batches keep global phone chronology by first atomic owner while retaining the required one-revision-per-briefing grouping.
+Return receipts and sent-base records use a process lock plus an advisory sidecar file lock, reload inside each mutation, bound encoded input before decoding, and bound output before persistence. Forward evidence progresses from recoverable `pending` to authorizing `published`; only a published base can be returned against, and authenticated completion consumes that base and prunes its linked receipt acknowledgements.
 
-Forward snapshots persist the exact acknowledgement IDs sent with each published base. Only an authenticated return based on that exact base prunes those summary acknowledgements. Revision allocation, package publication, and sent-base association are serialized by a process-wide publication reservation, enforcing the `<= 1_000_000_000` revision bound and preventing an old window from publishing after a newer allocation. A capability-commit failure after a successful domain batch explicitly reports that the reviewed changes were saved and preserves the receipt for recovery.
+Domain markers now bind change ID, owner, normalized payload fingerprint, and result revision in the same briefing revision or SQLite annotation transaction as the actual mutation. The production bridge scans all mobile-editable owners before a batch and fails closed on cross-owner/payload disagreement or legacy bare marker authority. Project marker JSON decode failure is a corrupt record, never an empty marker set. Return preview excludes duplicate collisions before chronology; owner batch chronology is ordered by each owner's effective last phone edit while retaining one atomic revision per briefing.
 
-## UI / localization / accessibility
-
-- The retained capability is applied only after final confirmation; successful apply clears the retained capability and stale result state.
-- Partial receipt and post-command capability-commit failure both retain exact totals/receipt and provide recovery guidance instead of claiming no change happened.
-- EN/HU entries cover the applying, failed-return, partial, conflict, duplicate, and result strings. Return controls retain their `v5.mobile-sync.return.*` identifiers and existing accessibility labels/hints.
+The iPhone return exporter tracks a generation and cancellable task, checks cancellation after the async export before publishing the key, presents disabled/progress/cancel states, clears on background/disappearance, and removes its placeholder only after checking retained filesystem identity. The mobile localization extractor now audits both target source trees against their own EN/HU tables. Return controls/results use the required `v5.mobile-sync.return.*` IDs and VoiceOver labels, hints, and values.
 
 ## Verification evidence
 
-- Focused `MobileChangeImporterTests` — 17 tests in 1 suite passed, including production atomic batching, CAS, concurrent same-ID retry, collision classification, and cross-owner chronology.
-- Focused `NightBriefingRevisionStoreTests` — 5 tests in 1 suite passed, including stale CAS rejection.
-- Focused `MobileSyncStoreTests` — 22 tests in 1 suite passed, including sent-base acknowledgement evidence, cross-window publication reservation, and post-command commit-failure recovery.
-- Full `swift test` — passed: 3,480 tests in 219 suites.
-- `xcodegen generate` — regenerated the checked-in project without project-file changes.
-- `xcodebuild build -quiet -project AstroTool.xcodeproj -scheme AstroTool -destination platform=macOS -derivedDataPath /tmp/astro-v5-task7-round4-deriveddata` — exited 0 (Xcode destination/build-number warnings plus an unrelated existing `PlanningStore` `nonisolated(unsafe)` warning).
-- `swift scripts/extract-localizable-strings.swift --missing` — reports only the documented intentional brand/domain terms: `AstroTool`, `Bias`, `Dark`, `FWHM`, `Flat`, `Light`, and `OK` (7 of 1,079 keys); no return-leg string is missing.
-- `git diff --check` — clean.
+- Full `swift test` completed successfully.
+- Focused Task 7 regressions: 83 tests in 6 suites passed, covering the public coordinator/copy-discard refusal, ordinary Mac CAS saves, receipt pruning, pending publication, chronology/collision handling, and localization coverage.
+- `swift scripts/extract-localizable-strings.swift --missing` reports only the five existing astronomy-term allowlist entries (`Bias`, `Dark`, `FWHM`, `Flat`, `Light`); `--missing-en` reports 0 missing target entries.
+- `xcodegen generate` completed and regenerated the Xcode project.
+- Real macOS `AstroTool` build completed: `xcodebuild build -quiet -project AstroTool.xcodeproj -scheme AstroTool -destination platform=macOS -derivedDataPath /tmp/astro-v5-task7-round5-macos CODE_SIGNING_ALLOWED=NO` (existing compiler warnings only).
+- `git diff --check` is clean.
 
-## External gate / concern
+## External gates / concern
 
-The official iOS simulator/device runtime gate remains external and unclaimed. The local SwiftPM suites and real macOS `AstroTool` scheme build are the verification performed here.
+The official iOS runtime gate is not claimed. The attempted static iOS build cannot start on this host because Xcode does not have the iOS 26.5 platform installed (`Any iOS Device` is ineligible); this is recorded separately from the successful SwiftPM and macOS checks.

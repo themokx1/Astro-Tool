@@ -1,6 +1,7 @@
 import SwiftUI
 import Foundation
 import UniformTypeIdentifiers
+import Darwin
 import AstroMobileDomain
 import AstroMobileTransport
 
@@ -165,6 +166,7 @@ struct MobileRootView: View {
     @State private var showingReturnExporter = false
     @State private var returnQRPayload: String?
     @State private var returnExportTask: Task<Void, Never>?
+    @State private var returnExportGeneration = 0
     @State private var selectedTab: MobileTab = .tonight
     private let scanner: any MobileQRScanner
     private let fixtureMode: String?
@@ -254,17 +256,33 @@ struct MobileRootView: View {
             ) { result in
                 switch result {
                 case .success(let url):
+                    let placeholder: MobileReturnPackagePlaceholderDocument.Identity
+                    do {
+                        placeholder = try MobileReturnPackagePlaceholderDocument.retainPlaceholder(at: url)
+                    } catch {
+                        message = "The return package was not created. Your queued changes are still here."
+                        return
+                    }
+                    returnExportGeneration &+= 1
+                    let exportGeneration = returnExportGeneration
                     returnExportTask = Task { @MainActor in
                         do {
-                            try MobileReturnPackagePlaceholderDocument.removePlaceholder(at: url)
+                            try Task.checkCancellation()
+                            try MobileReturnPackagePlaceholderDocument.removePlaceholder(at: url, retaining: placeholder)
                             let exported = try await store.exportReturnPackage(to: url)
+                            try Task.checkCancellation()
+                            guard exportGeneration == returnExportGeneration else { return }
                             returnQRPayload = exported.oneTimeQRPayload
                             message = "Ready to import on Mac. Your queued changes remain here until the Mac confirms them."
                             await refresh()
+                        } catch is CancellationError {
                         } catch {
+                            guard exportGeneration == returnExportGeneration else { return }
                             message = "The return package was not created. Your queued changes are still here."
                         }
-                        returnExportTask = nil
+                        if exportGeneration == returnExportGeneration {
+                            returnExportTask = nil
+                        }
                     }
                 case .failure(let error):
                     guard (error as NSError).code != NSUserCancelledError else { return }
@@ -286,18 +304,14 @@ struct MobileRootView: View {
                     importTask?.cancel()
                     importTask = nil
                     showingScanner = false
-                    returnExportTask?.cancel()
-                    returnExportTask = nil
-                    returnQRPayload = nil
+                    cancelReturnExport()
                     showingReturnExporter = false
                 } else {
                     Task { await refresh() }
                 }
             }
             .onDisappear {
-                returnExportTask?.cancel()
-                returnExportTask = nil
-                returnQRPayload = nil
+                cancelReturnExport()
             }
             .sheet(isPresented: $showingScanner, onDismiss: { scanner.stop() }) {
                 VStack {
@@ -411,7 +425,7 @@ struct MobileRootView: View {
                 .tabItem { Label("Briefings", systemImage: "doc.text.fill") }
                 .tag(MobileTab.briefings)
                 .accessibilityIdentifier("v5.mobile.tab.briefings")
-            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, returnQRPayload: returnQRPayload)
+            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, onCancelExport: cancelReturnExport, isExporting: returnExportTask != nil, returnQRPayload: returnQRPayload)
                 .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                 .tag(MobileTab.sync)
                 .accessibilityIdentifier("v5.mobile.tab.sync")
@@ -428,6 +442,13 @@ struct MobileRootView: View {
         durabilityAttemptWarning = await store.durabilityAttemptWarning
         durabilityAmbiguousWarning = await store.durabilityAmbiguousWarning
         stagedPackageURL = await store.stagedPackageURL
+    }
+
+    private func cancelReturnExport() {
+        returnExportGeneration &+= 1
+        returnExportTask?.cancel()
+        returnExportTask = nil
+        returnQRPayload = nil
     }
 
     private func primaryImportAction() {
@@ -523,8 +544,32 @@ private struct MobileReturnPackagePlaceholderDocument: FileDocument {
         FileWrapper(regularFileWithContents: Self.marker)
     }
 
-    static func removePlaceholder(at url: URL) throws {
+    struct Identity: Equatable {
+        let device: UInt64
+        let inode: UInt64
+    }
+
+    /// The exporter has already created this public placeholder before its
+    /// completion callback. Retain its filesystem identity immediately, then
+    /// refuse deletion if any later path lookup observes a replacement.
+    static func retainPlaceholder(at url: URL) throws -> Identity {
         guard let data = try? Data(contentsOf: url), data == marker else { throw MobileLibraryStoreError.persistenceFailed }
+        return try identity(of: url)
+    }
+
+    static func removePlaceholder(at url: URL, retaining expected: Identity) throws {
+        guard try identity(of: url) == expected,
+              let data = try? Data(contentsOf: url), data == marker else {
+            throw MobileLibraryStoreError.persistenceFailed
+        }
         try FileManager.default.removeItem(at: url)
+    }
+
+    private static func identity(of url: URL) throws -> Identity {
+        var status = Darwin.stat()
+        guard url.path.withCString({ Darwin.lstat($0, &status) }) == 0 else {
+            throw MobileLibraryStoreError.persistenceFailed
+        }
+        return .init(device: UInt64(status.st_dev), inode: UInt64(status.st_ino))
     }
 }

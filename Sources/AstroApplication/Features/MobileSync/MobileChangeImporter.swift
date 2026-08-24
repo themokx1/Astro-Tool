@@ -343,6 +343,20 @@ public enum MobileChangeImportError: Error, Equatable, Sendable {
 public protocol MobileChangeApplicationRecordStore: Sendable {
     func load() throws -> MobileChangeApplicationLedger?
     func save(_ ledger: MobileChangeApplicationLedger) throws
+    /// A ledger read-modify-write transaction. Concrete durable stores must
+    /// reload while holding their cross-window lock; this default preserves
+    /// lightweight fixture compatibility.
+    func updateLedger(
+        _ mutation: (MobileChangeApplicationLedger?) throws -> MobileChangeApplicationLedger?
+    ) throws
+}
+
+public extension MobileChangeApplicationRecordStore {
+    func updateLedger(
+        _ mutation: (MobileChangeApplicationLedger?) throws -> MobileChangeApplicationLedger?
+    ) throws {
+        if let next = try mutation(load()) { try save(next) }
+    }
 }
 
 private final class MobileChangeInMemoryRecordStore: MobileChangeApplicationRecordStore, @unchecked Sendable {
@@ -376,20 +390,33 @@ public final class MobileChangeImporter: @unchecked Sendable {
     /// later authenticated return package based on the exact forward snapshot
     /// that carried them. Domain-side idempotency markers remain authoritative
     /// for replay protection.
-    public func acknowledgePhoneEvidence(_ acknowledgedIDs: Set<UUID>) throws {
-        guard !acknowledgedIDs.isEmpty, let ledger else { return }
-        let applied = ledger.appliedChangeIDs.filter { !acknowledgedIDs.contains($0) }
-        let resolved = ledger.resolvedChangeIDs.filter { !acknowledgedIDs.contains($0) }
-        let next = MobileChangeApplicationLedger(
-            libraryID: ledger.libraryID,
-            records: ledger.records,
-            appliedChangeIDs: applied,
-            resolvedChangeIDs: resolved,
-            resultingRevisions: ledger.resultingRevisions
-        )
+    func acknowledgePhoneEvidence(_ acknowledgedIDs: Set<UUID>) throws {
+        guard !acknowledgedIDs.isEmpty, let recordStore else { return }
         do {
-            try recordStore?.save(next)
-            self.ledger = next
+            var updated: MobileChangeApplicationLedger?
+            try recordStore.updateLedger { ledger in
+                guard let ledger else { return nil }
+                let next = MobileChangeApplicationLedger(
+                    libraryID: ledger.libraryID,
+                    records: ledger.records.map { record in
+                        MobileChangeApplicationRecord(
+                            libraryID: record.libraryID,
+                            sourcePackageID: record.sourcePackageID,
+                            sourceFingerprint: record.sourceFingerprint,
+                            appliedChangeIDs: record.appliedChangeIDs.filter { !acknowledgedIDs.contains($0) },
+                            resolvedChangeIDs: record.resolvedChangeIDs.filter { !acknowledgedIDs.contains($0) },
+                            resultingRevisions: record.resultingRevisions.filter { !acknowledgedIDs.contains(UUID(uuidString: $0.key) ?? UUID()) },
+                            recordedAt: record.recordedAt
+                        )
+                    }.filter { !$0.appliedChangeIDs.isEmpty || !$0.resolvedChangeIDs.isEmpty },
+                    appliedChangeIDs: ledger.appliedChangeIDs.filter { !acknowledgedIDs.contains($0) },
+                    resolvedChangeIDs: ledger.resolvedChangeIDs.filter { !acknowledgedIDs.contains($0) },
+                    resultingRevisions: ledger.resultingRevisions.filter { !acknowledgedIDs.contains(UUID(uuidString: $0.key) ?? UUID()) }
+                )
+                updated = next
+                return next
+            }
+            self.ledger = updated
         } catch {
             throw MobileChangeImportError.receiptFailed
         }
@@ -481,6 +508,7 @@ public final class MobileChangeImporter: @unchecked Sendable {
         sourcePackageID: UUID,
         appliedChangeIDs: Set<UUID> = []
     ) throws -> MobileChangeImportPreview {
+        try reloadLedger()
         guard !ledgerLoadFailed else { throw MobileChangeImportError.receiptFailed }
         try validateLedger(expectedLibraryID: expectedLibraryID)
         guard let base = envelope.snapshot else { throw MobileChangeImportError.invalidEnvelope }
@@ -522,8 +550,12 @@ public final class MobileChangeImporter: @unchecked Sendable {
         rejected.append(contentsOf: collisionIDs.map {
             .init(changeID: $0, reason: .duplicateChangeID, detail: "This change ID appears more than once; none of those records can be applied.")
         })
+        // A duplicated ID has no authoritative payload. Remove every one of
+        // those records before chronological supersession so an ambiguous
+        // later entry cannot suppress a valid earlier value for the target.
+        let chronologyCandidates = uniqueChanges.filter { !collisionIDs.contains($0.mobileChangeID) }
         var latestByTarget: [String: MobileChange] = [:]
-        for change in uniqueChanges {
+        for change in chronologyCandidates {
             let key = change.mobileTargetKey
             if let existing = latestByTarget[key] {
                 let newer = change.mobileCreatedAt > existing.mobileCreatedAt || (change.mobileCreatedAt == existing.mobileCreatedAt && change.mobileChangeID.uuidString > existing.mobileChangeID.uuidString)
@@ -533,11 +565,8 @@ public final class MobileChangeImporter: @unchecked Sendable {
         }
         let selectedIDs = Set(latestByTarget.values.map(\.mobileChangeID))
 
-        for change in uniqueChanges where selectedIDs.contains(change.mobileChangeID) {
+        for change in chronologyCandidates where selectedIDs.contains(change.mobileChangeID) {
             let id = change.mobileChangeID
-            if collisionIDs.contains(id) {
-                continue
-            }
             if allApplied.contains(id) {
                 alreadyApplied.append(id)
                 continue
@@ -641,6 +670,7 @@ public final class MobileChangeImporter: @unchecked Sendable {
     ) async throws -> MobileChangeApplicationReceipt {
         guard confirmed else { throw MobileChangeImportError.finalConfirmationRequired }
         guard commands.isConfigured, recordStore != nil else { throw MobileChangeImportError.configurationMissing }
+        try reloadLedger()
         guard let base = envelope.snapshot,
               envelope.purpose == .returnChanges,
               envelope.baseSnapshotID == base.snapshotID,
@@ -688,6 +718,9 @@ public final class MobileChangeImporter: @unchecked Sendable {
         // Validate final receipt size before a domain batch mutates its owning
         // store. A receipt write can still fail afterwards, but the target's
         // own atomic mobile IDs make a retry a no-op rather than a duplicate.
+        let anticipatedResultingRevisions = Dictionary(uniqueKeysWithValues: batches.flatMap { batch in
+            Self.changeIDs(in: batch).map { ($0.uuidString, Self.expectedRevision(after: batch)) }
+        })
         let tentative = MobileChangeApplicationLedger(
             libraryID: preview.libraryID,
             records: (ledger?.records ?? []) + [MobileChangeApplicationRecord(
@@ -696,11 +729,11 @@ public final class MobileChangeImporter: @unchecked Sendable {
                 sourceFingerprint: preview.sourceFingerprint,
                 appliedChangeIDs: Array(selectedIDs),
                 resolvedChangeIDs: resolved,
-                resultingRevisions: [:]
+                resultingRevisions: anticipatedResultingRevisions
             )],
             appliedChangeIDs: (ledger?.appliedChangeIDs ?? []) + Array(selectedIDs),
             resolvedChangeIDs: (ledger?.resolvedChangeIDs ?? []) + resolved,
-            resultingRevisions: ledger?.resultingRevisions ?? [:]
+            resultingRevisions: (ledger?.resultingRevisions ?? [:]).merging(anticipatedResultingRevisions) { _, new in new }
         )
         guard let encoded = try? MobileJSON.encoder.encode(tentative), encoded.count <= 1_048_576 else {
             throw MobileChangeImportError.limitsExceeded
@@ -733,15 +766,24 @@ public final class MobileChangeImporter: @unchecked Sendable {
         }
 
         let receipt = MobileChangeApplicationRecord(libraryID: preview.libraryID, sourcePackageID: preview.sourcePackageID, sourceFingerprint: preview.sourceFingerprint, appliedChangeIDs: applied, resolvedChangeIDs: resolved, resultingRevisions: resulting)
-        let finalLedger = MobileChangeApplicationLedger(
-            libraryID: preview.libraryID,
-            records: (ledger?.records ?? []).filter { $0.sourcePackageID != preview.sourcePackageID } + [receipt],
-            appliedChangeIDs: (ledger?.appliedChangeIDs ?? []) + applied,
-            resolvedChangeIDs: (ledger?.resolvedChangeIDs ?? []) + resolved,
-            resultingRevisions: (ledger?.resultingRevisions ?? [:]).merging(resulting) { _, new in new }
-        )
         do {
-            try recordStore?.save(finalLedger)
+            var finalLedger: MobileChangeApplicationLedger?
+            try recordStore?.updateLedger { latest in
+                let persisted = latest ?? MobileChangeApplicationLedger(libraryID: preview.libraryID)
+                guard persisted.libraryID == preview.libraryID else { throw MobileChangeImportError.receiptFailed }
+                let next = MobileChangeApplicationLedger(
+                    libraryID: preview.libraryID,
+                    records: persisted.records.filter { $0.sourcePackageID != preview.sourcePackageID } + [receipt],
+                    appliedChangeIDs: persisted.appliedChangeIDs + applied,
+                    resolvedChangeIDs: persisted.resolvedChangeIDs + resolved,
+                    resultingRevisions: persisted.resultingRevisions.merging(resulting) { _, new in new }
+                )
+                guard let encoded = try? MobileJSON.encoder.encode(next), encoded.count <= 1_048_576 else {
+                    throw MobileChangeImportError.limitsExceeded
+                }
+                finalLedger = next
+                return next
+            }
             ledger = finalLedger
         } catch {
             // Domain records already carry their own idempotency marker. The
@@ -749,6 +791,21 @@ public final class MobileChangeImporter: @unchecked Sendable {
             throw MobileChangeImportError.partialReceipt(receipt)
         }
         return receipt
+    }
+
+    private func reloadLedger() throws {
+        guard let recordStore else { return }
+        do {
+            let loaded = try recordStore.load()
+            if let loaded, loaded.schemaVersion != MobileChangeApplicationLedger.currentSchemaVersion {
+                throw MobileChangeImportError.receiptFailed
+            }
+            ledger = loaded
+        } catch let error as MobileChangeImportError {
+            throw error
+        } catch {
+            throw MobileChangeImportError.receiptFailed
+        }
     }
 
     private struct PendingMutation: Sendable {
@@ -760,31 +817,37 @@ public final class MobileChangeImporter: @unchecked Sendable {
         enum Owner: Hashable { case briefing(UUID); case project(UUID) }
         var briefingMutations: [UUID: [MobileBriefingBatchMutation]] = [:]
         var projectMutations: [UUID: [(MobileNoteRevisionCommand, MobileNoteBatchMutationMode)]] = [:]
-        // `selected` has already been ordered by phone timestamp and ID. Keep
-        // the first appearance of each atomic owner so independently-owned
-        // batches still follow that chronology while all one-briefing changes
-        // share their required single revision.
-        var ownerOrder: [Owner] = []
+        // A batch is atomic per owner, so global chronology is represented by
+        // each owner's *last effective* phone change.  For A1, B1, A2 this
+        // correctly executes B before A (rather than preserving A's first
+        // appearance), while still keeping A1/A2 in one revision.
+        var ownerLastEffectiveChange: [Owner: MobileChange] = [:]
         for pending in selected {
             switch pending.change {
             case .checklistCompletion(let value):
                 guard let briefing = snapshot.briefings.first(where: { $0.id == value.briefingID }) else { throw MobileChangeImportError.stalePreview }
-                if briefingMutations[value.briefingID] == nil { ownerOrder.append(.briefing(value.briefingID)) }
+                ownerLastEffectiveChange[.briefing(value.briefingID)] = pending.change
                 briefingMutations[value.briefingID, default: []].append(.checklist(.init(changeID: value.changeID, briefingID: value.briefingID, itemID: value.itemID, isCompleted: value.isCompleted, expectedRevision: briefing.revision, resultingRevision: briefing.revision + 1, createdAt: value.createdAt)))
             case .noteRevision(let value):
                 guard let note = snapshot.notes.first(where: { $0.id == value.noteID }) else { throw MobileChangeImportError.stalePreview }
                 let mode: MobileNoteBatchMutationMode = pending.resolution == .keepBothAsFieldNote ? .appendFieldNote : .replace
                 if note.scope == .briefing {
                     guard let briefingID = UUID(uuidString: note.ownerID), let briefing = snapshot.briefings.first(where: { $0.id == briefingID }) else { throw MobileChangeImportError.stalePreview }
-                    if briefingMutations[briefingID] == nil { ownerOrder.append(.briefing(briefingID)) }
+                    ownerLastEffectiveChange[.briefing(briefingID)] = pending.change
                     briefingMutations[briefingID, default: []].append(.note(.init(changeID: value.changeID, noteID: value.noteID, ownerID: value.ownerID, text: value.text, expectedRevision: briefing.revision, resultingRevision: briefing.revision + 1, createdAt: value.createdAt), mode))
                 } else if note.scope == .project, let projectID = UUID(uuidString: note.ownerID) {
-                    if projectMutations[projectID] == nil { ownerOrder.append(.project(projectID)) }
+                    ownerLastEffectiveChange[.project(projectID)] = pending.change
                     projectMutations[projectID, default: []].append((.init(changeID: value.changeID, noteID: value.noteID, ownerID: value.ownerID, text: value.text, expectedRevision: note.baseRevision, resultingRevision: note.baseRevision + 1, createdAt: value.createdAt), mode))
                 } else { throw MobileChangeImportError.stalePreview }
             }
         }
         var batches: [MobileChangeDomainBatch] = []
+        let ownerOrder = ownerLastEffectiveChange.keys.sorted { lhs, rhs in
+            guard let left = ownerLastEffectiveChange[lhs], let right = ownerLastEffectiveChange[rhs] else { return false }
+            if left.mobileCreatedAt != right.mobileCreatedAt { return left.mobileCreatedAt < right.mobileCreatedAt }
+            if left.mobileChangeID != right.mobileChangeID { return left.mobileChangeID.uuidString < right.mobileChangeID.uuidString }
+            return Self.ownerSortKey(lhs) < Self.ownerSortKey(rhs)
+        }
         for owner in ownerOrder {
             switch owner {
             case .briefing(let id):
@@ -798,6 +861,10 @@ public final class MobileChangeImporter: @unchecked Sendable {
         return batches
     }
 
+    private static func ownerSortKey(_ owner: Any) -> String {
+        String(describing: owner)
+    }
+
     private static func changeIDs(in batch: MobileChangeDomainBatch) -> [UUID] {
         switch batch {
         case .briefing(let batch):
@@ -805,6 +872,13 @@ public final class MobileChangeImporter: @unchecked Sendable {
                 switch mutation { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
             }
         case .projectAnnotation(let batch): return batch.mutations.map { $0.0.changeID }
+        }
+    }
+
+    private static func expectedRevision(after batch: MobileChangeDomainBatch) -> Int {
+        switch batch {
+        case .briefing(let batch): return batch.expectedRevision + 1
+        case .projectAnnotation(let batch): return batch.expectedRevision + 1
         }
     }
 

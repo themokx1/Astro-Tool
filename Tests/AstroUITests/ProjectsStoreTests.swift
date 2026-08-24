@@ -22,6 +22,36 @@ struct ProjectsStoreTests {
         #expect(try await metadata.projectAnnotation(projectID: project.id) == store.selectedProjectAnnotation)
     }
 
+    @Test("Ordinary project editor refuses a revision saved after it loaded")
+    func staleProjectEditorPreservesPhoneTextAndMarker() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion", phase: .collecting)
+        let phoneChangeID = UUID()
+        try await metadata.save(project)
+        try await metadata.save(ProjectAnnotationRecord(
+            projectID: project.id,
+            integrationGoalHours: nil,
+            notes: "Before phone update",
+            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            mobileChangeIDs: [phoneChangeID]
+        ))
+        let firstEditor = ProjectsStore(metadataFactory: { _ in metadata })
+        let secondEditor = ProjectsStore(metadataFactory: { _ in metadata })
+        let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        try await firstEditor.open(rootURL: root)
+        try await secondEditor.open(rootURL: root)
+        try await firstEditor.selectProject(project.id)
+        try await secondEditor.selectProject(project.id)
+
+        try await secondEditor.saveSelectedProjectAnnotation(goalHours: nil, notes: "Phone text")
+        await #expect(throws: MetadataStoreError.self) {
+            try await firstEditor.saveSelectedProjectAnnotation(goalHours: nil, notes: "Stale Mac text")
+        }
+        let latest = try #require(try await metadata.projectAnnotation(projectID: project.id))
+        #expect(latest.notes == "Phone text")
+        #expect(latest.mobileChangeIDs == [phoneChangeID])
+    }
+
     @Test("Opening a library loads projects and canonical creation refreshes the list")
     func createPersistsAndRefreshes() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(

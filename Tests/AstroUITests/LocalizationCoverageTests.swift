@@ -89,16 +89,17 @@ struct LocalizationCoverageTests {
         #expect(keys.count > 300)
     }
 
-    @Test("Every extracted key has either a Hungarian translation or is on the explicit allowlist")
+    @Test("Every extracted key has a Hungarian translation in its target bundle")
     func everyExtractedKeyIsTranslatedOrAllowlisted() throws {
-        let keys = try runExtractionScript()
-        let translated = try parseStringsFile(
-            repositoryRoot.appendingPathComponent("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
-        )
-
-        let untranslated = keys.filter { !translated.contains($0) && !Self.allowlist.contains($0) }
-
+        let untranslated = try runExtractionScript(arguments: ["--missing"])
+            .filter { !Self.allowlist.contains($0) }
         #expect(untranslated.isEmpty, "Missing Hungarian translations: \(untranslated.prefix(20).joined(separator: " | "))")
+    }
+
+    @Test("The iPhone target has complete English and Hungarian source tables")
+    func targetBundlesHaveCompleteSourceTables() throws {
+        let missingEnglish = try runExtractionScript(arguments: ["--missing-en"])
+        #expect(missingEnglish.isEmpty, "Missing English source entries: \(missingEnglish.prefix(20).joined(separator: " | "))")
     }
 
     @Test("The allowlist contains only short brand/domain terms, not full sentences")
