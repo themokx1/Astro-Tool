@@ -13,6 +13,11 @@ public enum MetadataStoreError: Error, Equatable, Sendable {
     case metadataDestinationChanged
     case invalidField(record: String, field: String)
     case staleProjectAnnotation(UUID)
+    /// A public (non-bridge) writer supplied nonempty mobile evidence
+    /// (`mobileChangeIDs` / `mobileChangeMarkers`) for the project annotation
+    /// with this projectID. Only the internal mobile domain bridge
+    /// (`applyMobileProjectAnnotationBatch`) may write new mobile evidence.
+    case mobileEvidenceNotWritable(UUID)
 }
 
 public enum MetadataSchema {

@@ -3,12 +3,19 @@ import Foundation
 public enum NightBriefingRevisionStoreError: Error, Equatable, Sendable {
     case revisionAlreadyExists(URL)
     case corruptRevision(URL)
+    /// A public (non-bridge) writer supplied nonempty mobile evidence
+    /// (`mobileChangeIDs` / `mobileChangeMarkers`) for the briefing with this
+    /// id. Only the package-internal mobile domain bridge may write new
+    /// mobile evidence; see `saveIfLatestRecordingMobileEvidence`.
+    case mobileEvidenceNotWritable(UUID)
 
     public static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
         case (.revisionAlreadyExists(let left), .revisionAlreadyExists(let right)),
              (.corruptRevision(let left), .corruptRevision(let right)):
             return normalizedPath(left) == normalizedPath(right)
+        case (.mobileEvidenceNotWritable(let left), .mobileEvidenceNotWritable(let right)):
+            return left == right
         default:
             return false
         }
@@ -41,7 +48,15 @@ public actor NightBriefingRevisionStore {
 
     /// Creation-only entrypoint. Existing briefings must use the explicit
     /// compare-and-set update below; there is no unconditional update API.
+    ///
+    /// Public writer: a draft carrying nonempty mobile evidence
+    /// (`mobileChangeIDs` / `mobileChangeMarkers`) is rejected before
+    /// anything is written. Only the internal mobile domain bridge may
+    /// author new mobile evidence.
     public func create(_ draft: NightBriefingDraft) throws -> NightBriefingDraft {
+        guard draft.mobileChangeIDs.isEmpty, draft.mobileChangeMarkers.isEmpty else {
+            throw NightBriefingRevisionStoreError.mobileEvidenceNotWritable(draft.id)
+        }
         Self.processLock.lock()
         defer { Self.processLock.unlock() }
         let existing = try decodedRevisions(id: draft.id)
@@ -54,9 +69,48 @@ public actor NightBriefingRevisionStore {
     }
 
     /// Saves only if the durable latest revision is exactly the revision the
-    /// caller reviewed.  This is the compare-and-set used by mobile return
-    /// batches to prevent overwriting an intervening Mac edit.
+    /// caller reviewed. This is the compare-and-set used by ordinary Mac
+    /// editors (and by the public surface generally).
+    ///
+    /// Public writer: mobile evidence is never taken from the caller here.
+    /// When no durable revision exists yet, a nonempty `mobileChangeIDs` /
+    /// `mobileChangeMarkers` is rejected before anything is written (mirroring
+    /// `create`). When a durable latest revision exists and the compare-and-set
+    /// check passes, the candidate's `mobileChangeIDs` and `mobileChangeMarkers`
+    /// are overwritten with the durable latest revision's own values before
+    /// saving -- caller-supplied evidence, whether added, altered, or
+    /// stripped, is never persisted through this path. Only
+    /// `saveIfLatestRecordingMobileEvidence` (the internal mobile domain
+    /// bridge's path) may author new mobile evidence.
     public func saveIfLatest(_ draft: NightBriefingDraft, expectedRevision: Int) throws -> NightBriefingDraft {
+        Self.processLock.lock()
+        defer { Self.processLock.unlock() }
+        let latestDraft = try decodedRevisions(id: draft.id).max { $0.revision < $1.revision }
+        let currentRevision = latestDraft?.revision ?? 0
+        guard currentRevision == expectedRevision else {
+            throw NightBriefingRevisionStoreError.revisionAlreadyExists(revisionURL(id: draft.id, revision: currentRevision))
+        }
+        var sanitized = draft
+        if let latestDraft {
+            sanitized.mobileChangeIDs = latestDraft.mobileChangeIDs
+            sanitized.mobileChangeMarkers = latestDraft.mobileChangeMarkers
+        } else {
+            guard draft.mobileChangeIDs.isEmpty, draft.mobileChangeMarkers.isEmpty else {
+                throw NightBriefingRevisionStoreError.mobileEvidenceNotWritable(draft.id)
+            }
+        }
+        return try saveUnlocked(sanitized)
+    }
+
+    /// Saves the draft exactly as given, including its `mobileChangeIDs` /
+    /// `mobileChangeMarkers` fields, verbatim -- the same compare-and-set
+    /// semantics as `saveIfLatest` but without evidence sanitization.
+    ///
+    /// This is the package-internal mobile domain bridge's only
+    /// marker-writing path (see `MobileMacDomainCommandBridge`). It is not
+    /// public: normal editors must go through `saveIfLatest` above, which can
+    /// never persist mobile evidence supplied by its caller.
+    func saveIfLatestRecordingMobileEvidence(_ draft: NightBriefingDraft, expectedRevision: Int) throws -> NightBriefingDraft {
         Self.processLock.lock()
         defer { Self.processLock.unlock() }
         let currentRevision = try decodedRevisions(id: draft.id).map(\.revision).max() ?? 0

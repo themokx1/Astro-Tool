@@ -120,7 +120,15 @@ public actor MetadataStore {
 
     /// Creation-only entrypoint. Existing annotations must use the explicit
     /// compare-and-set editor below.
+    ///
+    /// Public writer: an annotation carrying nonempty mobile evidence
+    /// (`mobileChangeIDs` / `mobileChangeMarkers`) is rejected before
+    /// anything is written. Only the internal mobile domain bridge
+    /// (`applyMobileProjectAnnotationBatch`) may author new mobile evidence.
     public func createProjectAnnotation(_ annotation: ProjectAnnotationRecord) throws {
+        guard annotation.mobileChangeIDs.isEmpty, annotation.mobileChangeMarkers.isEmpty else {
+            throw MetadataStoreError.mobileEvidenceNotWritable(annotation.projectID)
+        }
         try transaction {
             let existing = try projectAnnotation(projectID: annotation.projectID)
             guard existing == nil else {
@@ -161,14 +169,20 @@ public actor MetadataStore {
                 guard expectedRevision == 0 else {
                     throw MetadataStoreError.staleProjectAnnotation(annotation.projectID)
                 }
+                // Creation branch of a public writer: caller-supplied mobile
+                // evidence is never trusted here either. Only the internal
+                // mobile domain bridge may author new mobile evidence.
+                guard annotation.mobileChangeIDs.isEmpty, annotation.mobileChangeMarkers.isEmpty else {
+                    throw MetadataStoreError.mobileEvidenceNotWritable(annotation.projectID)
+                }
                 let initial = ProjectAnnotationRecord(
                     projectID: annotation.projectID,
                     integrationGoalHours: annotation.integrationGoalHours,
                     notes: annotation.notes,
                     updatedAt: annotation.updatedAt,
                     revision: 0,
-                    mobileChangeIDs: annotation.mobileChangeIDs,
-                    mobileChangeMarkers: annotation.mobileChangeMarkers
+                    mobileChangeIDs: [],
+                    mobileChangeMarkers: []
                 )
                 try upsert(initial)
                 saved = try projectAnnotation(projectID: annotation.projectID)

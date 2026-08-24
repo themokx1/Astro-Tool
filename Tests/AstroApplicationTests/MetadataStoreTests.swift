@@ -24,6 +24,103 @@ struct MetadataStoreTests {
         #expect(try await store.projectAnnotation(projectID: project.id) == annotation)
     }
 
+    @Test("createProjectAnnotation rejects fabricated mobile evidence and persists nothing")
+    func createProjectAnnotationRejectsFabricatedMobileEvidence() async throws {
+        let store = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 1", displayName: "Crab", phase: .collecting)
+        try await store.save(project)
+        let fabricatedID = UUID()
+        let poisoned = ProjectAnnotationRecord(
+            projectID: project.id,
+            integrationGoalHours: nil,
+            notes: "Injected",
+            updatedAt: Date(timeIntervalSince1970: 1_786_404_000),
+            mobileChangeIDs: [fabricatedID]
+        )
+
+        await #expect(throws: MetadataStoreError.mobileEvidenceNotWritable(project.id)) {
+            try await store.createProjectAnnotation(poisoned)
+        }
+        #expect(try await store.projectAnnotation(projectID: project.id) == nil)
+    }
+
+    @Test("saveProjectAnnotation creation branch rejects fabricated mobile evidence and persists nothing")
+    func saveProjectAnnotationCreationRejectsFabricatedMobileEvidence() async throws {
+        let store = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 51", displayName: "Whirlpool", phase: .collecting)
+        try await store.save(project)
+        let fabricatedID = UUID()
+        let fabricatedMarker = MobileChangeMarker(
+            changeID: fabricatedID,
+            ownerID: "project:\(project.id.uuidString.lowercased())",
+            payloadFingerprint: String(repeating: "a", count: 64),
+            resultingRevision: 1
+        )
+        let poisoned = ProjectAnnotationRecord(
+            projectID: project.id,
+            integrationGoalHours: nil,
+            notes: "Injected",
+            updatedAt: Date(timeIntervalSince1970: 1_786_404_000),
+            mobileChangeMarkers: [fabricatedMarker]
+        )
+
+        await #expect(throws: MetadataStoreError.mobileEvidenceNotWritable(project.id)) {
+            _ = try await store.saveProjectAnnotation(poisoned, expectedRevision: 0)
+        }
+        #expect(try await store.projectAnnotation(projectID: project.id) == nil)
+    }
+
+    @Test("saveProjectAnnotation CAS update silently preserves durable mobile evidence over differing caller evidence")
+    func saveProjectAnnotationCASPreservesDurableMobileEvidence() async throws {
+        let store = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "M 81", displayName: "Bode", phase: .collecting)
+        try await store.save(project)
+        let baseline = Date(timeIntervalSince1970: 1_786_404_000)
+        try await store.createProjectAnnotation(ProjectAnnotationRecord(
+            projectID: project.id, integrationGoalHours: nil, notes: "Mac base", updatedAt: baseline
+        ))
+        let realChangeID = UUID()
+        let applied = try await store.applyMobileProjectAnnotationBatch(.init(
+            projectID: project.id,
+            expectedRevision: 0,
+            mutations: [(.init(
+                changeID: realChangeID,
+                noteID: "project-\(project.id.uuidString.lowercased())",
+                ownerID: project.id.uuidString,
+                text: "Phone note",
+                expectedRevision: 0,
+                resultingRevision: 1,
+                createdAt: baseline.addingTimeInterval(10)
+            ), .replace)]
+        ))
+        #expect(applied.resultingRevisions[realChangeID.uuidString] == 1)
+        let durable = try #require(try await store.projectAnnotation(projectID: project.id))
+        #expect(durable.mobileChangeIDs == [realChangeID])
+
+        let fabricatedID = UUID()
+        let fabricatedMarker = MobileChangeMarker(
+            changeID: fabricatedID,
+            ownerID: "project:\(project.id.uuidString.lowercased())",
+            payloadFingerprint: String(repeating: "e", count: 64),
+            resultingRevision: 2
+        )
+        let candidate = ProjectAnnotationRecord(
+            projectID: project.id,
+            integrationGoalHours: nil,
+            notes: "Mac edit with differing fabricated evidence",
+            updatedAt: baseline.addingTimeInterval(20),
+            revision: durable.revision,
+            mobileChangeIDs: [fabricatedID],
+            mobileChangeMarkers: [fabricatedMarker]
+        )
+
+        let saved = try await store.saveProjectAnnotation(candidate, expectedRevision: durable.revision)
+
+        #expect(saved.mobileChangeIDs == durable.mobileChangeIDs)
+        #expect(saved.mobileChangeMarkers == durable.mobileChangeMarkers)
+        #expect(saved.notes == "Mac edit with differing fabricated evidence")
+    }
+
     @Test("Acknowledging a finding group upserts on ack key and revoking removes it")
     func acknowledgeFindingGroupUpsertsAndRevokes() async throws {
         let store = try MetadataStore.temporary()

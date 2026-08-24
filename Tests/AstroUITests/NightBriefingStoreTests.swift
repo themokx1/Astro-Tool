@@ -93,8 +93,8 @@ struct NightBriefingStoreTests {
         #expect(store.recentDrafts.first?.notes == "Második változat")
     }
 
-    @Test("Ordinary Mac save refuses a phone revision loaded after the editor")
-    func staleOrdinarySavePreservesPhoneRevisionAndMarker() async throws {
+    @Test("Ordinary Mac save refuses a newer revision and public saves cannot carry mobile evidence")
+    func staleOrdinarySaveRejectsWithoutPersistingMobileEvidence() async throws {
         let folder = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -106,6 +106,11 @@ struct NightBriefingStoreTests {
         editor.startTonight()
         try await editor.saveRevision()
 
+        // Simulates another window landing a note change via the same public
+        // path a phone return would use. Even though it injects a
+        // mobileChangeIDs value, the public `saveIfLatest` path must not
+        // persist it -- only the internal mobile domain bridge may write
+        // durable mobile evidence.
         let phoneChangeID = UUID()
         var phone = editor.draft
         phone.notes = "Phone field note"
@@ -118,7 +123,7 @@ struct NightBriefingStoreTests {
         }
         let latest = try #require(try await revisions.latest(id: editor.draft.id))
         #expect(latest.notes == "Phone field note")
-        #expect(latest.mobileChangeIDs == [phoneChangeID])
+        #expect(latest.mobileChangeIDs.isEmpty)
     }
 
     @Test("Saving an unchanged draft does not create a duplicate revision")

@@ -242,7 +242,7 @@ private actor MobileMacDomainCommandBridge {
         draft.mobileChangeIDs = Array(existingIDs.union(requestedIDs)).sorted { $0.uuidString < $1.uuidString }
         draft.mobileChangeMarkers += requestedMarkers.filter { existingMarkers[$0.changeID] == nil }
         do {
-            let saved = try await briefingStore.saveIfLatest(draft, expectedRevision: batch.expectedRevision)
+            let saved = try await briefingStore.saveIfLatestRecordingMobileEvidence(draft, expectedRevision: batch.expectedRevision)
             return .init(appliedChangeIDs: requestedIDs, resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, saved.revision) }))
         } catch NightBriefingRevisionStoreError.revisionAlreadyExists {
             // A second sync window may have won the filename race after this

@@ -651,13 +651,18 @@ struct MobileChangeImporterTests {
             payloadFingerprint: String(repeating: "a", count: 64),
             resultingRevision: 1
         )
-        _ = try await revisions.create(NightBriefingDraft(
+        // Seeding a durable revision with duplicate embedded markers is
+        // deliberately corrupt fixture state used only to exercise the
+        // bridge's own marker validation on read; the public `create` no
+        // longer accepts any mobile evidence, so this uses the
+        // package-internal bridge-writing path directly.
+        _ = try await revisions.saveIfLatestRecordingMobileEvidence(NightBriefingDraft(
             id: briefingID,
             savedAt: Date(timeIntervalSince1970: 1_700_000_000),
             notes: "Corrupt",
             mobileChangeIDs: [markerID],
             mobileChangeMarkers: [marker, marker]
-        ))
+        ), expectedRevision: 0)
         let commands = try MobileChangeCommands.production(rootURL: root)
         let newID = UUID()
         let batch = MobileChangeDomainBatch.briefing(.init(

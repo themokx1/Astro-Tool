@@ -1,5 +1,5 @@
 @testable import AstroUI
-import AstroApplication
+@testable import AstroApplication
 import Foundation
 import Testing
 
@@ -28,12 +28,28 @@ struct ProjectsStoreTests {
         let project = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion", phase: .collecting)
         let phoneChangeID = UUID()
         try await metadata.save(project)
+        let baseline = Date(timeIntervalSince1970: 1_700_000_000)
+        // Seed a durable annotation carrying real mobile evidence through the
+        // internal mobile domain bridge path -- the public `createProjectAnnotation`
+        // entry point can no longer accept caller-supplied mobile evidence.
         try await metadata.createProjectAnnotation(ProjectAnnotationRecord(
             projectID: project.id,
             integrationGoalHours: nil,
             notes: "Before phone update",
-            updatedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            mobileChangeIDs: [phoneChangeID]
+            updatedAt: baseline
+        ))
+        _ = try await metadata.applyMobileProjectAnnotationBatch(.init(
+            projectID: project.id,
+            expectedRevision: 0,
+            mutations: [(.init(
+                changeID: phoneChangeID,
+                noteID: "project-\(project.id.uuidString.lowercased())",
+                ownerID: project.id.uuidString,
+                text: "Before phone update",
+                expectedRevision: 0,
+                resultingRevision: 1,
+                createdAt: baseline
+            ), .replace)]
         ))
         let firstEditor = ProjectsStore(metadataFactory: { _ in metadata })
         let secondEditor = ProjectsStore(metadataFactory: { _ in metadata })
