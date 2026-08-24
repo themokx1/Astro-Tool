@@ -14,7 +14,7 @@ struct SyncMobileView: View {
     let onCancelExport: () -> Void
     let onDiscardReturnExport: () -> Void
     let isExporting: Bool
-    let returnQRPayload: String?
+    let returnQRCode: String?
 
     private var checklistCount: Int { snapshot.briefings.flatMap(\.checklist).flatMap(\.items).count }
 
@@ -113,12 +113,12 @@ struct SyncMobileView: View {
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("v5.mobile-sync.return.cancel")
                 }
-                if let returnQRPayload {
+                if let returnQRCode {
                     Label("Ready to import on Mac", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(Color(uiColor: .systemGreen))
                     Text("Show this one-time code on the Mac import screen:")
                         .font(.footnote)
-                    Text(returnQRPayload)
+                    Text(returnQRCode)
                         .font(.footnote.monospaced())
                         .accessibilityIdentifier("v5.mobile-sync.return.code")
                     Text("Your queued changes remain here until a later Mac package confirms the exact IDs.")
@@ -135,11 +135,15 @@ struct SyncMobileView: View {
         .accessibilityIdentifier("mobile-sync-surface")
     }
 
+    @ViewBuilder
     private func countRow(_ title: LocalizedStringKey, value: Int, identifier: String? = nil) -> some View {
-        LabeledContent(title) {
-            if let identifier {
-                Text("\(value)").font(.body.monospacedDigit()).accessibilityIdentifier(identifier)
-            } else {
+        if let identifier {
+            LabeledContent(title) {
+                Text("\(value)").font(.body.monospacedDigit())
+            }
+            .accessibilityIdentifier(identifier)
+        } else {
+            LabeledContent(title) {
                 Text("\(value)").font(.body.monospacedDigit())
             }
         }

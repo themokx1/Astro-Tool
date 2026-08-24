@@ -171,7 +171,6 @@ struct TonightMobileView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
             }
-            .accessibilityIdentifier("v5.mobile.checklist")
         }
     }
 
@@ -210,7 +209,6 @@ struct TonightMobileView: View {
                 }
                 .padding(14)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                .accessibilityIdentifier("v5.mobile.note")
             }
         }
     }

@@ -24,7 +24,7 @@ enum MobileSnapshotFreshness: Equatable, Sendable {
 
 enum MobileEffectiveState {
     static func checklistValue(briefingID: UUID, itemID: String, snapshotValue: Bool, changes: [MobileChange]) -> Bool {
-        changes.reversed().compactMap { change in
+        changes.reversed().compactMap { change -> Bool? in
             guard case .checklistCompletion(let completion) = change,
                   completion.briefingID == briefingID,
                   completion.itemID == itemID else { return nil }
@@ -33,7 +33,7 @@ enum MobileEffectiveState {
     }
 
     static func noteText(noteID: String, snapshotText: String, changes: [MobileChange]) -> String {
-        changes.reversed().compactMap { change in
+        changes.reversed().compactMap { change -> String? in
             guard case .noteRevision(let revision) = change, revision.noteID == noteID else { return nil }
             return revision.text
         }.first ?? snapshotText
@@ -164,7 +164,7 @@ struct MobileRootView: View {
     @State private var message: String?
     @State private var showingScanner = false
     @State private var showingReturnExporter = false
-    @State private var returnQRPayload: String?
+    @State private var returnQRCode: String?
     @State private var returnExportTask: Task<Void, Never>?
     @State private var returnExportGeneration = 0
     @State private var selectedTab: MobileTab = .tonight
@@ -272,7 +272,7 @@ struct MobileRootView: View {
                             let exported = try await store.exportReturnPackage(to: url)
                             try Task.checkCancellation()
                             guard exportGeneration == returnExportGeneration else { return }
-                            returnQRPayload = exported.oneTimeQRPayload
+                            returnQRCode = exported.oneTimeQRPayload
                             message = "Ready to import on Mac. Your queued changes remain here until the Mac confirms them."
                             await refresh()
                         } catch is CancellationError {
@@ -416,19 +416,15 @@ struct MobileRootView: View {
             TonightMobileView(snapshot: snapshot, changes: changes, store: store, onStoreChange: refresh)
                 .tabItem { Label("Tonight", systemImage: "moon.stars.fill") }
                 .tag(MobileTab.tonight)
-                .accessibilityIdentifier("v5.mobile.tab.today")
             ProjectsMobileView(snapshot: snapshot, changes: changes, store: store, onStoreChange: refresh)
                 .tabItem { Label("Projects", systemImage: "square.stack.3d.up.fill") }
                 .tag(MobileTab.projects)
-                .accessibilityIdentifier("v5.mobile.tab.projects")
             BriefingsMobileView(snapshot: snapshot, changes: changes, store: store, onStoreChange: refresh)
                 .tabItem { Label("Briefings", systemImage: "doc.text.fill") }
                 .tag(MobileTab.briefings)
-                .accessibilityIdentifier("v5.mobile.tab.briefings")
-            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, onCancelExport: cancelReturnExport, onDiscardReturnExport: discardReturnExport, isExporting: returnExportTask != nil, returnQRPayload: returnQRPayload)
+            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, onCancelExport: cancelReturnExport, onDiscardReturnExport: discardReturnExport, isExporting: returnExportTask != nil, returnQRCode: returnQRCode)
                 .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                 .tag(MobileTab.sync)
-                .accessibilityIdentifier("v5.mobile.tab.sync")
         }
         .accessibilityIdentifier("mobile-imported-state")
     }
@@ -442,7 +438,7 @@ struct MobileRootView: View {
         durabilityAttemptWarning = await store.durabilityAttemptWarning
         durabilityAmbiguousWarning = await store.durabilityAmbiguousWarning
         stagedPackageURL = await store.stagedPackageURL
-        returnQRPayload = await store.recoverableReturnExport?.oneTimeQRPayload
+        returnQRCode = await store.recoverableReturnExport?.oneTimeQRPayload
     }
 
     private func cancelReturnExport() {
@@ -455,7 +451,7 @@ struct MobileRootView: View {
         Task { @MainActor in
             do {
                 try await store.discardRecoverableReturnExport()
-                returnQRPayload = nil
+                returnQRCode = nil
             } catch {
                 message = "The saved return code could not be discarded. It remains available for recovery."
                 await refresh()
@@ -553,7 +549,7 @@ private struct MobileReturnPackagePlaceholderDocument: FileDocument {
         if configuration.existingFile != nil {
             throw MobileLibraryStoreError.persistenceFailed
         }
-        FileWrapper(regularFileWithContents: Self.marker)
+        return FileWrapper(regularFileWithContents: Self.marker)
     }
 
     struct Identity: Equatable {

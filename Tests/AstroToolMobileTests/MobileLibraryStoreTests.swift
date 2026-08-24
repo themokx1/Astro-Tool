@@ -171,9 +171,14 @@ import Testing
 
 @Test func corruptDeviceIdentityLocksWritesWithoutReplacingBytes() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
-    let deviceURL = fixture.rootURL.appendingPathComponent("device-id")
-    let corrupt = Data("not-a-device".utf8)
-    try corrupt.write(to: deviceURL, options: .atomic)
+    let stateURL = fixture.rootURL.appendingPathComponent("state.json")
+    var state = try JSONSerialization.jsonObject(with: Data(contentsOf: stateURL)) as! [String: Any]
+    // state.json is the sole authoritative contract once it exists, so a
+    // corrupt device identity must be simulated there rather than in the
+    // legacy device-id mirror, which is only consulted before migration.
+    state.removeValue(forKey: "deviceID")
+    let corrupt = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+    try corrupt.write(to: stateURL, options: .atomic)
     let store = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
 
     #expect(await store.recoveryState == .invalidDeviceID)
@@ -183,7 +188,7 @@ import Testing
     } catch let error as MobileLibraryStoreError {
         #expect(error == .recoveryRequired)
     }
-    #expect(try Data(contentsOf: deviceURL) == corrupt)
+    #expect(try Data(contentsOf: stateURL) == corrupt)
 }
 
 @Test func foreignDeviceQueueLocksRecoveryWithoutReplacingSnapshot() async throws {
@@ -658,7 +663,7 @@ import Testing
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     try mutatePersistedSnapshotRoot(fixture) { snapshot in
         snapshot["projects"] = (0..<MobilePackageService.maximumCollectionCount).map { ["id": UUID().uuidString, "displayName": "M\($0)", "catalogID": "M\($0)", "phase": "ready", "integrationSeconds": 0, "goalHours": NSNull()] }
-        snapshot["nights"] = (0..<MobilePackageService.maximumCollectionCount).map { ["id": UUID().uuidString, "localDate": "2026-08-23", "timeZoneID": "Europe/Budapest"] }
+        snapshot["nights"] = (0..<MobilePackageService.maximumCollectionCount).map { _ in ["id": UUID().uuidString, "localDate": "2026-08-23", "timeZoneID": "Europe/Budapest"] }
     }
     let relaunched = MobileLibraryStore(applicationSupportURL: fixture.rootURL)
     #expect(await relaunched.recoveryState == .invalidSnapshot)
