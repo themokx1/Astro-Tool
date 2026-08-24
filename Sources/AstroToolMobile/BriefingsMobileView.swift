@@ -82,7 +82,7 @@ private struct BriefingMobileDetailView: View {
                 if let nightDate = briefing.nightDate {
                     LabeledContent("Planned", value: plannedDateTime(nightDate))
                 } else {
-                    LabeledContent("Planned", value: "Date not set")
+                    LabeledContent("Planned", value: String(localized: "Date not set"))
                 }
                 LabeledContent("Readiness", value: readinessLabel(briefing.readiness))
                 LabeledContent("Saved", value: briefing.savedAt.formatted(.dateTime.month(.abbreviated).day().year().hour().minute()))
@@ -127,6 +127,7 @@ private struct BriefingMobileDetailView: View {
                                 }
                                 .buttonStyle(.plain)
                                 .accessibilityValue(String(localized: completed ? "Completed" : "Not completed"))
+                                .accessibilityHint(String(localized: completed ? "Double-tap to mark this checklist item not completed" : "Double-tap to mark this checklist item completed"))
                                 .accessibilityIdentifier("mobile-briefing-checklist-\(item.id)")
                             }
                         }

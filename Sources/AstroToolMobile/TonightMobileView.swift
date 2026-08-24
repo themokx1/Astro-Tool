@@ -70,14 +70,19 @@ struct TonightMobileView: View {
                 Text(freshness == .stale ? "Needs a newer plan" : "Ready for tonight")
             }
             .font(.footnote.monospacedDigit())
-            .foregroundStyle(freshness == .stale ? Color(uiColor: .systemOrange) : .secondary)
+            .foregroundStyle(freshness == .stale ? Color(red: 1, green: 0.77, blue: 0.25) : .white)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(freshness == .stale ? Color(uiColor: .systemOrange).opacity(0.16) : Color(red: 0.043, green: 0.063, blue: 0.125).opacity(0.96), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .foregroundStyle(freshness == .stale ? .primary : Color(uiColor: .label))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(freshness == .stale ? "Plan from Mac, needs a newer plan" : "Plan from Mac, ready for tonight")
+        .background(Color(red: 0.043, green: 0.063, blue: 0.125), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(freshness == .stale ? Color(red: 1, green: 0.77, blue: 0.25) : .clear, lineWidth: 2)
+        }
+        .foregroundStyle(.white)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "Plan from Mac"))
+        .accessibilityValue(horizonAccessibilityValue)
         .accessibilityIdentifier(freshness == .stale ? "v5.mobile.stale" : "v5.mobile.fresh")
     }
 
@@ -198,7 +203,7 @@ struct TonightMobileView: View {
                         Text("A blank note is kept as a blank revision.")
                             .font(.footnote).foregroundStyle(.secondary)
                     } else if noteText.isEmpty {
-                        Text("No note yet").foregroundStyle(.secondary)
+                        Text(String(localized: "No note yet")).foregroundStyle(.secondary)
                     } else {
                         Text(noteText).frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -264,6 +269,13 @@ struct TonightMobileView: View {
 
     private func warningLabel(_ value: String) -> String {
         value == "Planned time only" ? String(localized: "Planned time only") : value
+    }
+
+    private var horizonAccessibilityValue: String {
+        let absolute = snapshot.createdAt.formatted(.dateTime.year().month(.abbreviated).day().hour().minute())
+        let relative = snapshot.createdAt.formatted(.relative(presentation: .named))
+        let status = freshness == .stale ? String(localized: "Needs a newer plan") : String(localized: "Ready for tonight")
+        return String.localizedStringWithFormat(NSLocalizedString("Updated %@ (%@). %@", comment: "Plan freshness accessibility"), absolute, relative, status)
     }
 
     private func sectionTitle(_ value: String) -> String {

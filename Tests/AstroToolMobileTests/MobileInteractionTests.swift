@@ -75,3 +75,29 @@ func briefingTimezoneUsesMatchingNight() {
     let unrelated = MobileNight(id: UUID(), localDate: "2026-08-23", timeZoneID: "America/Los_Angeles")
     #expect(MobileBriefingSelection.timeZone(for: date, nights: [unrelated, matching])?.identifier == "Europe/Budapest")
 }
+
+@Test("mobile editing surfaces contain only the two safe store mutation routes")
+func mobileMutationSurfaceContract() throws {
+    let repository = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let surfaceFiles = [
+        "Sources/AstroToolMobile/TonightMobileView.swift",
+        "Sources/AstroToolMobile/ProjectsMobileView.swift",
+        "Sources/AstroToolMobile/BriefingsMobileView.swift",
+        "Sources/AstroToolMobile/SyncMobileView.swift"
+    ]
+    let source = try surfaceFiles
+        .map { try String(contentsOf: repository.appendingPathComponent($0), encoding: .utf8) }
+        .joined(separator: "\n")
+        .lowercased()
+
+    for forbidden in ["finder", "file path", "crud", "delete", "move", "rename"] {
+        #expect(!source.contains(forbidden), "The mobile surface must not expose \(forbidden).")
+    }
+    #expect(source.components(separatedBy: "try await store.togglechecklistitem").count - 1 == 2)
+    #expect(source.components(separatedBy: "try await store.editnote").count - 1 == 2)
+    #expect(!source.contains("store.remove"))
+    #expect(!source.contains("store.copy"))
+}

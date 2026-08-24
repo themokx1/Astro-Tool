@@ -80,7 +80,7 @@ private enum MobileLaunchFixture {
         } catch {
             fatalError("Could not create the imported mobile UI fixture: \(error)")
         }
-        let projectID = UUID(), nightID = UUID(), briefingID = UUID()
+        let projectID = UUID(), nightID = UUID(), briefingID = UUID(), undatedBriefingID = UUID()
         let noteID = "fixture-note"
         let captureID = UUID()
         let checklistItem = MobileChecklistItem(id: "focus", title: "Check focus", explanation: "Confirm the first test exposure before the planned sequence.", isCompleted: false, baseRevision: 1)
@@ -91,9 +91,16 @@ private enum MobileLaunchFixture {
             createdAt: Date(timeIntervalSince1970: 1_700_000_000),
             projects: [MobileProject(id: projectID, displayName: "M31", catalogID: "M31", phase: "collecting", integrationSeconds: 1_800, goalHours: 1)],
             nights: [MobileNight(id: nightID, localDate: "2023-11-14", timeZoneID: "Europe/Budapest")],
-            captures: [MobileCapture(id: captureID, projectID: projectID, nightID: nightID, displayName: "M31 luminance", filterName: "L", exposureSeconds: 180, integrationSeconds: 1_800)],
-            briefings: [MobileBriefing(id: briefingID, revision: 1, savedAt: Date(timeIntervalSince1970: 1_700_000_001), nightDate: Date(timeIntervalSince1970: 1_700_000_000), readiness: "ready", targets: [target], checklist: [MobileChecklistSection(id: "setup", title: "Before capture", items: [checklistItem])], noteID: noteID)],
-            notes: [MobileNote(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "Bring the dew heater.", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_700_000_002), isEditableOnPhone: true)]
+            captures: [MobileCapture(id: captureID, projectID: projectID, nightID: nightID, displayName: "M31 luminance", filterName: nil, exposureSeconds: 180, integrationSeconds: 1_800)],
+            briefings: [
+                MobileBriefing(id: briefingID, revision: 1, savedAt: Date(timeIntervalSince1970: 1_700_000_001), nightDate: Date(timeIntervalSince1970: 1_700_000_000), readiness: "ready", targets: [target], checklist: [MobileChecklistSection(id: "setup", title: "Before capture", items: [checklistItem])], noteID: noteID),
+                MobileBriefing(id: undatedBriefingID, revision: 1, savedAt: Date(timeIntervalSince1970: 1_699_999_000), nightDate: nil, readiness: "incomplete", targets: [], checklist: [], noteID: "fixture-undated-note")
+            ],
+            notes: [
+                MobileNote(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "Bring the dew heater.", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_700_000_002), isEditableOnPhone: true),
+                MobileNote(id: "fixture-undated-note", scope: .briefing, ownerID: undatedBriefingID.uuidString, text: "", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_699_999_000), isEditableOnPhone: false),
+                MobileNote(id: "fixture-project-note", scope: .project, ownerID: projectID.uuidString, text: "", baseRevision: 0, updatedAt: Date(timeIntervalSince1970: 1_699_999_000), isEditableOnPhone: true)
+            ]
         )
         do {
             try MobileJSON.encoder.encode(snapshot).write(to: active.appendingPathComponent("snapshot.json"), options: .atomic)

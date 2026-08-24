@@ -168,7 +168,7 @@ private struct ProjectMobileDetailView: View {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(capture.displayName).font(.body.weight(.medium))
                             HStack {
-                                Text(capture.filterName ?? "Unfiltered")
+                                Text(capture.filterName ?? String(localized: "Unfiltered"))
                                 Spacer()
                                 Text(captureSummary(capture))
                             }
@@ -189,7 +189,7 @@ private struct ProjectMobileDetailView: View {
                         Text("A blank note is kept as a blank revision.").font(.footnote).foregroundStyle(.secondary)
                     } else {
                         HStack {
-                            Text(noteText.isEmpty ? "No note yet" : noteText).foregroundStyle(noteText.isEmpty ? .secondary : .primary)
+                            Text(noteText.isEmpty ? String(localized: "No note yet") : noteText).foregroundStyle(noteText.isEmpty ? .secondary : .primary)
                             Spacer()
                             Button("Edit") { noteDraft = noteText; editingNote = true }.accessibilityIdentifier("mobile-project-note-edit")
                         }

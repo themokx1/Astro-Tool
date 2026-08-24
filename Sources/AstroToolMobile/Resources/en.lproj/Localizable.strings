@@ -130,6 +130,7 @@
 "%d min collected" = "%d min collected";
 "Integration unavailable" = "Integration unavailable";
 "Mac plan saved on this iPhone" = "Mac plan saved on this iPhone";
+"Updated %@ (%@). %@" = "Updated %@ (%@). %@";
 "Revision %@" = "Revision %@";
 "%d percent" = "%d percent";
 "Planned time only" = "Planned time only";

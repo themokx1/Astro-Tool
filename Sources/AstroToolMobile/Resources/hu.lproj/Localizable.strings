@@ -125,6 +125,7 @@
 "%d min collected" = "Gyűjtve: %d p";
 "Integration unavailable" = "Az integráció nem érhető el";
 "Mac plan saved on this iPhone" = "A Mac-terv mentve ezen az iPhone-on";
+"Updated %@ (%@). %@" = "Frissítve: %@ (%@). %@";
 "Revision %@" = "Változat %@";
 "%d percent" = "%d%%";
 "Planned time only" = "Csak tervezett időpont";

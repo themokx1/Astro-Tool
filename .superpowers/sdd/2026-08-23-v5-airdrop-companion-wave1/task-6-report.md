@@ -39,6 +39,28 @@ swift test --disable-sandbox --filter MobilePackageServiceTests --no-parallel
 git diff --check                                       # passed
 ```
 
+## Fix round 2 — residual accessibility and surface closure
+
+- The Tonight horizon now stays on the fixed `#0B1020` surface in both appearances, uses a high-contrast white foreground plus an amber stale border/status, and exposes absolute and relative timestamps through a localized VoiceOver label/value instead of replacing the child accessibility tree with a timestamp-free label.
+- Projects’ `Unfiltered`, Projects’ `No note yet`, and Briefings’ `Date not set` fallbacks are now localized at their construction sites. The Briefings detail checklist receives the same localized completed/not-completed action hint as Tonight.
+- Added a source-backed mutation surface test that inspects the four mobile surface files for forbidden file-management/developer terms and verifies the only direct mutation call sites are the two checklist and two note store routes. This is intentionally based on production source, not a tautological allowlist constant.
+- The imported fixture now includes a nil filter, an editable blank project note, and an undated incomplete briefing so the Hungarian UI journey enters detail/fallback paths. The UI test verifies completed checklist accessibility state after tapping, exact queue count, effective note text, and those Hungarian fallback surfaces.
+
+Fix-round 2 safe verification:
+
+```text
+xcodegen generate                                      # passed
+swiftc -typecheck <all iOS mobile sources>             # passed against iOS 26 SDK
+swiftc -frontend -parse <mobile sources/tests/UI tests> # passed
+surface contract shell check (toggle=2, note=2)        # passed
+localization key parity (EN/HU)                        # passed
+swift test --disable-sandbox --filter MobilePackageServiceTests --no-parallel
+                                                       # 39 tests passed
+git diff --check                                       # passed
+```
+
+The Xcode account/CoreSimulator runtime gate remains separate and unclaimed.
+
 The generated Xcode graph includes the four new app surfaces, `MobileInteractionTests.swift`, and the existing mobile UI-test target.
 
 ## State overlay and safety semantics
