@@ -57,7 +57,7 @@ public struct ProjectAnnotationRecord: Codable, Equatable, Hashable, Sendable {
         self.notes = notes
         self.updatedAt = updatedAt
         self.revision = revision
-        self.mobileChangeMarkers = Array(Set(mobileChangeMarkers)).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
+        self.mobileChangeMarkers = mobileChangeMarkers.sorted { $0.changeID.uuidString < $1.changeID.uuidString }
         self.mobileChangeIDs = Array(Set(mobileChangeIDs).union(mobileChangeMarkers.map(\.changeID))).sorted { $0.uuidString < $1.uuidString }
     }
 
@@ -70,7 +70,7 @@ public struct ProjectAnnotationRecord: Codable, Equatable, Hashable, Sendable {
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         revision = try c.decodeIfPresent(Int.self, forKey: .revision) ?? 0
         mobileChangeIDs = Array(Set(try c.decodeIfPresent([UUID].self, forKey: .mobileChangeIDs) ?? [])).sorted { $0.uuidString < $1.uuidString }
-        mobileChangeMarkers = Array(Set(try c.decodeIfPresent([MobileChangeMarker].self, forKey: .mobileChangeMarkers) ?? [])).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
+        mobileChangeMarkers = (try c.decodeIfPresent([MobileChangeMarker].self, forKey: .mobileChangeMarkers) ?? []).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
     }
 }
 

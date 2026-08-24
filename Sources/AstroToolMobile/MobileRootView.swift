@@ -425,7 +425,7 @@ struct MobileRootView: View {
                 .tabItem { Label("Briefings", systemImage: "doc.text.fill") }
                 .tag(MobileTab.briefings)
                 .accessibilityIdentifier("v5.mobile.tab.briefings")
-            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, onCancelExport: cancelReturnExport, isExporting: returnExportTask != nil, returnQRPayload: returnQRPayload)
+            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, onCancelExport: cancelReturnExport, onDiscardReturnExport: discardReturnExport, isExporting: returnExportTask != nil, returnQRPayload: returnQRPayload)
                 .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                 .tag(MobileTab.sync)
                 .accessibilityIdentifier("v5.mobile.tab.sync")
@@ -442,13 +442,25 @@ struct MobileRootView: View {
         durabilityAttemptWarning = await store.durabilityAttemptWarning
         durabilityAmbiguousWarning = await store.durabilityAmbiguousWarning
         stagedPackageURL = await store.stagedPackageURL
+        returnQRPayload = await store.recoverableReturnExport?.oneTimeQRPayload
     }
 
     private func cancelReturnExport() {
         returnExportGeneration &+= 1
         returnExportTask?.cancel()
         returnExportTask = nil
-        returnQRPayload = nil
+    }
+
+    private func discardReturnExport() {
+        Task { @MainActor in
+            do {
+                try await store.discardRecoverableReturnExport()
+                returnQRPayload = nil
+            } catch {
+                message = "The saved return code could not be discarded. It remains available for recovery."
+                await refresh()
+            }
+        }
     }
 
     private func primaryImportAction() {

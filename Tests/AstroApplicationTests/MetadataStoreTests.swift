@@ -19,7 +19,7 @@ struct MetadataStoreTests {
             updatedAt: Date(timeIntervalSince1970: 1_786_404_000)
         )
 
-        try await store.save(annotation)
+        try await store.createProjectAnnotation(annotation)
 
         #expect(try await store.projectAnnotation(projectID: project.id) == annotation)
     }

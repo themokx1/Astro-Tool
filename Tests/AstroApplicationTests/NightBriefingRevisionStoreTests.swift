@@ -11,12 +11,12 @@ struct NightBriefingRevisionStoreTests {
         let store = NightBriefingRevisionStore(directory: fixture.directory)
         let original = fixture.draft(notes: "Első terv")
 
-        let first = try await store.save(original)
+        let first = try await store.create(original)
         let firstURL = fixture.directory.appendingPathComponent("\(original.id.uuidString.lowercased())-r000001.json")
         let firstBytes = try Data(contentsOf: firstURL)
         var changed = original
         changed.notes = "Pontosított terv"
-        let second = try await store.save(changed)
+        let second = try await store.saveIfLatest(changed, expectedRevision: first.revision)
 
         #expect(first.revision == 1)
         #expect(second.revision == 2)
@@ -24,18 +24,18 @@ struct NightBriefingRevisionStoreTests {
         #expect(try await store.latest(id: original.id)?.notes == "Pontosított terv")
     }
 
-    @Test("Corrupt revisions do not hide healthy briefings")
-    func skipsCorruptRevision() async throws {
+    @Test("Corrupt revisions fail closed instead of hiding authority")
+    func corruptRevisionFailsClosed() async throws {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let store = NightBriefingRevisionStore(directory: fixture.directory)
-        let saved = try await store.save(fixture.draft(notes: "Ép"))
+        _ = try await store.create(fixture.draft(notes: "Ép"))
         let corrupt = fixture.directory.appendingPathComponent("22222222-2222-2222-2222-222222222222-r000001.json")
         try Data("not json".utf8).write(to: corrupt, options: .withoutOverwriting)
 
-        let latest = try await store.latestRevisions()
-
-        #expect(latest == [saved])
+        await #expect(throws: NightBriefingRevisionStoreError.corruptRevision(corrupt.resolvingSymlinksInPath())) {
+            _ = try await store.latestRevisions()
+        }
     }
 
     @Test("A corrupt occupied filename is preserved and the next revision is used")
@@ -49,8 +49,9 @@ struct NightBriefingRevisionStoreTests {
         try sentinel.write(to: occupied, options: .withoutOverwriting)
         let store = NightBriefingRevisionStore(directory: fixture.directory)
 
-        let saved = try await store.save(draft)
-        #expect(saved.revision == 2)
+        await #expect(throws: NightBriefingRevisionStoreError.corruptRevision(occupied.resolvingSymlinksInPath())) {
+            _ = try await store.create(draft)
+        }
         #expect(try Data(contentsOf: occupied) == sentinel)
     }
 
@@ -60,7 +61,7 @@ struct NightBriefingRevisionStoreTests {
         defer { fixture.remove() }
         let store = NightBriefingRevisionStore(directory: fixture.directory)
         let draft = fixture.draft(notes: "Első")
-        let first = try await store.save(draft)
+        let first = try await store.create(draft)
         let corrupt = fixture.directory.appendingPathComponent(
             "\(draft.id.uuidString.lowercased())-r000002.json"
         )
@@ -69,11 +70,10 @@ struct NightBriefingRevisionStoreTests {
 
         var changed = first
         changed.notes = "Harmadik"
-        let third = try await store.save(changed)
-
-        #expect(third.revision == 3)
+        await #expect(throws: NightBriefingRevisionStoreError.corruptRevision(corrupt.resolvingSymlinksInPath())) {
+            _ = try await store.saveIfLatest(changed, expectedRevision: first.revision)
+        }
         #expect(try Data(contentsOf: corrupt) == corruptBytes)
-        #expect(try await store.latest(id: draft.id)?.notes == "Harmadik")
     }
 
     @Test("compare-and-set rejects a stale mobile revision instead of writing over a Mac edit")
@@ -81,10 +81,10 @@ struct NightBriefingRevisionStoreTests {
         let fixture = try Fixture()
         defer { fixture.remove() }
         let store = NightBriefingRevisionStore(directory: fixture.directory)
-        let original = try await store.save(fixture.draft(notes: "Phone base"))
+        let original = try await store.create(fixture.draft(notes: "Phone base"))
         var macEdit = original
         macEdit.notes = "Mac edit"
-        _ = try await store.save(macEdit)
+        _ = try await store.saveIfLatest(macEdit, expectedRevision: original.revision)
 
         var stalePhoneEdit = original
         stalePhoneEdit.notes = "Phone edit"

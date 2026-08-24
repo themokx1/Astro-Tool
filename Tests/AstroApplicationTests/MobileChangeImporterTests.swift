@@ -104,7 +104,7 @@ struct MobileChangeImporterTests {
         #expect(preview.applicable.isEmpty)
         #expect(preview.conflicts.isEmpty)
         #expect(preview.duplicates == [first.changeID])
-        #expect(preview.rejected.allSatisfy { $0.reason == .duplicateChangeID })
+        #expect(preview.rejected.isEmpty)
     }
 
     @Test("a colliding ID is rejected even when a newer edit supersedes its target")
@@ -122,7 +122,7 @@ struct MobileChangeImporterTests {
         )
 
         #expect(preview.duplicates == [collidingID])
-        #expect(preview.rejected.contains { $0.changeID == collidingID && $0.reason == .duplicateChangeID })
+        #expect(!preview.rejected.contains { $0.changeID == collidingID })
         #expect(!preview.alreadyApplied.contains(collidingID))
     }
 
@@ -248,6 +248,64 @@ struct MobileChangeImporterTests {
         #expect(calls.batches.first?.isProjectAnnotationBatch == true)
     }
 
+    @Test("partial receipts contain only domain mutations proven durable")
+    func partialReceiptExcludesSpeculativeResolutions() async throws {
+        let fixture = Fixture()
+        let projectID = UUID()
+        let projectNote = MobileNote(
+            id: "project-\(projectID.uuidString.lowercased())",
+            scope: .project,
+            ownerID: projectID.uuidString,
+            text: "Mac project note",
+            baseRevision: 2,
+            updatedAt: fixture.date,
+            isEditableOnPhone: true
+        )
+        let snapshot = MobileLibrarySnapshot(
+            schemaVersion: fixture.snapshot.schemaVersion,
+            libraryID: fixture.libraryID,
+            snapshotID: fixture.snapshot.snapshotID,
+            revision: fixture.snapshot.revision,
+            createdAt: fixture.snapshot.createdAt,
+            projects: [], nights: [], captures: [],
+            briefings: fixture.snapshot.briefings,
+            notes: fixture.snapshot.notes + [projectNote]
+        )
+        let durableID = UUID()
+        let supersededID = UUID()
+        let failingID = UUID()
+        let changes: [MobileChange] = [
+            .noteRevision(.init(changeID: durableID, deviceID: fixture.deviceID, noteID: projectNote.id, ownerID: projectID.uuidString, baseRevision: 2, text: "Project phone", createdAt: fixture.date.addingTimeInterval(1))),
+            .noteRevision(.init(changeID: supersededID, deviceID: fixture.deviceID, noteID: fixture.noteID, ownerID: fixture.ownerID, baseRevision: 2, text: "Old phone", createdAt: fixture.date.addingTimeInterval(2))),
+            .noteRevision(.init(changeID: failingID, deviceID: fixture.deviceID, noteID: fixture.noteID, ownerID: fixture.ownerID, baseRevision: 2, text: "New phone", createdAt: fixture.date.addingTimeInterval(3))),
+        ]
+        let envelope = MobilePackageEnvelope(purpose: .returnChanges, snapshot: snapshot, baseSnapshotID: snapshot.snapshotID, changes: changes, acknowledgedChangeIDs: [])
+        let calls = CommandCounter()
+        let importer = MobileChangeImporter(commands: .init(applyBatch: { batch in
+            calls.value += 1
+            let ids: [UUID]
+            switch batch {
+            case .briefing(let value):
+                ids = value.mutations.map {
+                    switch $0 { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
+                }
+            case .projectAnnotation(let value): ids = value.mutations.map { $0.0.changeID }
+            }
+            if calls.value == 2 { throw MobileChangeImportError.commandFailed(ids[0]) }
+            return .init(appliedChangeIDs: ids, resultingRevisions: Dictionary(uniqueKeysWithValues: ids.map { ($0.uuidString, 3) }))
+        }))
+        let preview = try importer.preview(envelope: envelope, expectedLibraryID: fixture.libraryID, currentSnapshot: snapshot, sourcePackageID: fixture.packageID)
+
+        do {
+            _ = try await importer.apply(preview: preview, envelope: envelope, currentSnapshot: snapshot, resolutions: [:], confirmed: true)
+            Issue.record("The second domain batch unexpectedly succeeded")
+        } catch MobileChangeImportError.partialReceipt(let partial) {
+            #expect(partial.appliedChangeIDs == [durableID])
+            #expect(partial.resolvedChangeIDs.isEmpty)
+            #expect(!partial.resolvedChangeIDs.contains(supersededID))
+        }
+    }
+
     @Test("production defaults fail closed when persistence commands are not configured")
     func missingCommandsNeverClaimSuccess() async throws {
         let fixture = Fixture()
@@ -309,6 +367,51 @@ struct MobileChangeImporterTests {
         #expect(try firstStore.load()?.appliedChangeIDs.isEmpty == true)
     }
 
+    @Test("receipt persistence accepts the exact 1 MiB edge and rejects one byte beyond it")
+    func receiptLedgerUsesExactEncodedByteBoundary() throws {
+        let fixture = Fixture()
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mobile-ledger-boundary-\(UUID().uuidString).json")
+        defer {
+            try? FileManager.default.removeItem(at: fileURL)
+            try? FileManager.default.removeItem(at: fileURL.appendingPathExtension("lock"))
+        }
+        let store = MobileChangeReceiptStore(fileURL: fileURL)
+        let makeLedger: (String) -> MobileChangeApplicationLedger = { fingerprint in
+            MobileChangeApplicationLedger(
+                libraryID: fixture.libraryID,
+                records: [MobileChangeApplicationRecord(
+                    libraryID: fixture.libraryID,
+                    sourcePackageID: fixture.packageID,
+                    sourceFingerprint: fingerprint,
+                    appliedChangeIDs: [],
+                    resultingRevisions: [:],
+                    recordedAt: Date(timeIntervalSince1970: 1_700_000_000)
+                )]
+            )
+        }
+        let maximumBytes = 1_048_576
+        let emptyBytes = try MobileJSON.encoder.encode(makeLedger("")).count
+        let exact = makeLedger(String(repeating: "f", count: maximumBytes - emptyBytes))
+        let exactData = try MobileJSON.encoder.encode(exact)
+        #expect(exactData.count == maximumBytes)
+
+        try store.save(exact)
+        #expect(try Data(contentsOf: fileURL).count == maximumBytes)
+        #expect(try store.load() == exact)
+
+        let oversized = makeLedger(String(repeating: "f", count: maximumBytes - emptyBytes + 1))
+        #expect(throws: MobileChangeImportError.limitsExceeded) {
+            try store.save(oversized)
+        }
+        #expect(try Data(contentsOf: fileURL) == exactData)
+
+        try (exactData + Data("x".utf8)).write(to: fileURL, options: .atomic)
+        #expect(throws: MobileChangeImportError.receiptFailed) {
+            _ = try store.load()
+        }
+    }
+
     @Test("a receipt ledger from another library fails closed before preview")
     func foreignReceiptLedgerFailsClosed() throws {
         let fixture = Fixture()
@@ -328,6 +431,33 @@ struct MobileChangeImporterTests {
         }
     }
 
+    @Test("malformed revision keys in the acknowledgement ledger fail closed")
+    func malformedLedgerRevisionKeyFailsClosed() throws {
+        let fixture = Fixture()
+        let fileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mobile-ledger-malformed-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let valid = MobileChangeApplicationLedger(
+            libraryID: fixture.libraryID,
+            appliedChangeIDs: [UUID()],
+            resultingRevisions: [:]
+        )
+        let encoded = try MobileJSON.encoder.encode(valid)
+        var object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object["resultingRevisions"] = ["not-a-uuid": 1]
+        try JSONSerialization.data(withJSONObject: object).write(to: fileURL)
+        let importer = MobileChangeImporter(recordStore: MobileChangeReceiptStore(fileURL: fileURL))
+
+        #expect(throws: MobileChangeImportError.receiptFailed) {
+            try importer.preview(
+                envelope: fixture.envelope(changes: [fixture.checklistChange()]),
+                expectedLibraryID: fixture.libraryID,
+                currentSnapshot: fixture.snapshot,
+                sourcePackageID: fixture.packageID
+            )
+        }
+    }
+
     @Test("production briefing batch saves edits and mobile IDs in one revision")
     func productionBriefingBatchIsAtomic() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -336,7 +466,7 @@ struct MobileChangeImporterTests {
         let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
         let revisions = NightBriefingRevisionStore(directory: paths.briefings)
         let savedAt = Date(timeIntervalSince1970: 1_700_000_100)
-        let original = try await revisions.save(NightBriefingDraft(
+        let original = try await revisions.create(NightBriefingDraft(
             id: briefingID,
             savedAt: savedAt,
             checklist: [.init(id: "setup", title: "Setup", items: [.init(id: "focus", title: "Focus", isVisible: true, isBuiltIn: false)])],
@@ -370,7 +500,7 @@ struct MobileChangeImporterTests {
         let briefingID = UUID()
         let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
         let revisions = NightBriefingRevisionStore(directory: paths.briefings)
-        let original = try await revisions.save(NightBriefingDraft(
+        let original = try await revisions.create(NightBriefingDraft(
             id: briefingID,
             savedAt: Date(timeIntervalSince1970: 1_700_000_000),
             checklist: [.init(id: "setup", title: "Setup", items: [.init(id: "focus", title: "Focus", isVisible: true, isBuiltIn: false)])],
@@ -405,13 +535,218 @@ struct MobileChangeImporterTests {
         #expect(Set(results.compactMap { $0.resultingRevisions[changeID.uuidString] }) == Set([latest.revision]))
     }
 
+    @Test("one root-wide change ID cannot be claimed concurrently by different owners")
+    func concurrentCrossOwnerCollisionHasOneWinner() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let briefings = NightBriefingRevisionStore(directory: paths.briefings)
+        let metadata = try MetadataStore(storagePaths: paths)
+        let briefingID = UUID()
+        let projectID = UUID()
+        let baseline = Date(timeIntervalSince1970: 1_700_000_000)
+        let briefing = try await briefings.create(NightBriefingDraft(id: briefingID, savedAt: baseline, notes: "Mac brief"))
+        try await metadata.save(ProjectRecord(id: projectID, catalogID: "m31", displayName: "M31", phase: .planned))
+        try await metadata.createProjectAnnotation(ProjectAnnotationRecord(projectID: projectID, integrationGoalHours: nil, notes: "Mac project", updatedAt: baseline))
+        let changeID = UUID()
+        let briefingBatch = MobileChangeDomainBatch.briefing(.init(
+            briefingID: briefingID,
+            expectedRevision: briefing.revision,
+            mutations: [.note(.init(
+                changeID: changeID,
+                deviceID: UUID(),
+                noteID: "briefing-\(briefingID.uuidString.lowercased())",
+                ownerID: briefingID.uuidString,
+                phoneBaseRevision: 1,
+                text: "Phone brief",
+                expectedRevision: 1,
+                resultingRevision: 2,
+                createdAt: baseline.addingTimeInterval(1)
+            ), .replace)]
+        ))
+        let projectBatch = MobileChangeDomainBatch.projectAnnotation(.init(
+            projectID: projectID,
+            expectedRevision: 0,
+            mutations: [(.init(
+                changeID: changeID,
+                deviceID: UUID(),
+                noteID: "project-\(projectID.uuidString.lowercased())",
+                ownerID: projectID.uuidString,
+                phoneBaseRevision: 0,
+                text: "Phone project",
+                expectedRevision: 0,
+                resultingRevision: 1,
+                createdAt: baseline.addingTimeInterval(2)
+            ), .replace)]
+        ))
+        let first = try MobileChangeCommands.production(rootURL: root)
+        let second = try MobileChangeCommands.production(rootURL: root)
+
+        let successes = await withTaskGroup(of: Bool.self, returning: Int.self) { group in
+            group.addTask { do { _ = try await first.applyBatch(briefingBatch); return true } catch { return false } }
+            group.addTask { do { _ = try await second.applyBatch(projectBatch); return true } catch { return false } }
+            var count = 0
+            for await success in group where success { count += 1 }
+            return count
+        }
+        let finalBriefing = try #require(await briefings.latest(id: briefingID))
+        let finalProject = try #require(await metadata.projectAnnotation(projectID: projectID))
+
+        #expect(successes == 1)
+        #expect((finalBriefing.notes == "Phone brief") != (finalProject.notes == "Phone project"))
+    }
+
+    @Test("a retry after later Mac revisions returns the marker's exact durable result")
+    func retryReturnsMarkerRevision() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let revisions = NightBriefingRevisionStore(directory: paths.briefings)
+        let briefingID = UUID()
+        let deviceID = UUID()
+        let changeID = UUID()
+        let baseline = Date(timeIntervalSince1970: 1_700_000_000)
+        let original = try await revisions.create(NightBriefingDraft(id: briefingID, savedAt: baseline, notes: "Mac"))
+        let commands = try MobileChangeCommands.production(rootURL: root)
+        func batch(expected: Int) -> MobileChangeDomainBatch {
+            .briefing(.init(
+                briefingID: briefingID,
+                expectedRevision: expected,
+                mutations: [.note(.init(
+                    changeID: changeID,
+                    deviceID: deviceID,
+                    noteID: "briefing-\(briefingID.uuidString.lowercased())",
+                    ownerID: briefingID.uuidString,
+                    phoneBaseRevision: original.revision,
+                    text: "Phone",
+                    expectedRevision: expected,
+                    resultingRevision: expected + 1,
+                    createdAt: baseline.addingTimeInterval(1)
+                ), .replace)]
+            ))
+        }
+
+        let first = try await commands.applyBatch(batch(expected: original.revision))
+        var later = try #require(await revisions.latest(id: briefingID))
+        later.notes = "Later Mac edit"
+        later = try await revisions.saveIfLatest(later, expectedRevision: later.revision)
+        let retried = try await commands.applyBatch(batch(expected: later.revision))
+
+        #expect(first.resultingRevisions[changeID.uuidString] == original.revision + 1)
+        #expect(retried.resultingRevisions[changeID.uuidString] == original.revision + 1)
+        #expect(try await revisions.latest(id: briefingID)?.revision == later.revision)
+    }
+
+    @Test("duplicate embedded markers fail with typed corruption")
+    func duplicateEmbeddedMarkersFailClosed() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let revisions = NightBriefingRevisionStore(directory: paths.briefings)
+        let briefingID = UUID()
+        let markerID = UUID()
+        let marker = MobileChangeMarker(
+            changeID: markerID,
+            ownerID: "briefing:\(briefingID.uuidString.lowercased())",
+            payloadFingerprint: String(repeating: "a", count: 64),
+            resultingRevision: 1
+        )
+        _ = try await revisions.create(NightBriefingDraft(
+            id: briefingID,
+            savedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            notes: "Corrupt",
+            mobileChangeIDs: [markerID],
+            mobileChangeMarkers: [marker, marker]
+        ))
+        let commands = try MobileChangeCommands.production(rootURL: root)
+        let newID = UUID()
+        let batch = MobileChangeDomainBatch.briefing(.init(
+            briefingID: briefingID,
+            expectedRevision: 1,
+            mutations: [.note(.init(
+                changeID: newID,
+                noteID: "briefing-\(briefingID.uuidString.lowercased())",
+                ownerID: briefingID.uuidString,
+                text: "New",
+                expectedRevision: 1,
+                resultingRevision: 2,
+                createdAt: Date(timeIntervalSince1970: 1_700_000_001)
+            ), .replace)]
+        ))
+
+        await #expect(throws: MobileChangeImportError.corruptDomainMarkers) {
+            _ = try await commands.applyBatch(batch)
+        }
+    }
+
+    @Test("field-note retry after receipt failure finds the immutable domain marker")
+    func fieldNoteReceiptRetryDoesNotRepeatMutation() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let paths = try AppStoragePaths.production(libraryID: LibraryIdentity(rootURL: root), libraryRoot: root)
+        let revisions = NightBriefingRevisionStore(directory: paths.briefings)
+        let libraryID = PortableLibraryID(rawValue: UUID())
+        let briefingID = UUID()
+        let noteID = "briefing-\(briefingID.uuidString.lowercased())"
+        let original = try await revisions.create(NightBriefingDraft(id: briefingID, savedAt: Date(timeIntervalSince1970: 1_700_000_000), notes: "Base"))
+        var macEdit = original
+        macEdit.notes = "Mac edit"
+        macEdit.savedAt = original.savedAt.addingTimeInterval(1)
+        let currentDraft = try await revisions.saveIfLatest(macEdit, expectedRevision: original.revision)
+        func snapshot(_ draft: NightBriefingDraft) -> MobileLibrarySnapshot {
+            .init(
+                schemaVersion: 1, libraryID: libraryID, snapshotID: UUID(), revision: draft.revision, createdAt: draft.savedAt,
+                projects: [], nights: [], captures: [],
+                briefings: [.init(id: briefingID, revision: draft.revision, savedAt: draft.savedAt, nightDate: nil, readiness: "ready", targets: [], checklist: [], noteID: noteID)],
+                notes: [.init(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: draft.notes, baseRevision: draft.revision, updatedAt: draft.savedAt, isEditableOnPhone: true)]
+            )
+        }
+        let sentBase = snapshot(original)
+        let changeID = UUID()
+        let envelope = MobilePackageEnvelope(
+            purpose: .returnChanges,
+            snapshot: sentBase,
+            baseSnapshotID: sentBase.snapshotID,
+            changes: [.noteRevision(.init(
+                changeID: changeID,
+                deviceID: UUID(),
+                noteID: noteID,
+                ownerID: briefingID.uuidString,
+                baseRevision: original.revision,
+                text: "Phone field note",
+                createdAt: currentDraft.savedAt.addingTimeInterval(1)
+            ))],
+            acknowledgedChangeIDs: []
+        )
+        let receiptStore = FailFirstSaveRecordStore()
+        let importer = try MobileChangeImporter.production(rootURL: root, recordStore: receiptStore)
+        let firstCurrent = snapshot(currentDraft)
+        let firstPreview = try importer.preview(envelope: envelope, expectedLibraryID: libraryID, expectedBaseSnapshotID: sentBase.snapshotID, currentSnapshot: firstCurrent, sourcePackageID: UUID())
+        let conflictID = try #require(firstPreview.conflicts.first?.changeID)
+
+        await #expect(throws: MobileChangeImportError.self) {
+            _ = try await importer.apply(preview: firstPreview, envelope: envelope, currentSnapshot: firstCurrent, resolutions: [conflictID: .keepBothAsFieldNote], confirmed: true)
+        }
+        let afterFailure = try #require(await revisions.latest(id: briefingID))
+        #expect(afterFailure.notes.components(separatedBy: "— Phone field note —").count == 2)
+
+        let retryCurrent = snapshot(afterFailure)
+        let retryPreview = try importer.preview(envelope: envelope, expectedLibraryID: libraryID, expectedBaseSnapshotID: sentBase.snapshotID, currentSnapshot: retryCurrent, sourcePackageID: firstPreview.sourcePackageID)
+        let receipt = try await importer.apply(preview: retryPreview, envelope: envelope, currentSnapshot: retryCurrent, resolutions: [changeID: .keepBothAsFieldNote], confirmed: true)
+        let afterRetry = try #require(await revisions.latest(id: briefingID))
+
+        #expect(receipt.appliedChangeIDs == [changeID])
+        #expect(afterRetry.revision == afterFailure.revision)
+        #expect(afterRetry.notes.components(separatedBy: "— Phone field note —").count == 2)
+    }
+
     @Test("project annotation batch uses compare-and-set and retains a monotonic revision")
     func projectAnnotationBatchUsesCAS() async throws {
         let store = try MetadataStore.temporary()
         let projectID = UUID()
         try await store.save(ProjectRecord(id: projectID, catalogID: "m31", displayName: "M31", phase: .planned))
         let baseline = Date(timeIntervalSince1970: 1_700_000_000)
-        try await store.save(ProjectAnnotationRecord(projectID: projectID, integrationGoalHours: nil, notes: "Mac", updatedAt: baseline))
+        try await store.createProjectAnnotation(ProjectAnnotationRecord(projectID: projectID, integrationGoalHours: nil, notes: "Mac", updatedAt: baseline))
         let changeID = UUID()
         let result = try await store.applyMobileProjectAnnotationBatch(.init(
             projectID: projectID,
@@ -424,7 +759,10 @@ struct MobileChangeImporterTests {
         #expect(applied.notes.contains("Phone"))
         #expect(result.resultingRevisions[changeID.uuidString] == 1)
 
-        try await store.save(ProjectAnnotationRecord(projectID: projectID, integrationGoalHours: nil, notes: "Mac edit", updatedAt: baseline, revision: 0))
+        _ = try await store.saveProjectAnnotation(
+            ProjectAnnotationRecord(projectID: projectID, integrationGoalHours: nil, notes: "Mac edit", updatedAt: baseline, revision: applied.revision),
+            expectedRevision: applied.revision
+        )
         #expect(try await store.projectAnnotation(projectID: projectID)?.revision == 2)
     }
 }
@@ -432,6 +770,26 @@ struct MobileChangeImporterTests {
 private final class CommandCounter: @unchecked Sendable {
     var value = 0
     var batches: [MobileChangeDomainBatch] = []
+}
+
+private final class FailFirstSaveRecordStore: MobileChangeApplicationRecordStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var ledger: MobileChangeApplicationLedger?
+    private var shouldFail = true
+
+    func load() throws -> MobileChangeApplicationLedger? {
+        lock.withLock { ledger }
+    }
+
+    func save(_ ledger: MobileChangeApplicationLedger) throws {
+        try lock.withLock {
+            if shouldFail {
+                shouldFail = false
+                throw MobileChangeImportError.receiptFailed
+            }
+            self.ledger = ledger
+        }
+    }
 }
 
 private func countingCommands(_ counter: CommandCounter) -> MobileChangeCommands {

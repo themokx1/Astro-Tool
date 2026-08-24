@@ -12,6 +12,7 @@ struct SyncMobileView: View {
     let onDiscard: () -> Void
     let onExport: () -> Void
     let onCancelExport: () -> Void
+    let onDiscardReturnExport: () -> Void
     let isExporting: Bool
     let returnQRPayload: String?
 
@@ -123,6 +124,9 @@ struct SyncMobileView: View {
                     Text("Your queued changes remain here until a later Mac package confirms the exact IDs.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    Button("Discard saved return code", role: .destructive) { onDiscardReturnExport() }
+                        .buttonStyle(.borderless)
+                        .accessibilityIdentifier("v5.mobile-sync.return.discard-code")
                 }
             }
             .accessibilityIdentifier("v5.mobile-sync.return")

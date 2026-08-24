@@ -44,7 +44,7 @@ public enum MobileLibraryStoreError: Error, Equatable, Sendable, CustomStringCon
     }
 }
 
-public struct MobileReturnExportResult: Equatable, Sendable {
+public struct MobileReturnExportResult: Codable, Equatable, Sendable {
     public let packageID: UUID
     public let createdAt: Date
     public let destination: URL
@@ -57,6 +57,22 @@ public struct MobileReturnExportResult: Equatable, Sendable {
         self.destination = destination
         self.oneTimeQRPayload = oneTimeQRPayload
         self.queuedChangeIDs = queuedChangeIDs.sorted { $0.uuidString < $1.uuidString }
+    }
+}
+
+public struct MobileRecoverableReturnExport: Codable, Equatable, Sendable {
+    public let destination: URL
+    public let oneTimeQRPayload: String
+    public let queuedChangeIDs: [UUID]
+    public let packageID: UUID?
+    public let createdAt: Date?
+
+    public init(destination: URL, oneTimeQRPayload: String, queuedChangeIDs: [UUID], packageID: UUID? = nil, createdAt: Date? = nil) {
+        self.destination = destination
+        self.oneTimeQRPayload = oneTimeQRPayload
+        self.queuedChangeIDs = queuedChangeIDs.sorted { $0.uuidString < $1.uuidString }
+        self.packageID = packageID
+        self.createdAt = createdAt
     }
 }
 
@@ -121,6 +137,7 @@ public actor MobileLibraryStore {
     /// The journal and authoritative bytes do not identify whether the last
     /// replacement committed. The UI must not suggest retrying automatically.
     public private(set) var durabilityAmbiguousWarning = false
+    public private(set) var recoverableReturnExport: MobileRecoverableReturnExport?
 
     private let packageService: MobilePackageService
     private let testingBeforeStateCommit: @Sendable () throws -> Void
@@ -158,6 +175,7 @@ public actor MobileLibraryStore {
         self.keyFingerprints = [:]
         self.currentStagedPackage = nil
         self.pendingImport = nil
+        self.recoverableReturnExport = nil
         let initial = Self.bootstrap(applicationSupportURL: self.applicationSupportURL, fallbackDeviceID: self.deviceID, testingDurability: self.testingDurability)
         self.activeSnapshot = initial.snapshot
         self.queuedChanges = initial.queue
@@ -165,6 +183,7 @@ public actor MobileLibraryStore {
         self.recoveryState = initial.recoveryState
         self.consumedPackageIDs = initial.consumedPackageIDs
         self.keyFingerprints = initial.keyFingerprints
+        self.recoverableReturnExport = initial.recoverableReturnExport
         self.durabilityWarning = initial.durabilityWarning
         self.durabilityAttemptWarning = initial.durabilityAttemptWarning
         self.durabilityAmbiguousWarning = initial.durabilityAmbiguousWarning
@@ -190,6 +209,7 @@ public actor MobileLibraryStore {
         self.keyFingerprints = [:]
         self.currentStagedPackage = nil
         self.pendingImport = nil
+        self.recoverableReturnExport = nil
         let initial = Self.bootstrap(applicationSupportURL: applicationSupportURL, fallbackDeviceID: self.deviceID, testingDurability: self.testingDurability)
         self.activeSnapshot = initial.snapshot
         self.queuedChanges = initial.queue
@@ -197,6 +217,7 @@ public actor MobileLibraryStore {
         self.recoveryState = initial.recoveryState
         self.consumedPackageIDs = initial.consumedPackageIDs
         self.keyFingerprints = initial.keyFingerprints
+        self.recoverableReturnExport = initial.recoverableReturnExport
         self.durabilityWarning = initial.durabilityWarning
         self.durabilityAttemptWarning = initial.durabilityAttemptWarning
         self.durabilityAmbiguousWarning = initial.durabilityAmbiguousWarning
@@ -235,26 +256,75 @@ public actor MobileLibraryStore {
         guard let snapshot = activeSnapshot else { throw MobileLibraryStoreError.noLibrary }
         let key = OneTimePackageKey()
         let changes = queuedChanges
+        let queuedChangeIDs = changes.map(Self.changeID)
+        let prepared = MobileRecoverableReturnExport(
+            destination: destination,
+            oneTimeQRPayload: key.qrPayload,
+            queuedChangeIDs: queuedChangeIDs
+        )
+        try commitState(
+            snapshot: activeSnapshot,
+            queue: queuedChanges,
+            receipts: consumedPackageIDs,
+            keyFingerprints: keyFingerprints,
+            recoverableReturnExport: prepared
+        )
+        recoverableReturnExport = prepared
         let envelope = MobilePackageEnvelope(purpose: .returnChanges, snapshot: snapshot, baseSnapshotID: snapshot.snapshotID, changes: changes, acknowledgedChangeIDs: [])
         let manifest: MobilePackageManifest
         do {
             manifest = try await packageService.export(envelope, to: destination, wrapping: key)
         } catch let error as MobilePackageError {
+            try? clearRecoverableReturnExport()
             throw error
         } catch {
+            try? clearRecoverableReturnExport()
             throw MobileLibraryStoreError.persistenceFailed
+        }
+        let completed = MobileRecoverableReturnExport(
+            destination: destination,
+            oneTimeQRPayload: key.qrPayload,
+            queuedChangeIDs: queuedChangeIDs,
+            packageID: manifest.packageID,
+            createdAt: manifest.createdAt
+        )
+        // The prepared record already guarantees key recovery if this
+        // refinement cannot be persisted after physical publication.
+        if (try? commitState(
+            snapshot: activeSnapshot,
+            queue: queuedChanges,
+            receipts: consumedPackageIDs,
+            keyFingerprints: keyFingerprints,
+            recoverableReturnExport: completed
+        )) != nil {
+            recoverableReturnExport = completed
         }
         return MobileReturnExportResult(
             packageID: manifest.packageID,
             createdAt: manifest.createdAt,
             destination: destination,
             oneTimeQRPayload: key.qrPayload,
-            queuedChangeIDs: changes.map(Self.changeID)
+            queuedChangeIDs: queuedChangeIDs
         )
     }
 
     public func exportQueuedChanges(to destination: URL) async throws -> MobileReturnExportResult {
         try await exportReturnPackage(to: destination)
+    }
+
+    public func discardRecoverableReturnExport() throws {
+        try clearRecoverableReturnExport()
+    }
+
+    private func clearRecoverableReturnExport() throws {
+        try commitState(
+            snapshot: activeSnapshot,
+            queue: queuedChanges,
+            receipts: consumedPackageIDs,
+            keyFingerprints: keyFingerprints,
+            recoverableReturnExport: nil
+        )
+        recoverableReturnExport = nil
     }
 
     private func stagePackageSync(from source: URL) throws -> URL {
@@ -509,7 +579,7 @@ public actor MobileLibraryStore {
             let nextQueue = queuedChanges.filter { !acknowledged.contains(Self.changeID($0)) }
             try Task.checkCancellation()
             stateCommitAttempted = true
-            try commitState(snapshot: snapshot, queue: nextQueue, receipts: nextReceipts, keyFingerprints: nextKeys)
+            try commitState(snapshot: snapshot, queue: nextQueue, receipts: nextReceipts, keyFingerprints: nextKeys, recoverableReturnExport: recoverableReturnExport)
             stateCommitSucceeded = true
             consumedPackageIDs = nextReceipts
             keyFingerprints = nextKeys
@@ -593,7 +663,7 @@ public actor MobileLibraryStore {
         var updated = queuedChanges
         updated.append(change)
         do {
-            try commitState(snapshot: activeSnapshot, queue: updated, receipts: consumedPackageIDs, keyFingerprints: keyFingerprints)
+            try commitState(snapshot: activeSnapshot, queue: updated, receipts: consumedPackageIDs, keyFingerprints: keyFingerprints, recoverableReturnExport: recoverableReturnExport)
         } catch let error as MobileLibraryStoreError { throw error } catch { throw MobileLibraryStoreError.persistenceFailed }
         queuedChanges = updated
     }
@@ -609,6 +679,7 @@ public actor MobileLibraryStore {
         durabilityAmbiguousWarning = state.durabilityAmbiguousWarning
         consumedPackageIDs = state.consumedPackageIDs
         keyFingerprints = state.keyFingerprints
+        recoverableReturnExport = state.recoverableReturnExport
     }
 
     private struct BootstrapState {
@@ -618,17 +689,19 @@ public actor MobileLibraryStore {
         let recoveryState: MobileLibraryStoreRecoveryState
         let consumedPackageIDs: Set<UUID>
         let keyFingerprints: [String: UUID]
+        let recoverableReturnExport: MobileRecoverableReturnExport?
         let durabilityWarning: Bool
         let durabilityAttemptWarning: Bool
         let durabilityAmbiguousWarning: Bool
 
-        init(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], deviceID: UUID?, recoveryState: MobileLibraryStoreRecoveryState, consumedPackageIDs: Set<UUID>, keyFingerprints: [String: UUID], durabilityWarning: Bool = false, durabilityAttemptWarning: Bool = false, durabilityAmbiguousWarning: Bool = false) {
+        init(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], deviceID: UUID?, recoveryState: MobileLibraryStoreRecoveryState, consumedPackageIDs: Set<UUID>, keyFingerprints: [String: UUID], recoverableReturnExport: MobileRecoverableReturnExport? = nil, durabilityWarning: Bool = false, durabilityAttemptWarning: Bool = false, durabilityAmbiguousWarning: Bool = false) {
             self.snapshot = snapshot
             self.queue = queue
             self.deviceID = deviceID
             self.recoveryState = recoveryState
             self.consumedPackageIDs = consumedPackageIDs
             self.keyFingerprints = keyFingerprints
+            self.recoverableReturnExport = recoverableReturnExport
             self.durabilityWarning = durabilityWarning
             self.durabilityAttemptWarning = durabilityAttemptWarning
             self.durabilityAmbiguousWarning = durabilityAmbiguousWarning
@@ -641,18 +714,20 @@ public actor MobileLibraryStore {
         let deviceID: UUID?
         let consumedPackageIDs: [UUID]
         let keyFingerprints: [String: UUID]
+        let recoverableReturnExport: MobileRecoverableReturnExport?
         let durabilityWarning: Bool
 
-        init(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], deviceID: UUID?, consumedPackageIDs: [UUID], keyFingerprints: [String: UUID], durabilityWarning: Bool = false) {
+        init(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], deviceID: UUID?, consumedPackageIDs: [UUID], keyFingerprints: [String: UUID], recoverableReturnExport: MobileRecoverableReturnExport? = nil, durabilityWarning: Bool = false) {
             self.snapshot = snapshot
             self.queue = queue
             self.deviceID = deviceID
             self.consumedPackageIDs = consumedPackageIDs
             self.keyFingerprints = keyFingerprints
+            self.recoverableReturnExport = recoverableReturnExport
             self.durabilityWarning = durabilityWarning
         }
 
-        private enum CodingKeys: String, CodingKey { case snapshot, queue, deviceID, consumedPackageIDs, keyFingerprints, durabilityWarning }
+        private enum CodingKeys: String, CodingKey { case snapshot, queue, deviceID, consumedPackageIDs, keyFingerprints, recoverableReturnExport, durabilityWarning }
 
         init(from decoder: Decoder) throws {
             let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -661,6 +736,7 @@ public actor MobileLibraryStore {
             deviceID = try values.decodeIfPresent(UUID.self, forKey: .deviceID)
             consumedPackageIDs = try values.decode([UUID].self, forKey: .consumedPackageIDs)
             keyFingerprints = try values.decode([String: UUID].self, forKey: .keyFingerprints)
+            recoverableReturnExport = try values.decodeIfPresent(MobileRecoverableReturnExport.self, forKey: .recoverableReturnExport)
             durabilityWarning = try values.decodeIfPresent(Bool.self, forKey: .durabilityWarning) ?? false
         }
     }
@@ -745,19 +821,20 @@ public actor MobileLibraryStore {
                     let queueValid = (try? validateQueue(state.queue, deviceID: state.deviceID)) != nil
                     let receiptsValid = Set(state.consumedPackageIDs).count == state.consumedPackageIDs.count
                     let fingerprintsValid = (try? validateKeyFingerprints(state.keyFingerprints, boundTo: Set(state.consumedPackageIDs))) != nil
+                    let returnExportValid = state.recoverableReturnExport.map { (try? validateRecoverableReturnExport($0)) != nil } ?? true
                     let recovery: MobileLibraryStoreRecoveryState
                     let queue = queueValid ? state.queue : []
                     if state.deviceID == nil {
                         recovery = .invalidDeviceID
                     } else if !queueValid {
                         recovery = .invalidQueue
-                    } else if !receiptsValid || !fingerprintsValid {
+                    } else if !receiptsValid || !fingerprintsValid || !returnExportValid {
                         recovery = .invalidReceipts
                     } else {
                         recovery = .ready
                     }
                     let classification = classifyDurabilityJournal(data: try? Data(contentsOf: durabilityURL), stateData: stateData)
-                    return BootstrapState(snapshot: state.snapshot, queue: queue, deviceID: state.deviceID, recoveryState: recovery, consumedPackageIDs: receiptsValid ? Set(state.consumedPackageIDs) : [], keyFingerprints: fingerprintsValid ? state.keyFingerprints : [:], durabilityWarning: classification.warning, durabilityAttemptWarning: classification.attempt, durabilityAmbiguousWarning: classification.ambiguous)
+                    return BootstrapState(snapshot: state.snapshot, queue: queue, deviceID: state.deviceID, recoveryState: recovery, consumedPackageIDs: receiptsValid ? Set(state.consumedPackageIDs) : [], keyFingerprints: fingerprintsValid ? state.keyFingerprints : [:], recoverableReturnExport: returnExportValid ? state.recoverableReturnExport : nil, durabilityWarning: classification.warning, durabilityAttemptWarning: classification.attempt, durabilityAmbiguousWarning: classification.ambiguous)
                 } catch {
                     return BootstrapState(snapshot: nil, queue: [], deviceID: nil, recoveryState: .invalidSnapshot, consumedPackageIDs: [], keyFingerprints: [:])
                 }
@@ -862,7 +939,7 @@ public actor MobileLibraryStore {
                     }
                 }
             }
-            return BootstrapState(snapshot: result.snapshot, queue: result.queue, deviceID: result.deviceID, recoveryState: result.recoveryState, consumedPackageIDs: result.consumedPackageIDs, keyFingerprints: result.keyFingerprints, durabilityWarning: durabilityWarning, durabilityAttemptWarning: durabilityAttemptWarning, durabilityAmbiguousWarning: durabilityAmbiguousWarning)
+            return BootstrapState(snapshot: result.snapshot, queue: result.queue, deviceID: result.deviceID, recoveryState: result.recoveryState, consumedPackageIDs: result.consumedPackageIDs, keyFingerprints: result.keyFingerprints, recoverableReturnExport: result.recoverableReturnExport, durabilityWarning: durabilityWarning, durabilityAttemptWarning: durabilityAttemptWarning, durabilityAmbiguousWarning: durabilityAmbiguousWarning)
         } catch let error as MobileLibraryStoreError {
             return BootstrapState(snapshot: nil, queue: [], deviceID: fallbackDeviceID, recoveryState: error == .invalidSnapshot ? .invalidSnapshot : .invalidQueue, consumedPackageIDs: [], keyFingerprints: [:])
         } catch {
@@ -984,6 +1061,20 @@ public actor MobileLibraryStore {
         }
     }
 
+    private static func validateRecoverableReturnExport(_ value: MobileRecoverableReturnExport?) throws {
+        guard let value else { return }
+        guard value.destination.isFileURL,
+              !value.destination.path.isEmpty,
+              Set(value.queuedChangeIDs).count == value.queuedChangeIDs.count,
+              value.queuedChangeIDs.count <= MobilePackageService.maximumCollectionCount,
+              (value.packageID == nil) == (value.createdAt == nil),
+              value.createdAt?.timeIntervalSince1970.isFinite != false else {
+            throw MobileLibraryStoreError.invalidReceipts
+        }
+        do { _ = try OneTimePackageKey(scanning: value.oneTimeQRPayload) }
+        catch { throw MobileLibraryStoreError.invalidReceipts }
+    }
+
     private static func changeID(_ change: MobileChange) -> UUID {
         switch change {
         case .checklistCompletion(let value): return value.changeID
@@ -1022,11 +1113,12 @@ public actor MobileLibraryStore {
         }
     }
 
-    private func commitState(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], receipts: Set<UUID>, keyFingerprints: [String: UUID]) throws {
+    private func commitState(snapshot: MobileLibrarySnapshot?, queue: [MobileChange], receipts: Set<UUID>, keyFingerprints: [String: UUID], recoverableReturnExport: MobileRecoverableReturnExport?) throws {
         try Self.validateQueue(queue, deviceID: deviceID)
         guard let deviceID else { throw MobileLibraryStoreError.invalidDeviceID }
         try Self.validateKeyFingerprints(keyFingerprints, boundTo: receipts)
-        let state = PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: receipts.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keyFingerprints, durabilityWarning: false)
+        try Self.validateRecoverableReturnExport(recoverableReturnExport)
+        let state = PersistedState(snapshot: snapshot, queue: queue, deviceID: deviceID, consumedPackageIDs: receipts.sorted { $0.uuidString < $1.uuidString }, keyFingerprints: keyFingerprints, recoverableReturnExport: recoverableReturnExport, durabilityWarning: false)
         try testingBeforeStateCommit()
         if try atomicWrite(state, to: stateURL) {
             // Rename already committed the new state. Keep a visible warning

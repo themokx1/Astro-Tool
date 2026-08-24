@@ -51,6 +51,24 @@ public struct MobileSyncConfirmationToken: Equatable, Sendable {
     }
 }
 
+public struct MobileChangeOutcomeTotals: Equatable, Sendable {
+    public let applied: Int
+    public let keptOnMac: Int
+    public let superseded: Int
+    public let alreadyHandled: Int
+    public let duplicates: Int
+    public let rejected: Int
+
+    public init(applied: Int = 0, keptOnMac: Int = 0, superseded: Int = 0, alreadyHandled: Int = 0, duplicates: Int = 0, rejected: Int = 0) {
+        self.applied = applied
+        self.keptOnMac = keptOnMac
+        self.superseded = superseded
+        self.alreadyHandled = alreadyHandled
+        self.duplicates = duplicates
+        self.rejected = rejected
+    }
+}
+
 public enum MobileSyncPhase: String, Equatable, Sendable {
     case idle
     case previewing
@@ -61,6 +79,7 @@ public enum MobileSyncPhase: String, Equatable, Sendable {
     case importing
     case importPreviewReady
     case applying
+    case completed
     case discarding
     case failed
 }
@@ -80,18 +99,18 @@ public enum MobileSyncFailure: Equatable, Sendable {
 @MainActor
 @Observable
 public final class MobileSyncStore {
-    public typealias IdentityPreview = @Sendable (URL) throws -> PortableIdentityPreview
-    public typealias IdentityCommit = @Sendable (URL, PortableLibraryID) throws -> PortableLibraryID
+    package typealias IdentityPreview = @Sendable (URL) throws -> PortableIdentityPreview
+    package typealias IdentityCommit = @Sendable (URL, PortableLibraryID) throws -> PortableLibraryID
     public typealias SnapshotProvider = @Sendable (URL, PortableLibraryID) async throws -> MobileLibrarySnapshot
-    public typealias PackageExport = @Sendable (MobilePackageEnvelope, URL, OneTimePackageKey) async throws -> MobileSyncExportResult
-    public typealias PackageImportPreview = @Sendable (URL, OneTimePackageKey) async throws -> MobilePackageImportPreview
-    public typealias PackageAuthenticatePreview = @Sendable (URL, OneTimePackageKey) async throws -> MobilePackageAuthenticatedPreview
-    public typealias PackageAuthenticatedReturn = @Sendable (MobilePackagePreviewToken) async throws -> MobileAuthenticatedReturnPackage
-    public typealias PackageImportCommitReturn = @Sendable (MobileAuthenticatedReturnPackage) async throws -> Void
-    public typealias PackageImportDiscardReturn = @Sendable (MobileAuthenticatedReturnPackage) async -> Void
-    public typealias PackageImportDiscardCapability = @Sendable (MobilePackagePreviewToken) async -> Void
-    public typealias PackageImportDiscard = @Sendable (UUID) async -> Void
-    public typealias DestinationPreparation = @Sendable (URL) throws -> Void
+    package typealias PackageExport = @Sendable (MobilePackageEnvelope, URL, OneTimePackageKey) async throws -> MobileSyncExportResult
+    package typealias PackageImportPreview = @Sendable (URL, OneTimePackageKey) async throws -> MobilePackageImportPreview
+    package typealias PackageAuthenticatePreview = @Sendable (URL, OneTimePackageKey) async throws -> MobilePackageAuthenticatedPreview
+    package typealias PackageAuthenticatedReturn = @Sendable (MobilePackagePreviewToken) async throws -> MobileAuthenticatedReturnPackage
+    package typealias PackageImportCommitReturn = @Sendable (MobileAuthenticatedReturnPackage) async throws -> Void
+    package typealias PackageImportDiscardReturn = @Sendable (MobileAuthenticatedReturnPackage) async -> Void
+    package typealias PackageImportDiscardCapability = @Sendable (MobilePackagePreviewToken) async -> Void
+    package typealias PackageImportDiscard = @Sendable (UUID) async -> Void
+    package typealias DestinationPreparation = @Sendable (URL) throws -> Void
 
     public private(set) var phase: MobileSyncPhase = .idle
     public private(set) var preview: MobileSyncPreview?
@@ -109,16 +128,17 @@ public final class MobileSyncStore {
     public private(set) var isIdentityConfirmed = false
     public private(set) var isSummaryConfirmed = false
     public private(set) var didApplyIncomingChanges = false
-    public private(set) var appliedChangeTotals: (applied: Int, skipped: Int, rejected: Int) = (0, 0, 0)
+    public private(set) var appliedChangeTotals = MobileChangeOutcomeTotals()
 
     public let rootURL: URL?
     public let destinationToken: String
 
-    private let changeImporter: MobileChangeImporter
+    private let changeImporter: MobileChangeImporter?
     /// Normal application uses this opaque boundary. The legacy closures
     /// below remain only for hermetic UI fixtures, which have no production
     /// root and cannot mint a live package capability.
     private let returnCoordinator: MobileReturnApplicationCoordinator?
+    private let productionMode: Bool
 
     private let identityPreview: IdentityPreview
     private let identityCommit: IdentityCommit
@@ -147,7 +167,20 @@ public final class MobileSyncStore {
     @ObservationIgnored private var sentBaseSnapshotIDs: Set<UUID> = []
     @ObservationIgnored private var sentBaseAcknowledgements: [UUID: Set<UUID>] = [:]
 
-    public init(
+    /// Production construction accepts only the library root and the typed,
+    /// read-only snapshot provider used by the already-open application
+    /// model. Return authentication, sent-base evidence, domain commands and
+    /// receipts are always selected from that root.
+    public convenience init(
+        rootURL: URL?,
+        snapshotProvider: SnapshotProvider? = nil
+    ) {
+        self.init(rootURL: rootURL, snapshotProvider: snapshotProvider, productionMode: true, fixture: ())
+    }
+
+    /// Explicit package-only fixture construction. None of these dependency
+    /// seams are visible to clients importing AstroUI as a product.
+    package init(
         rootURL: URL?,
         identityPreview: IdentityPreview? = nil,
         identityCommit: IdentityCommit? = nil,
@@ -165,35 +198,17 @@ public final class MobileSyncStore {
         packageService: MobilePackageService = MobilePackageService(),
         changeImporter: MobileChangeImporter? = nil,
         changeRecordStore: MobileChangeApplicationRecordStore? = nil,
-        sentSnapshotStore: MobileSentSnapshotStore? = nil
+        sentSnapshotStore: MobileSentSnapshotStore? = nil,
+        productionMode: Bool = false,
+        fixture: Void = ()
     ) {
         self.rootURL = rootURL
         self.destinationToken = destinationToken
-        let defaultLedgerStore = changeRecordStore ?? rootURL.map { MobileChangeReceiptStore(fileURL: $0.appendingPathComponent(".astro-tool/mobile-change-ledger.json")) }
-        if let changeImporter {
-            self.changeImporter = changeImporter
-        } else if let rootURL, let production = try? MobileChangeImporter.production(rootURL: rootURL, recordStore: defaultLedgerStore) {
-            self.changeImporter = production
-        } else {
-            self.changeImporter = MobileChangeImporter(recordStore: defaultLedgerStore)
-        }
-        if rootURL != nil,
-           packageImportPreview == nil,
-           packageAuthenticatePreview == nil,
-           packageAuthenticatedReturn == nil,
-           packageImportCommitReturn == nil,
-           packageImportDiscardReturn == nil,
-           packageImportDiscardCapability == nil,
-           changeImporter == nil,
-           let rootURL {
-            self.returnCoordinator = try? MobileReturnApplicationCoordinator.production(
-                rootURL: rootURL,
-                packageService: packageService
-            )
-        } else {
-            self.returnCoordinator = nil
-        }
-        let configuredSentSnapshotStore = sentSnapshotStore ?? rootURL.map { MobileSentSnapshotIdentityStore(fileURL: $0.appendingPathComponent(".astro-tool/mobile-sent-snapshot.json")) }
+        self.productionMode = productionMode
+        let defaultLedgerStore = productionMode ? nil : (changeRecordStore ?? rootURL.map { MobileChangeReceiptStore(fileURL: $0.appendingPathComponent(".astro-tool/mobile-change-ledger.json")) })
+        self.changeImporter = productionMode ? nil : (changeImporter ?? MobileChangeImporter(recordStore: defaultLedgerStore))
+        self.returnCoordinator = productionMode ? rootURL.flatMap { try? MobileReturnApplicationCoordinator(rootURL: $0) } : nil
+        let configuredSentSnapshotStore = productionMode ? nil : (sentSnapshotStore ?? rootURL.map { MobileSentSnapshotIdentityStore(fileURL: $0.appendingPathComponent(".astro-tool/mobile-sent-snapshot.json")) })
         self.sentSnapshotStore = configuredSentSnapshotStore
         do {
             if let acknowledgementStore = configuredSentSnapshotStore as? MobileSentSnapshotAcknowledgementStore {
@@ -284,8 +299,7 @@ public final class MobileSyncStore {
     /// Callers cannot supply an envelope, package UUID, or fingerprint as
     /// authority; all three come from the retained package capability.
     public func applyAuthenticatedReturnChanges(confirmed: Bool) async throws {
-        guard let changePreview,
-              let current = try await currentSnapshotForReturn() else { throw MobileChangeImportError.stalePreview }
+        guard let changePreview else { throw MobileChangeImportError.stalePreview }
         guard phase == .importPreviewReady else { throw MobileChangeImportError.stalePreview }
         generation += 1
         let operationGeneration = generation
@@ -299,11 +313,12 @@ public final class MobileSyncStore {
                 // batch. A copied/discarded UI value has no authority here.
                 receipt = try await returnCoordinator.apply(
                     incomingReview,
-                    currentSnapshot: current,
                     resolutions: changeResolutions,
                     confirmed: confirmed
                 )
-            } else if let authenticatedReturn = incomingReturn {
+            } else if let authenticatedReturn = incomingReturn,
+                      let changeImporter,
+                      let current = try await currentSnapshotForReturn() {
                 receipt = try await changeImporter.apply(preview: changePreview, authenticatedReturn: authenticatedReturn, currentSnapshot: current, resolutions: changeResolutions, confirmed: confirmed)
             } else {
                 throw MobileChangeImportError.stalePreview
@@ -318,23 +333,28 @@ public final class MobileSyncStore {
                 try consumePublishedEvidence(for: authenticatedReturn.baseSnapshotID)
             }
             appliedChangeReceipt = receipt
-            appliedChangeTotals = (receipt.appliedChangeIDs.count, receipt.resolvedChangeIDs.count, changePreview.rejected.count)
+            appliedChangeTotals = Self.totals(receipt: receipt, preview: changePreview)
             didApplyIncomingChanges = true
             incomingCapability = nil
             incomingReturn = nil
             incomingReview = nil
-            phase = .importPreviewReady
+            incomingPreview = nil
+            self.changePreview = nil
+            changeResolutions = [:]
+            incomingSource = nil
+            incomingQRPayload = nil
+            phase = .completed
         } catch {
             if let completedReceipt {
                 // The domain batch has committed its own atomic change-ID
                 // markers. A subsequent capability acknowledgement failure
                 // must never claim that those reviewed edits were rolled back.
                 appliedChangeReceipt = completedReceipt
-                appliedChangeTotals = (completedReceipt.appliedChangeIDs.count, completedReceipt.resolvedChangeIDs.count, changePreview.rejected.count)
+                appliedChangeTotals = Self.totals(receipt: completedReceipt, preview: changePreview)
                 errorMessage = String(localized: "The reviewed changes were saved, but package acknowledgement could not be finalized. Keep the phone package and create a fresh forward snapshot after recovery.")
             } else if case let MobileChangeImportError.partialReceipt(partial) = error {
                 appliedChangeReceipt = partial
-                appliedChangeTotals = (partial.appliedChangeIDs.count, partial.resolvedChangeIDs.count, changePreview.rejected.count)
+                appliedChangeTotals = Self.totals(receipt: partial, preview: changePreview)
                 errorMessage = String(localized: "Some reviewed changes were saved before the receipt failed. Applied \(partial.appliedChangeIDs.count); resolved \(partial.resolvedChangeIDs.count). Keep the phone package and create a fresh forward snapshot after recovery.")
             }
             if let returnCoordinator, let incomingReview {
@@ -507,9 +527,30 @@ public final class MobileSyncStore {
         }
         let token = generation
         let key = OneTimePackageKey()
-            let acknowledgementIDs = changeImporter.acknowledgementIDs
-            let envelope = MobilePackageEnvelope(snapshot: preview.snapshot, changes: [], acknowledgedChangeIDs: acknowledgementIDs)
         do {
+            try Task.checkCancellation()
+            try prepareDestination(destination)
+            if productionMode {
+                guard let returnCoordinator else { throw MobileChangeImportError.configurationMissing }
+                let result = try await returnCoordinator.publishForwardSnapshot(
+                    preview.snapshot,
+                    to: destination,
+                    wrapping: key
+                )
+                guard token == generation, (phase == .exporting || phase == .finishing) else { return }
+                packageID = result.packageID
+                exportedAt = result.createdAt
+                encryptedByteCount = result.encryptedByteCount
+                exportedURL = destination
+                oneTimeQRPayload = key.qrPayload
+                errorMessage = nil
+                failure = nil
+                phase = .exported
+                return
+            }
+            guard let changeImporter else { throw MobileChangeImportError.configurationMissing }
+            let acknowledgementIDs = try changeImporter.currentAcknowledgementIDs()
+            let envelope = MobilePackageEnvelope(snapshot: preview.snapshot, changes: [], acknowledgedChangeIDs: acknowledgementIDs)
             let revisions = MobileSnapshotRevisionStore(fileURL: (rootURL ?? destination.deletingLastPathComponent()).appendingPathComponent(".astro-tool/mobile-snapshot-revision.json"))
             let reservation = try await revisions.beginPublication(expectedRevision: preview.snapshot.revision)
             do {
@@ -520,10 +561,11 @@ public final class MobileSyncStore {
                 if let acknowledgementStore = sentSnapshotStore as? MobileSentSnapshotAcknowledgementStore {
                     try acknowledgementStore.reserve(snapshotID: preview.snapshot.snapshotID, acknowledgementIDs: acknowledgementIDs)
                 }
-                try Task.checkCancellation()
-                try prepareDestination(destination)
                 let result = try await packageExport(envelope, destination, key)
                 guard token == generation, (phase == .exporting || phase == .finishing) else {
+                    if let acknowledgementStore = sentSnapshotStore as? MobileSentSnapshotAcknowledgementStore {
+                        try? acknowledgementStore.cancelPending(snapshotID: preview.snapshot.snapshotID)
+                    }
                     await revisions.finishPublication(reservation, published: false)
                     return
                 }
@@ -544,6 +586,9 @@ public final class MobileSyncStore {
                 failure = nil
                 phase = .exported
             } catch {
+                if let acknowledgementStore = sentSnapshotStore as? MobileSentSnapshotAcknowledgementStore {
+                    try? acknowledgementStore.cancelPending(snapshotID: preview.snapshot.snapshotID)
+                }
                 await revisions.finishPublication(reservation, published: false)
                 throw error
             }
@@ -569,11 +614,9 @@ public final class MobileSyncStore {
         let token = generation
         do {
             let key = try OneTimePackageKey(scanning: qrPayload)
-            if let returnCoordinator {
-                guard let current = try await currentSnapshotForReturn() else {
-                    throw MobileChangeImportError.stalePreview
-                }
-                let review = try await returnCoordinator.preview(from: source, wrapping: key, currentSnapshot: current)
+            if productionMode {
+                guard let returnCoordinator else { throw MobileChangeImportError.configurationMissing }
+                let review = try await returnCoordinator.preview(from: source, wrapping: key)
                 guard token == generation, phase == .importing else {
                     await returnCoordinator.discard(review)
                     return
@@ -582,7 +625,7 @@ public final class MobileSyncStore {
                 incomingPreview = review.packagePreview
                 changePreview = review.changePreview
                 changeResolutions = review.changePreview.conflicts.reduce(into: [:]) { values, conflict in
-                    if conflict.kind == .note { values[conflict.changeID] = .keepBothAsFieldNote }
+                    values[conflict.changeID] = conflict.recommendedResolution
                 }
             } else if usesLegacyImportPreview {
                 let imported = try await packageImportPreview(source, key)
@@ -599,10 +642,13 @@ public final class MobileSyncStore {
                     guard try publishedAcknowledgements(for: authenticatedReturn.baseSnapshotID) != nil else {
                         throw MobileChangeImportError.snapshotMismatch
                     }
+                    guard let changeImporter else { throw MobileChangeImportError.configurationMissing }
                     let typed = try changeImporter.preview(authenticatedReturn: authenticatedReturn, expectedLibraryID: current.libraryID, expectedBaseSnapshotID: authenticatedReturn.baseSnapshotID, currentSnapshot: current)
                     incomingReturn = authenticatedReturn
                     changePreview = typed
-                    changeResolutions = typed.conflicts.reduce(into: [:]) { values, conflict in if conflict.kind == .note { values[conflict.changeID] = .keepBothAsFieldNote } }
+                    changeResolutions = typed.conflicts.reduce(into: [:]) { values, conflict in
+                        values[conflict.changeID] = conflict.recommendedResolution
+                    }
                 }
             }
             didApplyIncomingChanges = false
@@ -687,6 +733,7 @@ public final class MobileSyncStore {
         changePreview = nil
         changeResolutions = [:]
         appliedChangeReceipt = nil
+        appliedChangeTotals = .init()
         exportedURL = nil
         packageID = nil
         encryptedByteCount = nil
@@ -722,6 +769,7 @@ public final class MobileSyncStore {
         changePreview = nil
         changeResolutions = [:]
         appliedChangeReceipt = nil
+        appliedChangeTotals = .init()
         exportedURL = nil
         packageID = nil
         encryptedByteCount = nil
@@ -759,6 +807,7 @@ public final class MobileSyncStore {
             changePreview = nil
             changeResolutions = [:]
             appliedChangeReceipt = nil
+            appliedChangeTotals = .init()
             exportedURL = nil
             packageID = nil
             encryptedByteCount = nil
@@ -837,6 +886,7 @@ public final class MobileSyncStore {
         changePreview = nil
         changeResolutions = [:]
         appliedChangeReceipt = nil
+        appliedChangeTotals = .init()
         packageID = nil
         encryptedByteCount = nil
         exportedAt = nil
@@ -872,6 +922,20 @@ public final class MobileSyncStore {
             briefingCount: snapshot.briefings.count,
             noteCount: snapshot.notes.count
             , checklistItemCount: snapshot.briefings.reduce(0) { total, briefing in total + briefing.checklist.reduce(0) { $0 + $1.items.count } }
+        )
+    }
+
+    private static func totals(
+        receipt: MobileChangeApplicationReceipt,
+        preview: MobileChangeImportPreview
+    ) -> MobileChangeOutcomeTotals {
+        .init(
+            applied: receipt.appliedChangeIDs.count,
+            keptOnMac: receipt.resolvedChangeIDs.count,
+            superseded: preview.superseded.count,
+            alreadyHandled: preview.alreadyApplied.count,
+            duplicates: preview.duplicates.count,
+            rejected: preview.rejected.count
         )
     }
 

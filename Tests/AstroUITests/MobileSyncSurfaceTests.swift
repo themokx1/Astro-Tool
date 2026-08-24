@@ -81,4 +81,23 @@ struct MobileSyncSurfaceTests {
         #expect(view.contains("monospaced"))
         #expect(view.contains("Package ID"))
     }
+
+    @Test("production surface exposes only the root coordinator boundary")
+    func returnAuthoritySurfaceIsClosed() throws {
+        let importer = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/MobileSync/MobileChangeImporter.swift"), encoding: .utf8)
+        let sent = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/MobileSync/MobileSentSnapshotStore.swift"), encoding: .utf8)
+        let coordinator = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/MobileSync/MobileReturnApplicationCoordinator.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncStore.swift"), encoding: .utf8)
+
+        #expect(importer.contains("package final class MobileChangeImporter"))
+        #expect(!importer.contains("public final class MobileChangeImporter"))
+        #expect(sent.contains("package final class MobileSentSnapshotIdentityStore"))
+        #expect(!sent.contains("public final class MobileSentSnapshotIdentityStore"))
+        #expect(coordinator.contains("public actor MobileReturnApplicationCoordinator"))
+        #expect(coordinator.contains("public init(rootURL: URL)"))
+        #expect(!coordinator.contains("public static func production"))
+        #expect(store.contains("productionMode: true"))
+        #expect(store.contains("package init("))
+        #expect(!store.contains("public typealias PackageAuthenticatedReturn"))
+    }
 }

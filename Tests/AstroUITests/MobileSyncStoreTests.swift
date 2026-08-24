@@ -199,6 +199,100 @@ struct MobileSyncStoreTests {
         #expect(store.phase == .failed)
     }
 
+    @Test("successful return is terminal and clears all reusable preview state")
+    func successfulReturnClearsPreviewAndBecomesTerminal() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identity = PortableLibraryID(rawValue: UUID())
+        let base = MobileLibrarySnapshot.empty(libraryID: identity)
+        let source = root.appendingPathComponent("phone-return.astromobile")
+        let key = OneTimePackageKey()
+        let packageService = MobilePackageService()
+        _ = try await packageService.export(
+            MobilePackageEnvelope(purpose: .returnChanges, snapshot: base, baseSnapshotID: base.snapshotID, changes: [], acknowledgedChangeIDs: []),
+            to: source,
+            wrapping: key
+        )
+        let sentBases = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent-bases.json"))
+        try sentBases.save(snapshotID: base.snapshotID)
+        let importer = MobileChangeImporter(commands: .init(applyBatch: { _ in .init(appliedChangeIDs: [], resultingRevisions: [:]) }))
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in .init(proposedID: identity, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in base },
+            packageAuthenticatePreview: { url, scannedKey in try await packageService.authenticatePreview(from: url, wrapping: scannedKey) },
+            packageAuthenticatedReturn: { token in try await packageService.authenticatedReturn(token: token) },
+            packageImportCommitReturn: { package in try await packageService.commitAuthenticatedReturn(package) },
+            packageImportDiscardReturn: { package in await packageService.discardAuthenticatedReturn(package) },
+            changeImporter: importer,
+            sentSnapshotStore: sentBases
+        )
+
+        await store.previewIncomingPackage(from: source, qrPayload: key.qrPayload)
+        try await store.applyAuthenticatedReturnChanges(confirmed: true)
+
+        #expect(store.phase == .completed)
+        #expect(store.incomingPreview == nil)
+        #expect(store.changePreview == nil)
+        #expect(store.changeResolutions.isEmpty)
+        #expect(store.appliedChangeReceipt != nil)
+        #expect(store.appliedChangeTotals == .init())
+    }
+
+    @Test("checklist conflict recommendation is inserted into store state")
+    func checklistConflictHasRealDefaultResolution() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identity = PortableLibraryID(rawValue: UUID())
+        let briefingID = UUID()
+        let noteID = "briefing-\(briefingID.uuidString.lowercased())"
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let base = MobileLibrarySnapshot(
+            schemaVersion: 1,
+            libraryID: identity,
+            snapshotID: UUID(),
+            revision: 2,
+            createdAt: savedAt,
+            projects: [], nights: [], captures: [],
+            briefings: [.init(id: briefingID, revision: 2, savedAt: savedAt, nightDate: nil, readiness: "ready", targets: [], checklist: [.init(id: "setup", title: "Setup", items: [.init(id: "focus", title: "Focus", explanation: nil, isCompleted: false, baseRevision: 2)])], noteID: noteID)],
+            notes: [.init(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "Base note", baseRevision: 2, updatedAt: savedAt, isEditableOnPhone: true)]
+        )
+        let changeID = UUID()
+        let source = root.appendingPathComponent("phone-return.astromobile")
+        let key = OneTimePackageKey()
+        let packageService = MobilePackageService()
+        _ = try await packageService.export(
+            MobilePackageEnvelope(
+                purpose: .returnChanges,
+                snapshot: base,
+                baseSnapshotID: base.snapshotID,
+                changes: [.checklistCompletion(.init(changeID: changeID, deviceID: UUID(), briefingID: briefingID, itemID: "focus", baseRevision: 1, isCompleted: true, createdAt: Date(timeIntervalSince1970: 1_700_000_001)))],
+                acknowledgedChangeIDs: []
+            ),
+            to: source,
+            wrapping: key
+        )
+        let sentBases = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent-bases.json"))
+        try sentBases.save(snapshotID: base.snapshotID)
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in .init(proposedID: identity, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in base },
+            packageAuthenticatePreview: { url, scannedKey in try await packageService.authenticatePreview(from: url, wrapping: scannedKey) },
+            packageAuthenticatedReturn: { token in try await packageService.authenticatedReturn(token: token) },
+            changeImporter: MobileChangeImporter(commands: .init(applyBatch: { _ in .init(appliedChangeIDs: [changeID], resultingRevisions: [:]) })),
+            sentSnapshotStore: sentBases
+        )
+
+        await store.previewIncomingPackage(from: source, qrPayload: key.qrPayload)
+
+        #expect(store.phase == .importPreviewReady)
+        #expect(store.changePreview?.conflicts.map(\.changeID) == [changeID])
+        #expect(store.changeResolutions[changeID] == .applyPhone)
+    }
+
     @Test("Summary confirmation is bound to the exact displayed snapshot token")
     func exactSnapshotTokenRequired() async throws {
         let id = PortableLibraryID(rawValue: UUID())
@@ -488,7 +582,7 @@ struct MobileSyncStoreTests {
         #expect(try store.loadRecords().isEmpty)
     }
 
-    @Test("a failed forward export leaves only recoverable pending evidence")
+    @Test("a failed forward export releases its pending sent-base capacity")
     func failedForwardExportDoesNotAuthorizeItsBase() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -508,7 +602,7 @@ struct MobileSyncStoreTests {
         await store.export(to: root.appendingPathComponent("failed.astromobile"))
 
         #expect(try sentBases.loadPublishedRecords().isEmpty)
-        #expect(try sentBases.loadRecords() == [.init(snapshotID: snapshot.snapshotID, acknowledgementIDs: [], state: .pending)])
+        #expect(try sentBases.loadRecords().isEmpty)
     }
 
     @Test("Destination preparation never removes an existing package")

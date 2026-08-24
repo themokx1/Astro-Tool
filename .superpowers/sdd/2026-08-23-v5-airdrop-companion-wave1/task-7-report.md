@@ -1,26 +1,24 @@
-# Task 7 — encrypted return leg review-round-5 closure
+# Task 7.1 — return-path stabilization handoff
 
-## Outcome
+## Status
 
-The normal Mac return route now goes through `MobileReturnApplicationCoordinator`. Its public review value contains only a private session identity; the coordinator retains the authenticated package capability, reloads published sent-base evidence, and borrows the live service capability immediately before applying. Discarded or copied review values fail closed. Legacy package/import seams remain solely for hermetic UI fixtures without a production root.
+Stopped and committed at the user's request before the mandatory full verification sequence. This is an in-progress stabilization handoff, not a Task 7.1 completion claim and not an official iOS runtime claim.
 
-Normal briefing and project editors now compare the revision they loaded in their durable store transaction. A stale Mac editor reports a conflict and reloads instead of replacing a phone revision or its mobile evidence.
+The current patch closes the principal reviewed return-path failures: production Mac return/export is routed through one root-bound public coordinator; importer, sent-base, raw batch, and fixture injection surfaces are package/internal; a published base is atomically claimed before mutation and is single-use; forward acknowledgement reloads the root ledger; domain markers bind immutable phone intent and are checked under a root-global lock; duplicate/corrupt markers and malformed ledgers fail closed; receipts and sent-base files are bounded; partial receipts exclude speculative resolution; successful UI state is terminal with six disjoint totals; and the iPhone persists a recoverable one-time return key until explicit discard.
 
-Return receipts and sent-base records use a process lock plus an advisory sidecar file lock, reload inside each mutation, bound encoded input before decoding, and bound output before persistence. Forward evidence progresses from recoverable `pending` to authorizing `published`; only a published base can be returned against, and authenticated completion consumes that base and prunes its linked receipt acknowledgements.
+The patch also removes unconditional normal briefing/project overwrites in favor of creation/CAS paths, preserves canonical database values under concurrent project saves, and adds real encrypted coordinator/domain/receipt/next-forward acknowledgement coverage.
 
-Domain markers now bind change ID, owner, normalized payload fingerprint, and result revision in the same briefing revision or SQLite annotation transaction as the actual mutation. The production bridge scans all mobile-editable owners before a batch and fails closed on cross-owner/payload disagreement or legacy bare marker authority. Project marker JSON decode failure is a corrupt record, never an empty marker set. Return preview excludes duplicate collisions before chronology; owner batch chronology is ordered by each owner's effective last phone edit while retaining one atomic revision per briefing.
+## Verification actually completed
 
-The iPhone return exporter tracks a generation and cancellable task, checks cancellation after the async export before publishing the key, presents disabled/progress/cancel states, clears on background/disappearance, and removes its placeholder only after checking retained filesystem identity. The mobile localization extractor now audits both target source trees against their own EN/HU tables. Return controls/results use the required `v5.mobile-sync.return.*` IDs and VoiceOver labels, hints, and values.
+- Focused coordinator/UI/public-surface run built successfully and ran 37 tests. It initially had one invalid checklist test fixture; the other 36 tests passed, including copied/discarded review refusal, single-claim sent bases, the encrypted real-domain round trip, the competing-package race, terminal state, and the public-surface contract.
+- The corrected checklist default-resolution regression was rerun alone and passed.
+- The exact 1 MiB receipt-ledger boundary/load-bound regression built and passed: exactly 1,048,576 encoded bytes persist/load; one byte beyond is rejected without replacing the prior file; an oversized on-disk input fails closed.
+- Earlier focused runs in this stabilization session passed the domain-marker collision/retry/corruption regressions, malformed-ledger-key regression, strict briefing revision/CAS regressions, project canonical-save regression, coordinator copied/discarded review regression, encrypted real-domain end-to-end regression, partial-receipt regression, and field-note receipt-failure retry regression.
+- `git diff --check` completed cleanly immediately before this handoff report update.
 
-## Verification evidence
+## Outstanding before Task 7.1 can be claimed complete
 
-- Full `swift test` completed successfully.
-- Focused Task 7 regressions: 83 tests in 6 suites passed, covering the public coordinator/copy-discard refusal, ordinary Mac CAS saves, receipt pruning, pending publication, chronology/collision handling, and localization coverage.
-- `swift scripts/extract-localizable-strings.swift --missing` reports only the five existing astronomy-term allowlist entries (`Bias`, `Dark`, `FWHM`, `Flat`, `Light`); `--missing-en` reports 0 missing target entries.
-- `xcodegen generate` completed and regenerated the Xcode project.
-- Real macOS `AstroTool` build completed: `xcodebuild build -quiet -project AstroTool.xcodeproj -scheme AstroTool -destination platform=macOS -derivedDataPath /tmp/astro-v5-task7-round5-macos CODE_SIGNING_ALLOWED=NO` (existing compiler warnings only).
-- `git diff --check` is clean.
-
-## External gates / concern
-
-The official iOS runtime gate is not claimed. The attempted static iOS build cannot start on this host because Xcode does not have the iOS 26.5 platform installed (`Any iOS Device` is ineligible); this is recorded separately from the successful SwiftPM and macOS checks.
+- Re-run the combined focused suites after the corrected fixture; only the corrected test was rerun after that failure.
+- Close the remaining normal-writer evidence-injection edge: public briefing/project creation or revision inputs can still carry caller-supplied mobile marker fields. Normal writers should reject mobile evidence on creation and preserve existing durable evidence on CAS updates; the package-only domain bridge needs its own marker-writing path.
+- Run all required deterministic verification: full `swift test --no-parallel`, localization/mobile EN/HU parity and dynamic-string audit, repeated parallel `ProjectsStoreTests` proof, `xcodegen generate`, real `AstroTool` macOS build, generated-project diff inspection, and a final `git diff --check`.
+- Compile/run the checked-in `AstroToolMobileTests` through the Xcode graph when the platform is available. The official iOS 26.5 runtime gate remains external and unclaimed.

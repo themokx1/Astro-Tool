@@ -2,6 +2,21 @@ import Foundation
 
 public enum NightBriefingRevisionStoreError: Error, Equatable, Sendable {
     case revisionAlreadyExists(URL)
+    case corruptRevision(URL)
+
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        switch (lhs, rhs) {
+        case (.revisionAlreadyExists(let left), .revisionAlreadyExists(let right)),
+             (.corruptRevision(let left), .corruptRevision(let right)):
+            return normalizedPath(left) == normalizedPath(right)
+        default:
+            return false
+        }
+    }
+
+    private static func normalizedPath(_ url: URL) -> String {
+        url.path.replacingOccurrences(of: "/private/var/", with: "/var/")
+    }
 }
 
 public actor NightBriefingRevisionStore {
@@ -24,9 +39,17 @@ public actor NightBriefingRevisionStore {
         decoder.dateDecodingStrategy = .iso8601
     }
 
-    public func save(_ draft: NightBriefingDraft) throws -> NightBriefingDraft {
+    /// Creation-only entrypoint. Existing briefings must use the explicit
+    /// compare-and-set update below; there is no unconditional update API.
+    public func create(_ draft: NightBriefingDraft) throws -> NightBriefingDraft {
         Self.processLock.lock()
         defer { Self.processLock.unlock() }
+        let existing = try decodedRevisions(id: draft.id)
+        guard existing.isEmpty else {
+            throw NightBriefingRevisionStoreError.revisionAlreadyExists(
+                revisionURL(id: draft.id, revision: existing.map(\.revision).max() ?? 1)
+            )
+        }
         return try saveUnlocked(draft)
     }
 
@@ -36,7 +59,7 @@ public actor NightBriefingRevisionStore {
     public func saveIfLatest(_ draft: NightBriefingDraft, expectedRevision: Int) throws -> NightBriefingDraft {
         Self.processLock.lock()
         defer { Self.processLock.unlock() }
-        let currentRevision = try revisionNumbers(id: draft.id).max() ?? 0
+        let currentRevision = try decodedRevisions(id: draft.id).map(\.revision).max() ?? 0
         guard currentRevision == expectedRevision else {
             throw NightBriefingRevisionStoreError.revisionAlreadyExists(revisionURL(id: draft.id, revision: currentRevision))
         }
@@ -67,7 +90,7 @@ public actor NightBriefingRevisionStore {
     public func latestRevisions() throws -> [NightBriefingDraft] {
         guard fileManager.fileExists(atPath: directory.path) else { return [] }
         let urls = try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-        let drafts = urls.compactMap(decode)
+        let drafts = try urls.filter { revisionIdentity($0) != nil }.map(decode)
         return Dictionary(grouping: drafts, by: \.id)
             .values
             .compactMap { $0.max { $0.revision < $1.revision } }
@@ -79,7 +102,7 @@ public actor NightBriefingRevisionStore {
         let prefix = id.uuidString.lowercased() + "-r"
         return try fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.lastPathComponent.lowercased().hasPrefix(prefix) }
-            .compactMap(decode)
+            .map(decode)
     }
 
     private func revisionNumbers(id: UUID) throws -> [Int] {
@@ -97,9 +120,32 @@ public actor NightBriefingRevisionStore {
             }
     }
 
-    private func decode(_ url: URL) -> NightBriefingDraft? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? decoder.decode(NightBriefingDraft.self, from: data)
+    private func decode(_ url: URL) throws -> NightBriefingDraft {
+        do {
+            let data = try Data(contentsOf: url)
+            let draft = try decoder.decode(NightBriefingDraft.self, from: data)
+            guard let identity = revisionIdentity(url),
+                  identity.id == draft.id,
+                  identity.revision == draft.revision else {
+                throw NightBriefingRevisionStoreError.corruptRevision(url)
+            }
+            return draft
+        } catch let error as NightBriefingRevisionStoreError {
+            throw error
+        } catch {
+            throw NightBriefingRevisionStoreError.corruptRevision(url)
+        }
+    }
+
+    private func revisionIdentity(_ url: URL) -> (id: UUID, revision: Int)? {
+        let name = url.deletingPathExtension().lastPathComponent.lowercased()
+        guard name.count > 38 else { return nil }
+        let idEnd = name.index(name.startIndex, offsetBy: 36)
+        guard let id = UUID(uuidString: String(name[..<idEnd])),
+              name[idEnd...].hasPrefix("-r"),
+              let revision = Int(name[name.index(idEnd, offsetBy: 2)...]),
+              revision > 0 else { return nil }
+        return (id, revision)
     }
 
     private func revisionURL(id: UUID, revision: Int) -> URL {

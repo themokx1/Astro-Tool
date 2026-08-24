@@ -5,7 +5,7 @@ import AstroMobileDomain
 /// Persists the exact forward snapshot identity that authorizes a later
 /// phone return package. It is deliberately separate from the package
 /// envelope and contains no key material.
-public protocol MobileSentSnapshotStore: Sendable {
+package protocol MobileSentSnapshotStore: Sendable {
     func load() throws -> [UUID]
     func save(snapshotID: UUID) throws
 }
@@ -14,50 +14,64 @@ public protocol MobileSentSnapshotStore: Sendable {
 /// publication has completed. Pending entries intentionally survive crashes:
 /// they are recoverable evidence, but never authorize a return or consume one
 /// of the published-base slots.
-public enum MobileSentSnapshotPublicationState: String, Codable, Equatable, Sendable {
+package enum MobileSentSnapshotPublicationState: String, Codable, Equatable, Sendable {
     case pending
     case published
+    case claimed
 }
 
-public struct MobileSentSnapshotRecord: Codable, Equatable, Sendable {
-    public let snapshotID: UUID
-    public let acknowledgementIDs: [UUID]
-    public let state: MobileSentSnapshotPublicationState
+package struct MobileSentSnapshotRecord: Codable, Equatable, Sendable {
+    package let snapshotID: UUID
+    package let acknowledgementIDs: [UUID]
+    package let state: MobileSentSnapshotPublicationState
+    package let claimedPackageID: UUID?
+    package let claimedSourceFingerprint: String?
 
-    public init(
+    package init(
         snapshotID: UUID,
         acknowledgementIDs: [UUID],
-        state: MobileSentSnapshotPublicationState = .published
+        state: MobileSentSnapshotPublicationState = .published,
+        claimedPackageID: UUID? = nil,
+        claimedSourceFingerprint: String? = nil
     ) {
         self.snapshotID = snapshotID
         self.acknowledgementIDs = Array(Set(acknowledgementIDs)).sorted { $0.uuidString < $1.uuidString }
         self.state = state
+        self.claimedPackageID = claimedPackageID
+        self.claimedSourceFingerprint = claimedSourceFingerprint
     }
 
-    private enum CodingKeys: String, CodingKey { case snapshotID, acknowledgementIDs, state }
+    private enum CodingKeys: String, CodingKey {
+        case snapshotID, acknowledgementIDs, state, claimedPackageID, claimedSourceFingerprint
+    }
 
-    public init(from decoder: Decoder) throws {
+    package init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         snapshotID = try values.decode(UUID.self, forKey: .snapshotID)
-        acknowledgementIDs = Array(Set(try values.decodeIfPresent([UUID].self, forKey: .acknowledgementIDs) ?? []))
-            .sorted { $0.uuidString < $1.uuidString }
+        acknowledgementIDs = try values.decodeIfPresent([UUID].self, forKey: .acknowledgementIDs) ?? []
         // Schema-1 history only contained successfully saved bases, so its
         // absence is unambiguously a published record.
         state = try values.decodeIfPresent(MobileSentSnapshotPublicationState.self, forKey: .state) ?? .published
+        claimedPackageID = try values.decodeIfPresent(UUID.self, forKey: .claimedPackageID)
+        claimedSourceFingerprint = try values.decodeIfPresent(String.self, forKey: .claimedSourceFingerprint)
     }
 }
 
-public protocol MobileSentSnapshotAcknowledgementStore: MobileSentSnapshotStore {
+package protocol MobileSentSnapshotAcknowledgementStore: MobileSentSnapshotStore {
     func loadRecords() throws -> [MobileSentSnapshotRecord]
     func loadPublishedRecords() throws -> [MobileSentSnapshotRecord]
     func save(snapshotID: UUID, acknowledgementIDs: [UUID]) throws
     func reserve(snapshotID: UUID, acknowledgementIDs: [UUID]) throws
     func markPublished(snapshotID: UUID) throws
+    func cancelPending(snapshotID: UUID) throws
+    func claimPublished(snapshotID: UUID, packageID: UUID, sourceFingerprint: String) throws -> MobileSentSnapshotRecord
+    func consumeClaimed(snapshotID: UUID, packageID: UUID, sourceFingerprint: String) throws
     func consumePublished(snapshotID: UUID) throws
 }
 
-public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledgementStore, @unchecked Sendable {
+package final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledgementStore, @unchecked Sendable {
     private static let maximumPublishedBases = 128
+    private static let maximumPendingBases = 128
     private static let maximumAcknowledgements = 10_000
     private static let maximumEncodedBytes = 1_048_576
     /// Independent scenes can use distinct store instances for this same
@@ -99,22 +113,22 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledg
         }
     }
 
-    private let fileURL: URL
+    package let fileURL: URL
     private let lock = NSLock()
 
-    public init(fileURL: URL) {
+    package init(fileURL: URL) {
         self.fileURL = fileURL
     }
 
-    public func load() throws -> [UUID] {
+    package func load() throws -> [UUID] {
         try loadPublishedRecords().map(\.snapshotID)
     }
 
-    public func loadRecords() throws -> [MobileSentSnapshotRecord] {
+    package func loadRecords() throws -> [MobileSentSnapshotRecord] {
         try withLockedRecords { $0 }
     }
 
-    public func loadPublishedRecords() throws -> [MobileSentSnapshotRecord] {
+    package func loadPublishedRecords() throws -> [MobileSentSnapshotRecord] {
         try withLockedRecords { records in
             records.filter { $0.state == .published }
         }
@@ -123,11 +137,11 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledg
     /// Compatibility operation for callers which publish the package and
     /// evidence in one known-complete step. New production publication uses
     /// reserve/markPublished around the physical package export instead.
-    public func save(snapshotID: UUID) throws {
+    package func save(snapshotID: UUID) throws {
         try save(snapshotID: snapshotID, acknowledgementIDs: [])
     }
 
-    public func save(snapshotID: UUID, acknowledgementIDs: [UUID]) throws {
+    package func save(snapshotID: UUID, acknowledgementIDs: [UUID]) throws {
         try mutate { records in
             try Self.validateAcknowledgements(acknowledgementIDs)
             records.removeAll { $0.snapshotID == snapshotID }
@@ -138,34 +152,35 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledg
         }
     }
 
-    public func reserve(snapshotID: UUID, acknowledgementIDs: [UUID]) throws {
+    package func reserve(snapshotID: UUID, acknowledgementIDs: [UUID]) throws {
         try mutate { records in
             try Self.validateAcknowledgements(acknowledgementIDs)
             if let index = records.firstIndex(where: { $0.snapshotID == snapshotID }) {
-                guard records[index].state == .pending else {
-                    // A repeated post-publication reservation is idempotent
-                    // only for identical durable evidence.
-                    guard records[index].acknowledgementIDs == Self.normalized(acknowledgementIDs) else {
-                        throw MobileChangeImportError.receiptFailed
-                    }
-                    return
+                guard records[index].state != .claimed,
+                      records[index].acknowledgementIDs == Self.normalized(acknowledgementIDs) else {
+                    throw MobileChangeImportError.receiptFailed
                 }
-                records[index] = .init(snapshotID: snapshotID, acknowledgementIDs: acknowledgementIDs, state: .pending)
+                return
             } else {
+                // A pending reservation occupies the slot which its physical
+                // publication will use. Capacity therefore fails before the
+                // package service creates the final document name.
+                guard records.filter({ $0.state == .pending }).count < Self.maximumPendingBases,
+                      records.count < Self.maximumPublishedBases else {
+                    throw MobileChangeImportError.limitsExceeded
+                }
                 records.append(.init(snapshotID: snapshotID, acknowledgementIDs: acknowledgementIDs, state: .pending))
             }
         }
     }
 
-    public func markPublished(snapshotID: UUID) throws {
+    package func markPublished(snapshotID: UUID) throws {
         try mutate { records in
             guard let index = records.firstIndex(where: { $0.snapshotID == snapshotID }) else {
                 throw MobileChangeImportError.receiptFailed
             }
             if records[index].state == .published { return }
-            guard records.filter({ $0.state == .published }).count < Self.maximumPublishedBases else {
-                throw MobileChangeImportError.limitsExceeded
-            }
+            guard records[index].state == .pending else { throw MobileChangeImportError.receiptFailed }
             records[index] = .init(
                 snapshotID: records[index].snapshotID,
                 acknowledgementIDs: records[index].acknowledgementIDs,
@@ -174,10 +189,74 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledg
         }
     }
 
+    package func cancelPending(snapshotID: UUID) throws {
+        try mutate { records in
+            records.removeAll { $0.snapshotID == snapshotID && $0.state == .pending }
+        }
+    }
+
+    /// Atomically turns the published base into a package-bound single-use
+    /// claim before any domain command executes. A retry of the exact same
+    /// authenticated phone package may reuse its durable claim after a
+    /// receipt interruption; a competing package cannot.
+    package func claimPublished(
+        snapshotID: UUID,
+        packageID: UUID,
+        sourceFingerprint: String
+    ) throws -> MobileSentSnapshotRecord {
+        var claimed: MobileSentSnapshotRecord?
+        try mutate { records in
+            guard sourceFingerprint.count == 64,
+                  sourceFingerprint.allSatisfy(\.isHexDigit),
+                  let index = records.firstIndex(where: { $0.snapshotID == snapshotID }) else {
+                throw MobileChangeImportError.snapshotMismatch
+            }
+            let record = records[index]
+            switch record.state {
+            case .published:
+                let next = MobileSentSnapshotRecord(
+                    snapshotID: snapshotID,
+                    acknowledgementIDs: record.acknowledgementIDs,
+                    state: .claimed,
+                    claimedPackageID: packageID,
+                    claimedSourceFingerprint: sourceFingerprint
+                )
+                records[index] = next
+                claimed = next
+            case .claimed:
+                guard record.claimedPackageID == packageID,
+                      record.claimedSourceFingerprint == sourceFingerprint else {
+                    throw MobileChangeImportError.snapshotMismatch
+                }
+                claimed = record
+            case .pending:
+                throw MobileChangeImportError.snapshotMismatch
+            }
+        }
+        guard let claimed else { throw MobileChangeImportError.snapshotMismatch }
+        return claimed
+    }
+
+    package func consumeClaimed(
+        snapshotID: UUID,
+        packageID: UUID,
+        sourceFingerprint: String
+    ) throws {
+        try mutate { records in
+            guard let record = records.first(where: { $0.snapshotID == snapshotID }),
+                  record.state == .claimed,
+                  record.claimedPackageID == packageID,
+                  record.claimedSourceFingerprint == sourceFingerprint else {
+                throw MobileChangeImportError.snapshotMismatch
+            }
+            records.removeAll { $0.snapshotID == snapshotID }
+        }
+    }
+
     /// Consuming evidence after a fully authenticated return releases both
     /// the authorization base and exactly the acknowledgement set attached to
     /// it. Pending entries are deliberately untouched.
-    public func consumePublished(snapshotID: UUID) throws {
+    package func consumePublished(snapshotID: UUID) throws {
         try mutate { records in
             records.removeAll { $0.snapshotID == snapshotID && $0.state == .published }
         }
@@ -206,8 +285,17 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledg
     private func loadRecordsUnlocked() throws -> [MobileSentSnapshotRecord] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
         do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                  let number = attributes[.size] as? NSNumber,
+                  number.uint64Value <= UInt64(Int.max),
+                  case let byteCount = Int(number.uint64Value),
+                  byteCount > 0,
+                  byteCount <= Self.maximumEncodedBytes else {
+                throw MobileChangeImportError.receiptFailed
+            }
             let data = try Data(contentsOf: fileURL)
-            guard !data.isEmpty, data.count <= Self.maximumEncodedBytes else { throw MobileChangeImportError.receiptFailed }
+            guard data.count == byteCount else { throw MobileChangeImportError.receiptFailed }
             let records = try MobileJSON.decoder.decode(Payload.self, from: data).records
             try Self.validate(records)
             return records
@@ -259,9 +347,20 @@ public final class MobileSentSnapshotIdentityStore: MobileSentSnapshotAcknowledg
     }
 
     private static func validate(_ records: [MobileSentSnapshotRecord]) throws {
-        guard Set(records.map(\.snapshotID)).count == records.count,
+        guard records.count <= maximumPublishedBases,
+              Set(records.map(\.snapshotID)).count == records.count,
               records.filter({ $0.state == .published }).count <= maximumPublishedBases,
-              records.allSatisfy({ $0.acknowledgementIDs.count <= maximumAcknowledgements && Set($0.acknowledgementIDs).count == $0.acknowledgementIDs.count })
+              records.filter({ $0.state == .pending }).count <= maximumPendingBases,
+              records.allSatisfy({ record in
+                  record.acknowledgementIDs.count <= maximumAcknowledgements
+                      && Set(record.acknowledgementIDs).count == record.acknowledgementIDs.count
+                      && ((record.state == .claimed) == (
+                          record.claimedPackageID != nil
+                              && record.claimedSourceFingerprint?.count == 64
+                              && record.claimedSourceFingerprint?.allSatisfy(\.isHexDigit) == true
+                      ))
+                      && (record.state == .claimed || (record.claimedPackageID == nil && record.claimedSourceFingerprint == nil))
+              })
         else { throw MobileChangeImportError.limitsExceeded }
     }
 }

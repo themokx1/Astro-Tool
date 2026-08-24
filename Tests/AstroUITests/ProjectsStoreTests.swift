@@ -28,7 +28,7 @@ struct ProjectsStoreTests {
         let project = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion", phase: .collecting)
         let phoneChangeID = UUID()
         try await metadata.save(project)
-        try await metadata.save(ProjectAnnotationRecord(
+        try await metadata.createProjectAnnotation(ProjectAnnotationRecord(
             projectID: project.id,
             integrationGoalHours: nil,
             notes: "Before phone update",
@@ -290,7 +290,7 @@ struct ProjectsStoreTests {
         let goaled = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "Elefántormány-köd", phase: .collecting)
         let bare = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "Orion-köd", phase: .collecting)
         try await metadata.save(MetadataWriteBatch(projects: [goaled, bare]))
-        try await metadata.save(ProjectAnnotationRecord(projectID: goaled.id, integrationGoalHours: 20, notes: "", updatedAt: .now))
+        try await metadata.createProjectAnnotation(ProjectAnnotationRecord(projectID: goaled.id, integrationGoalHours: 20, notes: "", updatedAt: .now))
         let store = ProjectsStore(metadataFactory: { _ in metadata })
 
         try await store.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))

@@ -114,6 +114,17 @@ import Testing
     let key = try OneTimePackageKey(scanning: result.oneTimeQRPayload)
     let preview = try await MobilePackageService().importPreview(from: destination, wrapping: key)
     #expect(preview.incomingChanges.count == 1)
+
+    let relaunched = MobileLibraryStore(rootURL: fixture.rootURL)
+    let recovered = try #require(await relaunched.recoverableReturnExport)
+    #expect(recovered.oneTimeQRPayload == result.oneTimeQRPayload)
+    #expect(recovered.destination == destination)
+    #expect(recovered.packageID == result.packageID)
+
+    try await relaunched.discardRecoverableReturnExport()
+    #expect(await relaunched.recoverableReturnExport == nil)
+    let afterDiscard = MobileLibraryStore(rootURL: fixture.rootURL)
+    #expect(await afterDiscard.recoverableReturnExport == nil)
 }
 
 @Test func laterForwardSnapshotPrunesOnlyAcknowledgedQueueIDs() async throws {

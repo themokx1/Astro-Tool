@@ -64,7 +64,7 @@ public struct MobileSyncView: View {
         }
         .interactiveDismissDisabled(store.phase == .exporting || store.phase == .finishing || store.phase == .applying)
         .onChange(of: store.phase) { _, phase in
-            if phase == .importPreviewReady {
+            if phase == .importPreviewReady || phase == .completed {
                 clearIncomingSelection()
             }
         }
@@ -86,11 +86,11 @@ public struct MobileSyncView: View {
 
     private var safetyRail: some View {
         HStack(alignment: .top, spacing: 0) {
-            railNode(title: "Mac", detail: "Original photos", systemImage: "desktopcomputer", active: store.phase != .importPreviewReady)
+            railNode(title: "Mac", detail: "Original photos", systemImage: "desktopcomputer", active: store.phase != .importPreviewReady && store.phase != .completed)
             railLine
             railNode(title: "Sealed package", detail: railMiddleDetail, systemImage: "lock.doc", active: store.phase == .exporting || store.phase == .finishing || store.phase == .exported)
             railLine
-            railNode(title: "iPhone", detail: railPhoneDetail, systemImage: "iphone", active: store.phase == .exported || store.phase == .importPreviewReady)
+            railNode(title: "iPhone", detail: railPhoneDetail, systemImage: "iphone", active: store.phase == .exported || store.phase == .importPreviewReady || store.phase == .completed)
         }
         .padding(AstroTokens.Spacing.standard)
         .astroRecessedSurface()
@@ -109,6 +109,7 @@ public struct MobileSyncView: View {
     private var railPhoneDetail: LocalizedStringKey {
         switch store.phase {
         case .importPreviewReady: "Preview only"
+        case .completed: "Changes saved"
         case .exported: "Unlock with the code"
         default: "No original photos"
         }
@@ -155,6 +156,8 @@ public struct MobileSyncView: View {
             exportedContent
         case .importPreviewReady:
             incomingContent
+        case .completed:
+            completedContent
         case .discarding:
             discardingContent
         case .failed:
@@ -452,6 +455,24 @@ public struct MobileSyncView: View {
         } message: {
             Text("Mac review is required. Original photos stay on this Mac.")
         }
+    }
+
+    private var completedContent: some View {
+        let totals = store.appliedChangeTotals
+        return VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            Label("Reviewed changes saved", systemImage: "checkmark.circle.fill")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(AstroTokens.Color.ok)
+            Text("Applied \(totals.applied), kept on Mac \(totals.keptOnMac), superseded \(totals.superseded), already handled \(totals.alreadyHandled), duplicates \(totals.duplicates), rejected \(totals.rejected). A new Mac-to-iPhone package will acknowledge these outcomes.")
+                .font(.callout.weight(.semibold))
+                .accessibilityLabel("Return import result")
+                .accessibilityValue("Applied \(totals.applied), kept on Mac \(totals.keptOnMac), superseded \(totals.superseded), already handled \(totals.alreadyHandled), duplicates \(totals.duplicates), rejected \(totals.rejected)")
+                .accessibilityIdentifier("v5.mobile-sync.return.result")
+            Button("Done") { cancelAndClear() }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v5.mobile-sync.cancel")
+        }
+        .astroRaisedSurface()
     }
 
     private func resolutionBinding(for conflict: MobileChangeConflict) -> Binding<MobileChangeResolution> {

@@ -1,6 +1,5 @@
 import AstroCore
 import AstroMobileDomain
-import CryptoKit
 import Darwin
 import Foundation
 
@@ -119,19 +118,15 @@ public actor MetadataStore {
         try transaction { try upsert(project) }
     }
 
-    public func save(_ annotation: ProjectAnnotationRecord) throws {
+    /// Creation-only entrypoint. Existing annotations must use the explicit
+    /// compare-and-set editor below.
+    public func createProjectAnnotation(_ annotation: ProjectAnnotationRecord) throws {
         try transaction {
             let existing = try projectAnnotation(projectID: annotation.projectID)
-            let normalized = ProjectAnnotationRecord(
-                projectID: annotation.projectID,
-                integrationGoalHours: annotation.integrationGoalHours,
-                notes: annotation.notes,
-                updatedAt: existing.map { max($0.updatedAt, annotation.updatedAt) } ?? annotation.updatedAt,
-                revision: existing.map { max($0.revision + 1, annotation.revision) } ?? annotation.revision,
-                mobileChangeIDs: existing?.mobileChangeIDs ?? annotation.mobileChangeIDs,
-                mobileChangeMarkers: existing?.mobileChangeMarkers ?? annotation.mobileChangeMarkers
-            )
-            try upsert(normalized)
+            guard existing == nil else {
+                throw MetadataStoreError.staleProjectAnnotation(annotation.projectID)
+            }
+            try upsert(annotation)
         }
     }
 
@@ -161,7 +156,7 @@ public actor MetadataStore {
                     mobileChangeMarkers: existing.mobileChangeMarkers
                 )
                 try upsert(next)
-                saved = next
+                saved = try projectAnnotation(projectID: annotation.projectID)
             } else {
                 guard expectedRevision == 0 else {
                     throw MetadataStoreError.staleProjectAnnotation(annotation.projectID)
@@ -176,7 +171,7 @@ public actor MetadataStore {
                     mobileChangeMarkers: annotation.mobileChangeMarkers
                 )
                 try upsert(initial)
-                saved = initial
+                saved = try projectAnnotation(projectID: annotation.projectID)
             }
         }
         guard let saved else { throw MetadataStoreError.staleProjectAnnotation(annotation.projectID) }
@@ -206,11 +201,16 @@ public actor MetadataStore {
                 MobileChangeMarker(
                     changeID: command.changeID,
                     ownerID: ownerID,
-                    payloadFingerprint: Self.mobileMarkerFingerprint(command: command, mode: mode),
+                    payloadFingerprint: MobileChangeMarkerFingerprint.note(command, mode: mode),
                     resultingRevision: existing.revision + 1
                 )
             }
-            let existingMarkers = Dictionary(uniqueKeysWithValues: existing.mobileChangeMarkers.map { ($0.changeID, $0) })
+            let existingMarkers = try Self.validatedMobileMarkers(
+                existing.mobileChangeMarkers,
+                ids: existing.mobileChangeIDs,
+                ownerID: ownerID,
+                maximumRevision: existing.revision
+            )
             // A legacy bare ID or a payload/owner disagreement is corrupt
             // replay authority, not a reason to guess. Fail closed.
             guard existingIDs.isSubset(of: Set(existingMarkers.keys)),
@@ -221,7 +221,9 @@ public actor MetadataStore {
             if Set(requestedIDs).isSubset(of: existingIDs) {
                 result = MobileChangeDomainBatchResult(
                     appliedChangeIDs: requestedIDs,
-                    resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.map { ($0.uuidString, existing.revision) })
+                    resultingRevisions: Dictionary(uniqueKeysWithValues: requestedIDs.compactMap { id in
+                        existingMarkers[id].map { (id.uuidString, $0.resultingRevision) }
+                    })
                 )
                 return
             }
@@ -414,11 +416,20 @@ public actor MetadataStore {
     /// an empty marker list.
     func allProjectAnnotationMarkers() throws -> [MobileChangeMarker] {
         var markers: [MobileChangeMarker] = []
-        try database.query("SELECT project_id, mobile_change_markers FROM project_annotations;") { row in
+        try database.query("SELECT project_id, revision, mobile_change_ids, mobile_change_markers FROM project_annotations;") { row in
             guard let rawID = row.string(0), let projectID = UUID(uuidString: rawID) else {
                 throw MetadataStoreError.invalidRecord(table: "project_annotations", id: row.string(0) ?? "unknown")
             }
-            markers.append(contentsOf: try Self.decodeMobileChangeMarkers(row.string(1), projectID: projectID))
+            let revision = Int(row.int64(1) ?? -1)
+            let ids = try Self.decodeMobileChangeIDs(row.string(2), projectID: projectID)
+            let decoded = try Self.decodeMobileChangeMarkers(row.string(3), projectID: projectID)
+            let validated = try Self.validatedMobileMarkers(
+                decoded,
+                ids: ids,
+                ownerID: "project:\(projectID.uuidString.lowercased())",
+                maximumRevision: revision
+            )
+            markers.append(contentsOf: validated.values)
         }
         return markers
     }
@@ -1160,14 +1171,26 @@ public actor MetadataStore {
         catch { throw MetadataStoreError.invalidRecord(table: "project_annotations", id: projectID.databaseText) }
     }
 
-    private static func mobileMarkerFingerprint(command: MobileNoteRevisionCommand, mode: MobileNoteBatchMutationMode) -> String {
-        let encoded = (try? MobileJSON.encoder.encode(ProjectMobileMarkerPayload(command: command, mode: mode))) ?? Data()
-        return SHA256.hash(data: encoded).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private struct ProjectMobileMarkerPayload: Codable {
-        let command: MobileNoteRevisionCommand
-        let mode: MobileNoteBatchMutationMode
+    private static func validatedMobileMarkers(
+        _ markers: [MobileChangeMarker],
+        ids: [UUID],
+        ownerID: String,
+        maximumRevision: Int
+    ) throws -> [UUID: MobileChangeMarker] {
+        let markerIDs = markers.map(\.changeID)
+        guard Set(ids).count == ids.count,
+              Set(markerIDs).count == markerIDs.count,
+              Set(ids) == Set(markerIDs),
+              markers.allSatisfy({
+                  $0.ownerID == ownerID
+                      && $0.payloadFingerprint.count == 64
+                      && $0.payloadFingerprint.allSatisfy(\.isHexDigit)
+                      && $0.resultingRevision >= 0
+                      && $0.resultingRevision <= maximumRevision
+              }) else {
+            throw MobileChangeImportError.corruptDomainMarkers
+        }
+        return Dictionary(markers.map { ($0.changeID, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     private func upsert(_ record: NightRecord) throws {

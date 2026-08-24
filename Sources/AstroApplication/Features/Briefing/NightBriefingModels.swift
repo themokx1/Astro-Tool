@@ -234,7 +234,7 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
         self.checklist = checklist
         self.notes = notes
         self.language = language
-        self.mobileChangeMarkers = Array(Set(mobileChangeMarkers)).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
+        self.mobileChangeMarkers = mobileChangeMarkers.sorted { $0.changeID.uuidString < $1.changeID.uuidString }
         self.mobileChangeIDs = Array(Set(mobileChangeIDs).union(mobileChangeMarkers.map(\.changeID))).sorted { $0.uuidString < $1.uuidString }
     }
 
@@ -255,7 +255,7 @@ public struct NightBriefingDraft: Codable, Equatable, Identifiable, Sendable {
         notes = try values.decode(String.self, forKey: .notes)
         language = try values.decode(BriefingDocumentLanguage.self, forKey: .language)
         mobileChangeIDs = Array(Set(try values.decodeIfPresent([UUID].self, forKey: .mobileChangeIDs) ?? [])).sorted { $0.uuidString < $1.uuidString }
-        mobileChangeMarkers = Array(Set(try values.decodeIfPresent([MobileChangeMarker].self, forKey: .mobileChangeMarkers) ?? [])).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
+        mobileChangeMarkers = (try values.decodeIfPresent([MobileChangeMarker].self, forKey: .mobileChangeMarkers) ?? []).sorted { $0.changeID.uuidString < $1.changeID.uuidString }
     }
 }
 

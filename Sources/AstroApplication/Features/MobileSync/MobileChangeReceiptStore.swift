@@ -4,24 +4,24 @@ import AstroMobileDomain
 
 /// App-owned durable metadata boundary for the cumulative return ledger.
 /// It intentionally contains no package keys or document contents.
-public final class MobileChangeReceiptStore: MobileChangeApplicationRecordStore, @unchecked Sendable {
+package final class MobileChangeReceiptStore: MobileChangeApplicationRecordStore, @unchecked Sendable {
     private static let processLock = NSLock()
     private static let maximumEncodedBytes = 1_048_576
     private let fileURL: URL
     private let lock = NSLock()
 
-    public init(fileURL: URL) {
+    package init(fileURL: URL) {
         self.fileURL = fileURL
     }
 
-    public func load() throws -> MobileChangeApplicationLedger? {
+    package func load() throws -> MobileChangeApplicationLedger? {
         Self.processLock.lock()
         lock.lock()
         defer { lock.unlock(); Self.processLock.unlock() }
         return try withFileLock { try loadUnlocked() }
     }
 
-    public func updateLedger(
+    package func updateLedger(
         _ mutation: (MobileChangeApplicationLedger?) throws -> MobileChangeApplicationLedger?
     ) throws {
         Self.processLock.lock()
@@ -37,11 +37,18 @@ public final class MobileChangeReceiptStore: MobileChangeApplicationRecordStore,
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
         let data: Data
         do {
+            let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+            guard attributes[.type] as? FileAttributeType == .typeRegular,
+                  let number = attributes[.size] as? NSNumber,
+                  number.uint64Value > 0,
+                  number.uint64Value <= UInt64(Self.maximumEncodedBytes) else {
+                throw MobileChangeImportError.receiptFailed
+            }
             data = try Data(contentsOf: fileURL)
+            guard data.count == number.intValue else { throw MobileChangeImportError.receiptFailed }
         } catch {
             throw MobileChangeImportError.receiptFailed
         }
-        guard !data.isEmpty, data.count <= Self.maximumEncodedBytes else { throw MobileChangeImportError.receiptFailed }
         do {
             return try MobileJSON.decoder.decode(MobileChangeApplicationLedger.self, from: data)
         } catch {
@@ -49,7 +56,7 @@ public final class MobileChangeReceiptStore: MobileChangeApplicationRecordStore,
         }
     }
 
-    public func save(_ ledger: MobileChangeApplicationLedger) throws {
+    package func save(_ ledger: MobileChangeApplicationLedger) throws {
         Self.processLock.lock()
         lock.lock()
         defer { lock.unlock(); Self.processLock.unlock() }
