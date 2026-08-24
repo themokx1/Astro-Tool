@@ -93,7 +93,11 @@ func mobileMutationSurfaceContract() throws {
         .joined(separator: "\n")
         .lowercased()
 
-    for forbidden in ["finder", "file path", "crud", "delete", "move", "rename"] {
+    for forbidden in [
+        "finder", "file path", "path", "crud", "file management", "file-management",
+        "delete", "move", "rename", "original file", "original-file", "manifest",
+        "payload", "schema", "fits", "sync transport", "transport"
+    ] {
         #expect(!source.contains(forbidden), "The mobile surface must not expose \(forbidden).")
     }
     #expect(source.components(separatedBy: "try await store.togglechecklistitem").count - 1 == 2)

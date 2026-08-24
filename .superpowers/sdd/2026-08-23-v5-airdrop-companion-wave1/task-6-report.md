@@ -110,3 +110,24 @@ swift test --disable-sandbox --filter MobilePackageServiceTests --no-parallel
                                                        # 39 tests passed
 git diff --check                                       # passed
 ```
+
+## Fix round 3 — stable fallback selection and durable UI assertions
+
+- Undated briefing rows now expose the stable `mobile-briefing-undated` accessibility identifier. The Hungarian journey selects that semantic row rather than relying on a list-cell index, while dated rows retain their per-briefing identifiers.
+- The completed-checklist UI assertion now uses an `XCTNSPredicateExpectation` against the accessibility value, allowing the actor's durable append and root refresh to complete before the assertion.
+- Expanded the source-backed safe-surface vocabulary contract to cover the complete brief vocabulary: file-management variants, delete/move/rename/path/Finder, original-file wording, manifest/payload/schema/FITS, and sync-transport terms. The contract still reads the production Tonight, Projects, Briefings, and Sync sources and verifies the concrete checklist/note mutation call counts.
+
+Fix-round 3 safe verification:
+
+```text
+xcodegen generate                                      # passed
+swiftc -typecheck <all iOS mobile sources>             # passed against iOS 26 SDK
+swiftc -frontend -parse <mobile sources/tests/UI tests> # passed
+source vocabulary contract (all forbidden terms)       # passed
+localization key parity (EN/HU)                        # passed
+swift test --disable-sandbox --filter MobilePackageServiceTests --no-parallel
+                                                       # 39 tests passed
+git diff --check                                       # passed
+```
+
+The Xcode account/CoreSimulator runtime gate remains separate and unclaimed; no fresh build or UI runtime result is asserted.

@@ -41,7 +41,9 @@ final class AstroToolMobileLaunchTests: XCTestCase {
         XCTAssertTrue(app.otherElements["mobile-tonight-surface"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["mobile-checklist-focus"].waitForExistence(timeout: 5))
         app.buttons["mobile-checklist-focus"].tap()
-        XCTAssertEqual(app.buttons["mobile-checklist-focus"].value as? String, "Completed")
+        let completed = NSPredicate(format: "value == %@", "Completed")
+        let completionExpectation = XCTNSPredicateExpectation(predicate: completed, object: app.buttons["mobile-checklist-focus"])
+        XCTAssertEqual(XCTWaiter.wait(for: [completionExpectation], timeout: 5), .completed)
         app.buttons["mobile-note-edit"].tap()
         let editor = app.textViews["v5.mobile.note.editor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 5))
@@ -78,7 +80,9 @@ final class AstroToolMobileLaunchTests: XCTestCase {
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.tabBars.buttons["Tervek"].tap()
         XCTAssertTrue(app.otherElements["mobile-briefings-surface"].waitForExistence(timeout: 5))
-        app.cells.element(boundBy: 2).tap()
+        let undatedBriefing = app.descendants(matching: .any)["mobile-briefing-undated"]
+        XCTAssertTrue(undatedBriefing.waitForExistence(timeout: 5))
+        undatedBriefing.tap()
         XCTAssertTrue(app.staticTexts["Dátum nincs megadva"].waitForExistence(timeout: 5))
         app.navigationBars.buttons.element(boundBy: 0).tap()
         app.tabBars.buttons["Átvitel"].tap()
