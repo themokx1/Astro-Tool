@@ -38,17 +38,29 @@ public struct MobilePackageImportPreview: Equatable, Sendable {
     public let snapshotSummary: MobileSnapshotSummary
     public let incomingChanges: [MobileChange]
     public let encryptedByteCount: Int64
+    public let purpose: MobilePackagePurpose
+    public let baseSnapshotID: UUID?
+    public let libraryID: PortableLibraryID?
+    public let snapshotID: UUID?
 
     public init(
         packageID: UUID,
         snapshotSummary: MobileSnapshotSummary,
         incomingChanges: [MobileChange],
-        encryptedByteCount: Int64
+        encryptedByteCount: Int64,
+        purpose: MobilePackagePurpose = .forwardSnapshot,
+        baseSnapshotID: UUID? = nil,
+        libraryID: PortableLibraryID? = nil,
+        snapshotID: UUID? = nil
     ) {
         self.packageID = packageID
         self.snapshotSummary = snapshotSummary
         self.incomingChanges = incomingChanges
         self.encryptedByteCount = encryptedByteCount
+        self.purpose = purpose
+        self.baseSnapshotID = baseSnapshotID
+        self.libraryID = libraryID
+        self.snapshotID = snapshotID
     }
 }
 
@@ -361,7 +373,11 @@ public actor MobilePackageService {
             packageID: manifest.packageID,
             snapshotSummary: summary,
             incomingChanges: envelope.changes,
-            encryptedByteCount: manifest.encryptedByteCount
+            encryptedByteCount: manifest.encryptedByteCount,
+            purpose: envelope.purpose,
+            baseSnapshotID: envelope.baseSnapshotID,
+            libraryID: envelope.snapshot?.libraryID,
+            snapshotID: envelope.snapshot?.snapshotID
         )
         guard stagedImports.count < Self.maximumStagedImportCount,
               stagedImportBytes <= Self.maximumStagedImportBytes - manifest.encryptedByteCount else {
@@ -456,8 +472,11 @@ public actor MobilePackageService {
 
     private static func validateEnvelopeObject(_ value: Any?) throws {
         guard let object = value as? [String: Any] else { throw MobilePackageError.invalidEnvelope }
-        let baseKeys: Set<String> = ["changes", "acknowledgedChangeIDs"]
-        guard Set(object.keys) == baseKeys || Set(object.keys) == baseKeys.union(["snapshot"]) else { throw MobilePackageError.invalidEnvelope }
+        let requiredKeys: Set<String> = ["purpose", "changes", "acknowledgedChangeIDs"]
+        let allowedKeys = requiredKeys.union(["snapshot", "baseSnapshotID"])
+        guard Set(object.keys).isSubset(of: allowedKeys), requiredKeys.isSubset(of: Set(object.keys)) else { throw MobilePackageError.invalidEnvelope }
+        guard let purpose = object["purpose"] as? String,
+              MobilePackagePurpose(rawValue: purpose) != nil else { throw MobilePackageError.invalidEnvelope }
         if let snapshot = object["snapshot"], !(snapshot is NSNull) { try validateSnapshotObject(snapshot) }
         guard let changes = object["changes"] as? [Any], changes.count <= maximumCollectionCount,
               let acknowledged = object["acknowledgedChangeIDs"] as? [Any], acknowledged.count <= maximumCollectionCount else {
@@ -734,6 +753,14 @@ public actor MobilePackageService {
             throw MobilePackageError.invalidEnvelope
         }
         if forExport { try validateExportEncodingBudget(envelope) }
+        switch envelope.purpose {
+        case .forwardSnapshot:
+            guard envelope.baseSnapshotID == nil else { throw MobilePackageError.invalidEnvelope }
+        case .returnChanges:
+            guard let snapshot = envelope.snapshot,
+                  envelope.baseSnapshotID == snapshot.snapshotID,
+                  envelope.acknowledgedChangeIDs.isEmpty else { throw MobilePackageError.invalidEnvelope }
+        }
         let snapshot = envelope.snapshot
         if let snapshot {
             guard snapshot.schemaVersion > 0, snapshot.schemaVersion <= MobileLibrarySnapshot.currentSchemaVersion,
@@ -831,6 +858,8 @@ public actor MobilePackageService {
     private static func validateExportEncodingBudget(_ envelope: MobilePackageEnvelope) throws {
         var budget = ExportEncodingBudget()
         try budget.addRecord()
+        try budget.addString(envelope.purpose.rawValue)
+        if let baseSnapshotID = envelope.baseSnapshotID { try budget.addString(baseSnapshotID.uuidString) }
         try budget.addRecord()
         try budget.addArray(envelope.acknowledgedChangeIDs.count)
         for id in envelope.acknowledgedChangeIDs { try budget.addString(id.uuidString) }

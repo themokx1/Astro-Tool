@@ -22,6 +22,15 @@ struct MobileChangeImporterTests {
         #expect(preview.rejected.isEmpty)
     }
 
+    @Test("return preview binds the sent base snapshot while comparing against a fresh Mac snapshot")
+    func baseIdentityIsSeparateFromCurrentSnapshot() throws {
+        let fixture = Fixture()
+        let sent = fixture.envelope(changes: [fixture.checklistChange()])
+        let fresh = MobileLibrarySnapshot(schemaVersion: 1, libraryID: fixture.libraryID, snapshotID: UUID(), revision: 8, createdAt: fixture.date.addingTimeInterval(20), projects: sent.snapshot!.projects, nights: sent.snapshot!.nights, captures: sent.snapshot!.captures, briefings: sent.snapshot!.briefings, notes: sent.snapshot!.notes)
+        let preview = try MobileChangeImporter().preview(envelope: sent, expectedLibraryID: fixture.libraryID, expectedBaseSnapshotID: sent.snapshot!.snapshotID, currentSnapshot: fresh, sourcePackageID: fixture.packageID)
+        #expect(preview.applicable.count == 1)
+    }
+
     @Test("Mac edits become typed conflicts and default note resolution keeps both")
     func conflictsExposeBothValues() throws {
         let fixture = Fixture(macChecklistRevision: 4, macNoteRevision: 4)
@@ -64,13 +73,22 @@ struct MobileChangeImporterTests {
         let otherDevice = fixture.noteChange(deviceID: UUID())
         let commands = CommandCounter()
         let importer = MobileChangeImporter(commands: .init(
-            saveChecklist: { _ in commands.value += 1; return nil },
-            saveNote: { _ in commands.value += 1; return nil },
+            saveChecklist: { command in commands.value += 1; return command.resultingRevision },
+            saveNote: { command in commands.value += 1; return command.resultingRevision },
             addFieldNote: { _ in commands.value += 1; return nil }
         ))
 
+        #expect(throws: MobileChangeImportError.crossDeviceQueue) {
+            try importer.preview(
+                envelope: fixture.envelope(changes: [first, duplicate, unknown, otherDevice]),
+                expectedLibraryID: fixture.libraryID,
+                currentSnapshot: fixture.snapshot,
+                sourcePackageID: fixture.packageID
+            )
+        }
+
         let preview = try importer.preview(
-            envelope: fixture.envelope(changes: [first, duplicate, unknown, otherDevice]),
+            envelope: fixture.envelope(changes: [first, duplicate, unknown]),
             expectedLibraryID: fixture.libraryID,
             currentSnapshot: fixture.snapshot,
             sourcePackageID: fixture.packageID
@@ -78,7 +96,6 @@ struct MobileChangeImporterTests {
 
         #expect(preview.duplicates == [first.changeID])
         #expect(preview.rejected.contains { $0.reason == .unknownTarget })
-        #expect(preview.rejected.contains { $0.reason == .crossDeviceQueue })
         #expect(commands.value == 0)
     }
 
@@ -87,8 +104,8 @@ struct MobileChangeImporterTests {
         let fixture = Fixture()
         let calls = CommandCounter()
         let importer = MobileChangeImporter(commands: .init(
-            saveChecklist: { _ in calls.value += 1; return nil },
-            saveNote: { _ in calls.value += 1; return nil },
+            saveChecklist: { command in calls.value += 1; return command.resultingRevision },
+            saveNote: { command in calls.value += 1; return command.resultingRevision },
             addFieldNote: { _ in calls.value += 1; return nil }
         ))
         let envelope = fixture.envelope(changes: [fixture.checklistChange(), fixture.noteChange()])
@@ -114,8 +131,8 @@ struct MobileChangeImporterTests {
         let recordStore = MobileChangeReceiptStore(fileURL: fileURL)
         let calls = CommandCounter()
         let importer = MobileChangeImporter(commands: .init(
-            saveChecklist: { _ in calls.value += 1; return nil },
-            saveNote: { _ in calls.value += 1; return nil },
+            saveChecklist: { command in calls.value += 1; return command.resultingRevision },
+            saveNote: { command in calls.value += 1; return command.resultingRevision },
             addFieldNote: { _ in calls.value += 1; return nil }
         ), recordStore: recordStore)
         let preview = try importer.preview(envelope: envelope, expectedLibraryID: fixture.libraryID, currentSnapshot: fixture.snapshot, sourcePackageID: fixture.packageID)
@@ -125,7 +142,29 @@ struct MobileChangeImporterTests {
 
         let relaunched = MobileChangeImporter(recordStore: recordStore)
         let replay = try relaunched.preview(envelope: envelope, expectedLibraryID: fixture.libraryID, currentSnapshot: fixture.snapshot, sourcePackageID: fixture.packageID)
-        #expect(replay.alreadyApplied == [ids[.note]!])
+        #expect(Set(replay.alreadyApplied) == Set([ids[.note]!, ids[.checklist]!]))
+    }
+
+    @Test("multiple phone edits preserve chronology and apply only the effective latest value")
+    func chronologyUsesLatestEffectiveValue() throws {
+        let fixture = Fixture()
+        let first = fixture.noteChange(id: UUID(uuidString: "00000000-0000-0000-0000-000000000010")!, text: "first")
+        let second = fixture.noteChange(id: UUID(uuidString: "00000000-0000-0000-0000-000000000011")!, text: "second")
+        let preview = try MobileChangeImporter().preview(envelope: fixture.envelope(changes: [second, first]), expectedLibraryID: fixture.libraryID, currentSnapshot: fixture.snapshot, sourcePackageID: fixture.packageID)
+        #expect(preview.applicable.count == 1)
+        #expect(preview.superseded == [first.changeID])
+        #expect(preview.applicable.first?.noteText == "second")
+    }
+
+    @Test("production defaults fail closed when persistence commands are not configured")
+    func missingCommandsNeverClaimSuccess() throws {
+        let fixture = Fixture()
+        let importer = MobileChangeImporter()
+        let envelope = fixture.envelope(changes: [fixture.checklistChange()])
+        let preview = try importer.preview(envelope: envelope, expectedLibraryID: fixture.libraryID, currentSnapshot: fixture.snapshot, sourcePackageID: fixture.packageID)
+        #expect(throws: MobileChangeImportError.configurationMissing) {
+            try importer.apply(preview: preview, envelope: envelope, currentSnapshot: fixture.snapshot, resolutions: [:], confirmed: true)
+        }
     }
 }
 
@@ -160,7 +199,7 @@ private struct Fixture {
     }
 
     func envelope(changes: [MobileChange]) -> MobilePackageEnvelope {
-        MobilePackageEnvelope(snapshot: snapshot, changes: changes, acknowledgedChangeIDs: [])
+        MobilePackageEnvelope(purpose: .returnChanges, snapshot: snapshot, baseSnapshotID: snapshot.snapshotID, changes: changes, acknowledgedChangeIDs: [])
     }
 
     func checklistChange(id: UUID = UUID(), itemID: String? = nil, deviceID: UUID? = nil) -> MobileChange {
@@ -178,5 +217,10 @@ private extension MobileChange {
         case .checklistCompletion(let value): value.changeID
         case .noteRevision(let value): value.changeID
         }
+    }
+
+    var noteText: String? {
+        guard case .noteRevision(let value) = self else { return nil }
+        return value.text
     }
 }

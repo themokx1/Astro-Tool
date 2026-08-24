@@ -1,38 +1,42 @@
-# Task 7 — Safe return changes and Mac conflict preview
+# Task 7 — Encrypted return leg review-round-1 closure
+
+## Outcome
+
+The phone return document is explicitly `returnChanges`, carries its sent base snapshot identity, and is authenticated into an opaque Mac package capability. The Mac retains that capability only through typed preview and final-confirmation apply; cancellation, failure, and success discard it. Forward snapshots and return documents are separated by purpose, and the phone accepts only forward snapshots with matching acknowledgement IDs.
 
 ## RED / GREEN evidence
 
-- Added first importer tests before the implementation for matching revisions, conflicts, blank notes, duplicate IDs, unknown targets, cross-device queues, confirmation, and command isolation.
-- RED was observed as the missing `MobileChangeImporter` API; after implementation the focused suite passes (6 tests).
-- Added mobile-store fixture coverage for return export queue retention and acknowledgement pruning. The iOS target cannot execute in this environment because Xcode reports no iOS destinations / the iOS 26.5 platform is not installed.
+- Importer tests cover matching revisions, fresh-current-vs-sent-base identity, conflict values/timestamps, blank-note rejection, duplicate/unknown records, whole-queue device validation, chronology/latest effective edit, explicit confirmation, durable replay, configuration failure, and cumulative acknowledgement IDs.
+- The importer now calls only three narrow production command types: checklist revision, note revision, and field-note creation. The concrete production command store persists each deterministic change ID and resulting revision atomically and idempotently; missing configuration fails closed.
+- The cumulative per-library ledger retains prior package records, applied IDs, deliberate `keepMac` resolutions, superseded IDs, and resulting revisions. Corrupt/empty ledger data is a visible receipt failure rather than an empty ledger.
+- iPhone return export uses the system document exporter, preserves the queue through cancellation and export failure, rejects overwrite through the existing destination coordinator, presents a one-time code only in view state, and explains that queued records remain until a later matching forward acknowledgement.
 
-## Schemas and semantics
+## Security and durability
 
-- `MobileChangeImportPreview` has deterministic sorted applicable, conflict, duplicate, already-applied, and rejected records.
-- `MobileChangeConflict` carries typed Mac/phone checklist values or note texts, timestamps, target name, and recommended resolution. Note conflicts recommend `keepBothAsFieldNote`.
-- `MobileRejectedChange` records localized-domain reasons including unknown target, blank note, cross-device queue, malformed record, and limits.
-- `MobileChangeApplicationRecord`/`MobileChangeApplicationReceipt` binds library ID, source package ID/fingerprint, applied change IDs, and resulting revisions. `MobileChangeReceiptStore` writes bounded JSON atomically in app-owned metadata.
+- Authenticated envelope purpose/base identity are validated before typed classification. Mac preview compares the authenticated sent base identity against the separately persisted last-forward snapshot identity while conflict detection uses a newly composed current Mac snapshot.
+- The retained opaque capability is the only authority for the authenticated package ID, envelope, and fingerprint. The legacy summary-only preview seam is internal fixture support; production uses the authenticated capability path.
+- Preview performs no domain mutation. Apply requires final confirmation, revalidates the source fingerprint and current snapshot, executes only the allowlisted commands, and commits the cumulative ledger after each successful command. Command IDs make command-success/receipt-failure retries idempotent.
+- Phone forward import prunes only exact acknowledged IDs and commits the fresh snapshot plus queue pruning atomically. Return packages cannot enter the forward-import path.
+- No photo path, image bytes, generic file operation, database handle, WriteGuard, or cloud/live-sync behavior enters the package/import command boundary.
 
-## Security and atomicity
+## UI / localization
 
-- The importer accepts only an envelope with a metadata snapshot matching the expected library and base snapshot, rejects acknowledgement IDs on the return leg, checks one device queue, validates limits/revisions/timestamps/targets before commands, and never receives a path, file handle, database object, `WriteGuard`, or generic closure.
-- Preview does not invoke commands. Apply requires final confirmation and revalidates the exact source fingerprint and snapshot identity. Each durable command is recorded only after success; a later failure returns an explicit partial receipt instead of claiming all-or-nothing success.
-- iPhone return export is encrypted through the existing one-time-key package service and leaves its queue unchanged. Phone imports reject envelopes containing return changes and prune only acknowledged IDs that match the local queue, atomically with the forward snapshot state write.
+- Mac review renders the authenticated typed preview, applicable/conflict/already-handled/superseded/duplicate/rejected counts, human target names, both checklist/note values and timestamps, every valid resolution, note default keep-both, separate final confirmation, success totals, and the no-photo/no-automatic-sync safety copy.
+- Mac return messages and resolution/result labels have EN/HU entries; no raw target IDs are displayed in conflict rows.
+- iPhone Sync has a real return exporter, ready-to-import state, one-time code, queued count, acknowledgement explanation, and visible error handling while preserving queued changes.
 
-## UI / flow
+## Verification evidence
 
-- Mac store now exposes typed return preview, explicit conflict resolutions, final-confirmation apply, and receipt state. The Sync surface reports applicable/conflicting/already-handled/rejected counts and states checklist/notes-only safety, Mac review requirement, and no automatic/cloud sync.
-- iPhone store exposes `exportReturnPackage`/`exportQueuedChanges`; the result includes package identity and one-time QR payload while preserving all queued changes until a later authenticated acknowledgement snapshot.
+- `swift test --filter MobileChangeImporterTests` — passed, 9 tests.
+- `swift test --filter MobileSyncStoreTests` — passed, 15 tests.
+- `swift test --filter MobileLibraryModelsTests` — passed, 4 tests.
+- `swift test --filter 'MobileChangeImporterTests|MobileSyncStoreTests|MobilePackageServiceTests|MobileLibraryModelsTests'` — passed, 68 tests in 2 suites, after the return-envelope key fixture correction.
+- `swift test` — passed, 3,464 tests in 219 suites.
+- `swift scripts/extract-localizable-strings.swift --missing` — only the existing explicit domain/brand allowlist remains (AstroTool, FWHM, Light/Flat/Dark/Bias, OK).
+- `xcodebuild -project AstroTool.xcodeproj -scheme AstroToolApp -destination platform=macOS -derivedDataPath /tmp/astro-v5-round1 build` — BUILD SUCCEEDED during this review round; SwiftPM compilation also succeeded after the final source additions.
+- `git diff --check` — clean before commit.
+- iOS runtime gate remains external and unclaimed: this environment has no usable iOS destination and reports the iOS 26.5 platform/simulator unavailable.
 
-## Verification
+## External gate / concern
 
-- `swift test --filter MobileChangeImporterTests` — passed, 6 tests.
-- `swift test --filter LocalizationCoverageTests` — passed, 15 tests.
-- `swift test --skip-build` — passed, 3,459 tests in 219 suites.
-- `xcodebuild -project AstroTool.xcodeproj -scheme AstroToolApp -destination platform=macOS ... build` — BUILD SUCCEEDED.
-- `git diff --check` — clean.
-- Mobile/iOS Xcode gate: blocked externally. `AstroToolMobile` has no usable destination; Xcode reports iOS 26.5 is not installed / no simulator destination. No iOS success is claimed.
-
-## Remaining concern / external gate
-
-The authenticated package-service compatibility preview still exposes only its summary and incoming change list; production wiring from a retained authenticated return capability into the typed `MobileChangeImportPreview` should be completed when the iOS/Xcode gate and final package-direction schema are available. The direct store API and fixture journey cover the safety boundary without retaining decrypted package material.
+The Mac SwiftPM and macOS app checks are the evidence for this round. An official iOS simulator/device build and UI journey still require the unavailable Xcode iOS runtime; no iOS success is claimed.

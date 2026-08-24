@@ -26,6 +26,17 @@ private struct WrongWrapper: MobilePackageKeyWrapping {
     #expect(try await service.commitImport(token: authenticated.token) == envelope)
 }
 
+@Test func returnPackageCarriesExplicitPurposeAndBaseIdentity() async throws {
+    let root = try TemporaryPackageDirectory()
+    let destination = root.url.appendingPathComponent("return.astromobile")
+    let snapshot = MobileLibrarySnapshot(schemaVersion: 1, libraryID: PortableLibraryID(rawValue: UUID()), snapshotID: UUID(), revision: 3, createdAt: Date(), projects: [], nights: [], captures: [], briefings: [], notes: [])
+    let envelope = MobilePackageEnvelope(purpose: .returnChanges, snapshot: snapshot, baseSnapshotID: snapshot.snapshotID, changes: [], acknowledgedChangeIDs: [])
+    try await MobilePackageService().export(envelope, to: destination, wrapping: DeterministicWrapper())
+    let authenticated = try await MobilePackageService().authenticatePreview(from: destination, wrapping: DeterministicWrapper())
+    #expect(authenticated.preview.purpose == .returnChanges)
+    #expect(authenticated.preview.baseSnapshotID == snapshot.snapshotID)
+}
+
 @Test func exportReturnsPublishedManifestMetadata() async throws {
     let root = try TemporaryPackageDirectory()
     let destination = root.url.appendingPathComponent("manifest-result.astromobile")
@@ -642,7 +653,7 @@ func cancellationBeforeExclusivePublicationLeavesNoDestination() async throws {
     try await MobilePackageService().export(MobilePackageEnvelope(snapshot: nil, changes: [], acknowledgedChangeIDs: []), to: destination, wrapping: DeterministicWrapper())
     let manifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: Data(contentsOf: destination.appendingPathComponent("manifest.json")))
     let createdAt = "2026-08-23T00:00:00.00000000000000000Z"
-    let valid = Data("{\"packageID\":\"\(manifest.packageID.uuidString)\",\"envelope\":{\"changes\":[{\"kind\":\"noteRevision\",\"payload\":{\"changeID\":\"\(UUID().uuidString)\",\"deviceID\":\"\(UUID().uuidString)\",\"noteID\":\"n\",\"ownerID\":\"o\",\"baseRevision\":0,\"text\":\"\\uD83D\\uDE00\",\"createdAt\":\"\(createdAt)\"}}],\"acknowledgedChangeIDs\":[]}}".utf8)
+    let valid = Data("{\"packageID\":\"\(manifest.packageID.uuidString)\",\"envelope\":{\"purpose\":\"forwardSnapshot\",\"changes\":[{\"kind\":\"noteRevision\",\"payload\":{\"changeID\":\"\(UUID().uuidString)\",\"deviceID\":\"\(UUID().uuidString)\",\"noteID\":\"n\",\"ownerID\":\"o\",\"baseRevision\":0,\"text\":\"\\uD83D\\uDE00\",\"createdAt\":\"\(createdAt)\"}}],\"acknowledgedChangeIDs\":[]}}".utf8)
     try rewriteAuthenticatedPayloadRaw(at: destination, plaintext: valid)
     let preview = try await MobilePackageService().importPreview(from: destination, wrapping: DeterministicWrapper())
     #expect(preview.incomingChanges.count == 1)

@@ -8,10 +8,26 @@ import Testing
     #expect(try MobileJSON.decoder.decode(MobileLibrarySnapshot.self, from: data) == snapshot)
 }
 
+@Test func packagePurposeAndBaseSnapshotIdentityRoundTrip() throws {
+    let snapshot = MobileLibrarySnapshot.testValue
+    let envelope = MobilePackageEnvelope(
+        purpose: .returnChanges,
+        snapshot: snapshot,
+        baseSnapshotID: snapshot.snapshotID,
+        changes: [],
+        acknowledgedChangeIDs: []
+    )
+    #expect(try MobileJSON.decoder.decode(MobilePackageEnvelope.self, from: MobileJSON.encoder.encode(envelope)) == envelope)
+    #expect(envelope.purpose == .returnChanges)
+    #expect(envelope.baseSnapshotID == snapshot.snapshotID)
+}
+
 @Test func encodedSnapshotContainsNoFilesystemMaterial() throws {
     let snapshot = MobileLibrarySnapshot.testValue
     let envelope = MobilePackageEnvelope(
+        purpose: .returnChanges,
         snapshot: snapshot,
+        baseSnapshotID: snapshot.snapshotID,
         changes: MobileChange.testValues,
         acknowledgedChangeIDs: [MobileChange.testChangeID]
     )
@@ -78,7 +94,7 @@ private let expectedAllowlistedKeys: Set<String> = [
     "savedAt", "nightDate", "readiness", "targets", "checklist", "noteID", "name",
     "role", "start", "end", "warnings", "title", "items", "explanation", "isCompleted",
     "baseRevision", "scope", "ownerID", "text", "updatedAt", "isEditableOnPhone",
-    "snapshot", "changes", "acknowledgedChangeIDs", "kind", "payload", "changeID", "deviceID",
+    "snapshot", "purpose", "baseSnapshotID", "changes", "acknowledgedChangeIDs", "kind", "payload", "changeID", "deviceID",
     "briefingID", "itemID", "isCompleted", "formatVersion", "packageID",
     "encryptedByteCount", "ciphertextSHA256", "keyMode", "wrappedContentKeyBase64",
     "projectCount", "nightCount", "captureCount", "briefingCount", "noteCount", "checklistItemCount"

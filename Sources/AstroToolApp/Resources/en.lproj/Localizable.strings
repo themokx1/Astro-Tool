@@ -180,6 +180,20 @@
 "Already handled" = "Already handled";
 "Not imported" = "Not imported";
 "Choose what to do with each conflict. Notes default to Keep both as field note." = "Choose what to do with each conflict. Notes default to Keep both as field note.";
+"Applied %lld, kept on Mac %lld, rejected %lld. A new Mac-to-iPhone package is needed to acknowledge phone changes." = "Applied %lld, kept on Mac %lld, rejected %lld. A new Mac-to-iPhone package is needed to acknowledge phone changes.";
+"Apply changes" = "Apply changes";
+"Apply iPhone" = "Apply iPhone";
+"Apply reviewed changes" = "Apply reviewed changes";
+"Apply these reviewed checklist and note changes?" = "Apply these reviewed checklist and note changes?";
+"Keep Mac" = "Keep Mac";
+"Keep both as field note" = "Keep both as field note";
+"Mac %@ · iPhone %@" = "Mac %@ · iPhone %@";
+"Mac review is required. Original photos stay on this Mac." = "Mac review is required. Original photos stay on this Mac.";
+"Mac: %@" = "Mac: %@";
+"Mac: %@ · iPhone: %@" = "Mac: %@ · iPhone: %@";
+"Resolution" = "Resolution";
+"iPhone: %@" = "iPhone: %@";
+"Superseded" = "Superseded";
 "Checklist and notes only. Original photos stay on this Mac or external drive. Mac review is required; there is no automatic or cloud sync." = "Checklist and notes only. Original photos stay on this Mac or external drive. Mac review is required; there is no automatic or cloud sync.";
 
 /* V4 entry points outside the editor. */

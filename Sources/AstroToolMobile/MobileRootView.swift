@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import UniformTypeIdentifiers
 import AstroMobileDomain
 import AstroMobileTransport
 
@@ -161,6 +162,8 @@ struct MobileRootView: View {
     @State private var keyPayload = ""
     @State private var message: String?
     @State private var showingScanner = false
+    @State private var showingReturnExporter = false
+    @State private var returnQRPayload: String?
     @State private var selectedTab: MobileTab = .tonight
     private let scanner: any MobileQRScanner
     private let fixtureMode: String?
@@ -242,6 +245,30 @@ struct MobileRootView: View {
                 }
             }
             .navigationTitle("AstroTool")
+            .fileExporter(
+                isPresented: $showingReturnExporter,
+                document: MobileReturnPackagePlaceholderDocument(),
+                contentType: .astroMobile,
+                defaultFilename: "AstroTool-iPhone-changes"
+            ) { result in
+                switch result {
+                case .success(let url):
+                    Task { @MainActor in
+                        do {
+                            try MobileReturnPackagePlaceholderDocument.removePlaceholder(at: url)
+                            let exported = try await store.exportReturnPackage(to: url)
+                            returnQRPayload = exported.oneTimeQRPayload
+                            message = "Ready to import on Mac. Your queued changes remain here until the Mac confirms them."
+                            await refresh()
+                        } catch {
+                            message = "The return package was not created. Your queued changes are still here."
+                        }
+                    }
+                case .failure(let error):
+                    guard (error as NSError).code != NSUserCancelledError else { return }
+                    message = "The return package was not created. Your queued changes are still here."
+                }
+            }
             .task {
                 await refresh()
                 message = intakeError?.localizedKey
@@ -373,7 +400,7 @@ struct MobileRootView: View {
                 .tabItem { Label("Briefings", systemImage: "doc.text.fill") }
                 .tag(MobileTab.briefings)
                 .accessibilityIdentifier("v5.mobile.tab.briefings")
-            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage)
+            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, returnQRPayload: returnQRPayload)
                 .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                 .tag(MobileTab.sync)
                 .accessibilityIdentifier("v5.mobile.tab.sync")
@@ -468,5 +495,22 @@ struct MobileRootView: View {
                 self.message = nil
             }
         }
+    }
+}
+
+private struct MobileReturnPackagePlaceholderDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.astroMobile] }
+    private static let marker = Data("ASTROTOOL_RETURN_PLACEHOLDER_V1".utf8)
+
+    init() {}
+    init(configuration: ReadConfiguration) throws {}
+
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: Self.marker)
+    }
+
+    static func removePlaceholder(at url: URL) throws {
+        guard let data = try? Data(contentsOf: url), data == marker else { throw MobileLibraryStoreError.persistenceFailed }
+        try FileManager.default.removeItem(at: url)
     }
 }

@@ -235,7 +235,7 @@ public actor MobileLibraryStore {
         guard let snapshot = activeSnapshot else { throw MobileLibraryStoreError.noLibrary }
         let key = OneTimePackageKey()
         let changes = queuedChanges
-        let envelope = MobilePackageEnvelope(snapshot: snapshot, changes: changes, acknowledgedChangeIDs: [])
+        let envelope = MobilePackageEnvelope(purpose: .returnChanges, snapshot: snapshot, baseSnapshotID: snapshot.snapshotID, changes: changes, acknowledgedChangeIDs: [])
         let manifest: MobilePackageManifest
         do {
             manifest = try await packageService.export(envelope, to: destination, wrapping: key)
@@ -486,7 +486,7 @@ public actor MobileLibraryStore {
             // This store is the phone side of the protocol. A return package
             // is never accepted as a forward snapshot or used to clear the
             // queue; only a snapshot with acknowledgement IDs is allowed.
-            guard envelope.changes.isEmpty else { throw MobileLibraryStoreError.invalidPackage }
+            guard envelope.purpose == .forwardSnapshot, envelope.changes.isEmpty, envelope.baseSnapshotID == nil else { throw MobileLibraryStoreError.invalidPackage }
             guard Self.isSafeRevision(candidate.revision) else { throw MobileLibraryStoreError.revisionNotMonotonic }
             try Self.validate(candidate)
             if let current = activeSnapshot {

@@ -1,19 +1,30 @@
 import Foundation
 
 public struct MobilePackageEnvelope: Codable, Equatable, Sendable {
+    public let purpose: MobilePackagePurpose
     public let snapshot: MobileLibrarySnapshot?
+    public let baseSnapshotID: UUID?
     public let changes: [MobileChange]
     public let acknowledgedChangeIDs: [UUID]
 
     public init(
+        purpose: MobilePackagePurpose = .forwardSnapshot,
         snapshot: MobileLibrarySnapshot?,
+        baseSnapshotID: UUID? = nil,
         changes: [MobileChange],
         acknowledgedChangeIDs: [UUID]
     ) {
+        self.purpose = purpose
         self.snapshot = snapshot
+        self.baseSnapshotID = baseSnapshotID
         self.changes = changes
         self.acknowledgedChangeIDs = acknowledgedChangeIDs
     }
+}
+
+public enum MobilePackagePurpose: String, Codable, Equatable, Sendable {
+    case forwardSnapshot
+    case returnChanges
 }
 
 public struct MobileSnapshotSummary: Codable, Equatable, Sendable {

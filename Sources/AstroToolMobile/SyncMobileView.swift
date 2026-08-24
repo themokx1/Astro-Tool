@@ -10,6 +10,8 @@ struct SyncMobileView: View {
     let onScan: () -> Void
     let onImport: () -> Void
     let onDiscard: () -> Void
+    let onExport: () -> Void
+    let returnQRPayload: String?
 
     private var checklistCount: Int { snapshot.briefings.flatMap(\.checklist).flatMap(\.items).count }
 
@@ -84,6 +86,28 @@ struct SyncMobileView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Send changes to Mac") {
+                Text("Only checklist progress and notes are included. Original photos stay on your Mac or external drive.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Button("Create return package") { onExport() }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v5.mobile.sync.return.export")
+                if let returnQRPayload {
+                    Label("Ready to import on Mac", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(Color(uiColor: .systemGreen))
+                    Text("Show this one-time code on the Mac import screen:")
+                        .font(.footnote)
+                    Text(returnQRPayload)
+                        .font(.footnote.monospaced())
+                        .accessibilityIdentifier("v5.mobile.sync.return.code")
+                    Text("Your queued changes remain here until a later Mac package confirms the exact IDs.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityIdentifier("v5.mobile.sync.return")
         }
         .navigationTitle("Sync")
         .accessibilityIdentifier("mobile-sync-surface")

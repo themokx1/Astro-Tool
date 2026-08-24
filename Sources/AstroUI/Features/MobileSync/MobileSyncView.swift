@@ -12,6 +12,7 @@ public struct MobileSyncView: View {
     @State private var importSource: URL?
     @State private var importCode = ""
     @State private var qrRetry = 0
+    @State private var showsReturnConfirmation = false
 
     public init(
         rootURL: URL?,
@@ -348,12 +349,39 @@ public struct MobileSyncView: View {
                     LabeledContent("Ready to apply", value: changes.applicable.count.formatted())
                     LabeledContent("Needs your choice", value: changes.conflicts.count.formatted())
                     LabeledContent("Already handled", value: changes.alreadyApplied.count.formatted())
+                    LabeledContent("Superseded", value: changes.superseded.count.formatted())
+                    LabeledContent("Duplicates", value: changes.duplicates.count.formatted())
                     LabeledContent("Not imported", value: changes.rejected.count.formatted())
                     if !changes.conflicts.isEmpty {
                         Text("Choose what to do with each conflict. Notes default to Keep both as field note.")
                             .astroBody()
                             .foregroundStyle(AstroTokens.Color.attention)
+                        ForEach(changes.conflicts, id: \.changeID) { conflict in
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(conflict.targetName).font(.headline)
+                                if conflict.kind == .checklist {
+                                    Text("Mac: \(conflict.macChecklistCompletion == true ? "Complete" : "Not complete") · iPhone: \(conflict.phoneChecklistCompletion == true ? "Complete" : "Not complete")")
+                                } else {
+                                    Text("Mac: \(conflict.macText ?? "")")
+                                    Text("iPhone: \(conflict.phoneText ?? "")")
+                                }
+                                Text("Mac \(conflict.macTimestamp.formatted(date: .abbreviated, time: .shortened)) · iPhone \(conflict.phoneTimestamp.formatted(date: .abbreviated, time: .shortened))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Picker("Resolution", selection: resolutionBinding(for: conflict)) {
+                                    Text("Apply iPhone").tag(MobileChangeResolution.applyPhone)
+                                    Text("Keep Mac").tag(MobileChangeResolution.keepMac)
+                                    if conflict.kind == .note { Text("Keep both as field note").tag(MobileChangeResolution.keepBothAsFieldNote) }
+                                }
+                            }
+                            .padding(.vertical, 4)
+                            .accessibilityIdentifier("v5.mobile-sync.return.conflict.\(conflict.changeID.uuidString)")
+                        }
                     }
+                    Button("Apply reviewed changes") { showsReturnConfirmation = true }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!changes.conflicts.allSatisfy { store.changeResolutions[$0.changeID] != nil })
+                        .accessibilityIdentifier("v5.mobile-sync.return.apply")
                 }
                 Text("Applying changes will be confirmed separately. Nothing in the image library has changed.")
                     .astroBody()
@@ -363,12 +391,34 @@ public struct MobileSyncView: View {
                     .foregroundStyle(AstroTokens.Color.ok)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("v5.mobile-sync.return.safety")
+                if let receipt = store.appliedChangeReceipt {
+                    Text("Applied \(receipt.appliedChangeIDs.count), kept on Mac \(receipt.resolvedChangeIDs.count), rejected \(store.changePreview?.rejected.count ?? 0). A new Mac-to-iPhone package is needed to acknowledge phone changes.")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(AstroTokens.Color.ok)
+                }
             }
             Button("Done") { cancelAndClear() }
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("v5.mobile-sync.cancel")
         }
         .astroRaisedSurface()
+        .confirmationDialog("Apply these reviewed checklist and note changes?", isPresented: $showsReturnConfirmation, titleVisibility: .visible) {
+            Button("Apply changes") {
+                Task {
+                    try? await store.applyAuthenticatedReturnChanges(confirmed: true)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Mac review is required. Original photos stay on this Mac.")
+        }
+    }
+
+    private func resolutionBinding(for conflict: MobileChangeConflict) -> Binding<MobileChangeResolution> {
+        Binding(
+            get: { store.changeResolutions[conflict.changeID] ?? conflict.recommendedResolution },
+            set: { store.setChangeResolution($0, for: conflict.changeID) }
+        )
     }
 
     private func packageIDRow(_ packageID: UUID) -> some View {
