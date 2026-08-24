@@ -2790,6 +2790,8 @@
 "Choose what to do with each conflict. Notes default to Keep both as field note." = "Válaszd ki, mi történjen az egyes ütközésekkel. A jegyzetek alapértelmezett választása: mindkettő megtartása mezőjegyzetként.";
 "Applied %lld, kept on Mac %lld, rejected %lld. A new Mac-to-iPhone package is needed to acknowledge phone changes." = "Alkalmazva: %lld, Macen megtartva: %lld, elutasítva: %lld. A telefonos változások nyugtázásához új Mac–iPhone csomag szükséges.";
 "Applied %lld, kept on Mac %lld, superseded %lld, already handled %lld, duplicates %lld, rejected %lld. A new Mac-to-iPhone package is needed to acknowledge phone changes." = "Alkalmazva: %lld, Macen megtartva: %lld, felülírva: %lld, már kezelve: %lld, ismétlődések: %lld, elutasítva: %lld. Az iPhone-módosítások visszaigazolásához új Mac–iPhone csomag szükséges.";
+"Applied %lld, kept on Mac %lld, superseded %lld, already handled %lld, duplicates %lld, rejected %lld. A new Mac-to-iPhone package will acknowledge these outcomes." = "Alkalmazva: %lld, Macen megtartva: %lld, felülírva: %lld, már kezelve: %lld, ismétlődések: %lld, elutasítva: %lld. Ezeket az eredményeket a következő Mac–iPhone csomag igazolja vissza.";
+"Reviewed changes saved" = "Az ellenőrzött módosítások elmentve";
 "Apply changes" = "Változások alkalmazása";
 "Apply iPhone" = "iPhone-érték alkalmazása";
 "Apply reviewed changes" = "Átnézett változások alkalmazása";
