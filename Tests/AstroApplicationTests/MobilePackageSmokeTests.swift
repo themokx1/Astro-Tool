@@ -342,10 +342,13 @@ private struct MobileSmokeFixture {
     /// design). Namespaced by a hash of `root`'s own freshly generated
     /// temporary path, so this can never touch a real user library.
     func cleanUp() {
+        // Computed before `root` is removed: `LibraryIdentity` resolves
+        // symlinks in the path, which only behaves identically to the
+        // fixture-setup computation while the directory still exists.
+        let libraryID = LibraryIdentity(rootURL: root)
         try? FileManager.default.removeItem(at: root)
         guard let applicationSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first,
               let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return }
-        let libraryID = LibraryIdentity(rootURL: root)
         for base in [applicationSupport, caches] {
             let libraryDirectory = base
                 .appendingPathComponent("AstroTool", isDirectory: true)
