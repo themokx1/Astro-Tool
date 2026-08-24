@@ -138,6 +138,9 @@
 "Creating return package" = "Visszaküldési csomag létrehozása";
 "Cancel return package" = "Visszaküldési csomag megszakítása";
 "Discard saved return code" = "Mentett visszaküldési kód elvetése";
+"The return package was not created. Your queued changes are still here." = "A visszaküldési csomag nem készült el. A várakozó módosításaid továbbra is itt vannak.";
+"Ready to import on Mac. Your queued changes remain here until the Mac confirms them." = "Importálásra kész a Macen. A várakozó módosítások addig itt maradnak, amíg a Mac vissza nem igazolja őket.";
+"The saved return code could not be discarded. It remains available for recovery." = "A mentett visszaküldési kódot nem sikerült elvetni. Továbbra is elérhető helyreállításhoz.";
 "Creates an encrypted package containing only queued checklist and note changes." = "Titkosított csomagot készít, amely csak a várakozó ellenőrzőlista- és jegyzetmódosításokat tartalmazza.";
 "Ready to import on Mac" = "Importálásra kész a Macen";
 "Show this one-time code on the Mac import screen:" = "Mutasd ezt az egyszer használatos kódot a Mac importképernyőjén:";

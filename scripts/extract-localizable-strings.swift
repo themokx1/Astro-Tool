@@ -547,6 +547,61 @@ func extractAll(typeIndex: [String: TypeCategory], functionReturnTypeIndex: [Str
     return extractions
 }
 
+// MARK: - Mobile-only "message = " assignment extraction
+//
+// `Sources/AstroToolMobile/MobileRootView.swift` holds `@State private var
+// message: String?` and later renders it with
+// `Text(LocalizedStringKey(message))` once it becomes non-nil -- so a
+// literal assigned directly to that variable is just as user-facing as any
+// `Text("...")` call, but none of the `constructPatterns` above can see it:
+// the literal sits several lines away from the eventual `Text(...)` call
+// site, at a plain variable assignment instead. This is a second, narrowly
+// scoped scanning pass -- restricted to `Sources/AstroToolMobile/` only, so
+// AstroUI's extraction behavior (and every other Mac source file) is
+// completely untouched -- that looks for `message = "literal"` assignments
+// (with or without a `self.` receiver) and reuses the very same
+// `scanStringLiteral` used everywhere else, so interpolation placeholders
+// and the %% escaping rule stay consistent with the rest of this script. A
+// non-literal right-hand side (`message = intakeError?.localizedKey`,
+// `message = nil`, `message = String(localized: "...")`) is skipped
+// automatically: `scanStringLiteral` requires the very next character after
+// `=` (ignoring whitespace, which the pattern's trailing `\s*` already
+// consumes) to be an opening `"`, and none of those shapes start with one.
+let mobileMessageAssignmentPattern = try! NSRegularExpression(pattern: #"\bmessage\s*=\s*"#)
+
+func extractMobileMessageAssignments(
+    typeIndex: [String: TypeCategory], functionReturnTypeIndex: [String: TypeCategory]
+) -> [Extraction] {
+    var extractions: [Extraction] = []
+    for file in swiftFiles(under: astroToolMobileRoot) {
+        guard let raw = try? String(contentsOf: file, encoding: .utf8) else { continue }
+        let source = removingComments(raw)
+        let relativePath = file.path.replacingOccurrences(of: repoRoot.path + "/", with: "")
+        let nsRange = NSRange(source.startIndex..<source.endIndex, in: source)
+        var searchStart = 0
+        while searchStart <= source.utf16.count {
+            let remainingRange = NSRange(location: searchStart, length: nsRange.length - searchStart)
+            guard remainingRange.location >= 0, remainingRange.length >= 0,
+                  let match = mobileMessageAssignmentPattern.firstMatch(in: source, range: remainingRange),
+                  let matchRange = Range(match.range, in: source)
+            else { break }
+
+            if let scanned = scanStringLiteral(
+                source, from: matchRange.upperBound, typeIndex: typeIndex, functionReturnTypeIndex: functionReturnTypeIndex
+            ),
+               !scanned.displayKey.isEmpty,
+               !isFollowedByStringConcatenation(source, after: scanned.endIndex) {
+                let line = lineNumber(of: matchRange.lowerBound, in: source)
+                extractions.append(Extraction(key: scanned.displayKey, file: relativePath, line: line))
+                searchStart = NSRange(scanned.endIndex..<scanned.endIndex, in: source).location
+            } else {
+                searchStart = match.range.location + max(match.range.length, 1)
+            }
+        }
+    }
+    return extractions
+}
+
 // MARK: - Allowlist and hu.lproj parsing (only needed for --missing)
 
 func parseStringsFile(_ url: URL) -> Set<String> {
@@ -567,6 +622,7 @@ func parseStringsFile(_ url: URL) -> Set<String> {
 let typeIndex = buildPropertyTypeIndex()
 let functionReturnTypeIndex = buildFunctionReturnTypeIndex()
 let extractions = extractAll(typeIndex: typeIndex, functionReturnTypeIndex: functionReturnTypeIndex)
+    + extractMobileMessageAssignments(typeIndex: typeIndex, functionReturnTypeIndex: functionReturnTypeIndex)
 let uniqueKeys = Set(extractions.map(\.key)).sorted()
 
 let arguments = Set(CommandLine.arguments.dropFirst())

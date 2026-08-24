@@ -130,6 +130,25 @@ public final class MobileSyncStore {
     public private(set) var didApplyIncomingChanges = false
     public private(set) var appliedChangeTotals = MobileChangeOutcomeTotals()
 
+    /// Disjoint outcome totals for the currently retained
+    /// `appliedChangeReceipt`, reused by every view that renders that
+    /// receipt so no call site duplicates the keptOnMac/superseded
+    /// arithmetic. Unlike `appliedChangeTotals` (frozen at apply time),
+    /// this recomputes against whatever `changePreview` the store still
+    /// retains; if the preview has already been cleared, superseded,
+    /// already-handled, duplicate, and rejected counts fall back to zero
+    /// and keptOnMac reports the full resolved set.
+    var receiptTotals: MobileChangeOutcomeTotals? {
+        guard let appliedChangeReceipt else { return nil }
+        guard let changePreview else {
+            return MobileChangeOutcomeTotals(
+                applied: appliedChangeReceipt.appliedChangeIDs.count,
+                keptOnMac: appliedChangeReceipt.resolvedChangeIDs.count
+            )
+        }
+        return Self.totals(receipt: appliedChangeReceipt, preview: changePreview)
+    }
+
     public let rootURL: URL?
     public let destinationToken: String
 
@@ -929,9 +948,14 @@ public final class MobileSyncStore {
         receipt: MobileChangeApplicationReceipt,
         preview: MobileChangeImportPreview
     ) -> MobileChangeOutcomeTotals {
+        // `receipt.resolvedChangeIDs` unions superseded changes with
+        // conflicts resolved as `.keepMac` for phone-acknowledgement
+        // purposes (see MobileChangeImporter.apply). The six user-facing
+        // totals must stay disjoint, so superseded IDs are subtracted here
+        // before counting what was "kept on Mac".
         .init(
             applied: receipt.appliedChangeIDs.count,
-            keptOnMac: receipt.resolvedChangeIDs.count,
+            keptOnMac: Set(receipt.resolvedChangeIDs).subtracting(preview.superseded).count,
             superseded: preview.superseded.count,
             alreadyHandled: preview.alreadyApplied.count,
             duplicates: preview.duplicates.count,

@@ -143,6 +143,9 @@
 "Creating return package" = "Creating return package";
 "Cancel return package" = "Cancel return package";
 "Discard saved return code" = "Discard saved return code";
+"The return package was not created. Your queued changes are still here." = "The return package was not created. Your queued changes are still here.";
+"Ready to import on Mac. Your queued changes remain here until the Mac confirms them." = "Ready to import on Mac. Your queued changes remain here until the Mac confirms them.";
+"The saved return code could not be discarded. It remains available for recovery." = "The saved return code could not be discarded. It remains available for recovery.";
 "Creates an encrypted package containing only queued checklist and note changes." = "Creates an encrypted package containing only queued checklist and note changes.";
 "Ready to import on Mac" = "Ready to import on Mac";
 "Show this one-time code on the Mac import screen:" = "Show this one-time code on the Mac import screen:";

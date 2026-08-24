@@ -240,6 +240,173 @@ struct MobileSyncStoreTests {
         #expect(store.appliedChangeTotals == .init())
     }
 
+    @Test("a superseded change is not double-counted as kept on Mac")
+    func supersededChangeIsExcludedFromKeptOnMacTotal() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identity = PortableLibraryID(rawValue: UUID())
+        let briefingID = UUID()
+        let noteID = "briefing-\(briefingID.uuidString.lowercased())"
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let base = MobileLibrarySnapshot(
+            schemaVersion: 1,
+            libraryID: identity,
+            snapshotID: UUID(),
+            revision: 2,
+            createdAt: savedAt,
+            projects: [], nights: [], captures: [],
+            briefings: [.init(id: briefingID, revision: 2, savedAt: savedAt, nightDate: nil, readiness: "ready", targets: [], checklist: [.init(id: "setup", title: "Setup", items: [.init(id: "focus", title: "Focus", explanation: nil, isCompleted: false, baseRevision: 2)])], noteID: noteID)],
+            notes: [.init(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "Base note", baseRevision: 2, updatedAt: savedAt, isEditableOnPhone: true)]
+        )
+        let deviceID = UUID()
+        let olderChangeID = UUID()
+        let newerChangeID = UUID()
+        let source = root.appendingPathComponent("phone-return.astromobile")
+        let key = OneTimePackageKey()
+        let packageService = MobilePackageService()
+        _ = try await packageService.export(
+            MobilePackageEnvelope(
+                purpose: .returnChanges,
+                snapshot: base,
+                baseSnapshotID: base.snapshotID,
+                changes: [
+                    .checklistCompletion(.init(changeID: olderChangeID, deviceID: deviceID, briefingID: briefingID, itemID: "focus", baseRevision: 2, isCompleted: true, createdAt: Date(timeIntervalSince1970: 1_700_000_001))),
+                    .checklistCompletion(.init(changeID: newerChangeID, deviceID: deviceID, briefingID: briefingID, itemID: "focus", baseRevision: 2, isCompleted: false, createdAt: Date(timeIntervalSince1970: 1_700_000_002)))
+                ],
+                acknowledgedChangeIDs: []
+            ),
+            to: source,
+            wrapping: key
+        )
+        let sentBases = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent-bases.json"))
+        try sentBases.save(snapshotID: base.snapshotID)
+        let importer = MobileChangeImporter(commands: .init(applyBatch: { batch in
+            let ids: [UUID]
+            switch batch {
+            case .briefing(let briefing):
+                ids = briefing.mutations.map { mutation in
+                    switch mutation { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
+                }
+            case .projectAnnotation(let project): ids = project.mutations.map { $0.0.changeID }
+            }
+            return .init(appliedChangeIDs: ids, resultingRevisions: [:])
+        }))
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in .init(proposedID: identity, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in base },
+            packageAuthenticatePreview: { url, scannedKey in try await packageService.authenticatePreview(from: url, wrapping: scannedKey) },
+            packageAuthenticatedReturn: { token in try await packageService.authenticatedReturn(token: token) },
+            packageImportCommitReturn: { package in try await packageService.commitAuthenticatedReturn(package) },
+            packageImportDiscardReturn: { package in await packageService.discardAuthenticatedReturn(package) },
+            changeImporter: importer,
+            sentSnapshotStore: sentBases
+        )
+
+        await store.previewIncomingPackage(from: source, qrPayload: key.qrPayload)
+        #expect(store.changePreview?.superseded == [olderChangeID])
+        #expect(store.changePreview?.conflicts.isEmpty == true)
+
+        try await store.applyAuthenticatedReturnChanges(confirmed: true)
+
+        #expect(store.phase == .completed)
+        let totals = store.appliedChangeTotals
+        #expect(totals.applied == 1)
+        #expect(totals.keptOnMac == 0)
+        #expect(totals.superseded == 1)
+        #expect(totals.applied + totals.keptOnMac + totals.superseded + totals.alreadyHandled + totals.duplicates + totals.rejected == 2)
+        let receipt = try #require(store.appliedChangeReceipt)
+        #expect(Set(receipt.resolvedChangeIDs).contains(olderChangeID))
+    }
+
+    @Test("kept-on-Mac totals still include a real conflict resolution alongside a disjoint superseded count")
+    func supersededAndKeepMacConflictAreBothCountedOnceEach() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let identity = PortableLibraryID(rawValue: UUID())
+        let briefingID = UUID()
+        let noteID = "briefing-\(briefingID.uuidString.lowercased())"
+        let savedAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let base = MobileLibrarySnapshot(
+            schemaVersion: 1,
+            libraryID: identity,
+            snapshotID: UUID(),
+            revision: 2,
+            createdAt: savedAt,
+            projects: [], nights: [], captures: [],
+            briefings: [.init(id: briefingID, revision: 2, savedAt: savedAt, nightDate: nil, readiness: "ready", targets: [], checklist: [.init(id: "setup", title: "Setup", items: [
+                .init(id: "focus", title: "Focus", explanation: nil, isCompleted: false, baseRevision: 2),
+                .init(id: "aim", title: "Aim", explanation: nil, isCompleted: false, baseRevision: 2)
+            ])], noteID: noteID)],
+            notes: [.init(id: noteID, scope: .briefing, ownerID: briefingID.uuidString, text: "Base note", baseRevision: 2, updatedAt: savedAt, isEditableOnPhone: true)]
+        )
+        let deviceID = UUID()
+        let olderChangeID = UUID()
+        let newerChangeID = UUID()
+        let conflictChangeID = UUID()
+        let source = root.appendingPathComponent("phone-return.astromobile")
+        let key = OneTimePackageKey()
+        let packageService = MobilePackageService()
+        _ = try await packageService.export(
+            MobilePackageEnvelope(
+                purpose: .returnChanges,
+                snapshot: base,
+                baseSnapshotID: base.snapshotID,
+                changes: [
+                    .checklistCompletion(.init(changeID: olderChangeID, deviceID: deviceID, briefingID: briefingID, itemID: "focus", baseRevision: 2, isCompleted: true, createdAt: Date(timeIntervalSince1970: 1_700_000_001))),
+                    .checklistCompletion(.init(changeID: newerChangeID, deviceID: deviceID, briefingID: briefingID, itemID: "focus", baseRevision: 2, isCompleted: false, createdAt: Date(timeIntervalSince1970: 1_700_000_002))),
+                    .checklistCompletion(.init(changeID: conflictChangeID, deviceID: deviceID, briefingID: briefingID, itemID: "aim", baseRevision: 1, isCompleted: true, createdAt: Date(timeIntervalSince1970: 1_700_000_003)))
+                ],
+                acknowledgedChangeIDs: []
+            ),
+            to: source,
+            wrapping: key
+        )
+        let sentBases = MobileSentSnapshotIdentityStore(fileURL: root.appendingPathComponent("sent-bases.json"))
+        try sentBases.save(snapshotID: base.snapshotID)
+        let importer = MobileChangeImporter(commands: .init(applyBatch: { batch in
+            let ids: [UUID]
+            switch batch {
+            case .briefing(let briefing):
+                ids = briefing.mutations.map { mutation in
+                    switch mutation { case .checklist(let command): command.changeID; case .note(let command, _): command.changeID }
+                }
+            case .projectAnnotation(let project): ids = project.mutations.map { $0.0.changeID }
+            }
+            return .init(appliedChangeIDs: ids, resultingRevisions: [:])
+        }))
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in .init(proposedID: identity, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in base },
+            packageAuthenticatePreview: { url, scannedKey in try await packageService.authenticatePreview(from: url, wrapping: scannedKey) },
+            packageAuthenticatedReturn: { token in try await packageService.authenticatedReturn(token: token) },
+            packageImportCommitReturn: { package in try await packageService.commitAuthenticatedReturn(package) },
+            packageImportDiscardReturn: { package in await packageService.discardAuthenticatedReturn(package) },
+            changeImporter: importer,
+            sentSnapshotStore: sentBases
+        )
+
+        await store.previewIncomingPackage(from: source, qrPayload: key.qrPayload)
+        #expect(store.changePreview?.superseded == [olderChangeID])
+        #expect(store.changePreview?.conflicts.map(\.changeID) == [conflictChangeID])
+        store.setChangeResolution(.keepMac, for: conflictChangeID)
+
+        try await store.applyAuthenticatedReturnChanges(confirmed: true)
+
+        #expect(store.phase == .completed)
+        let totals = store.appliedChangeTotals
+        #expect(totals.applied == 1)
+        #expect(totals.keptOnMac == 1)
+        #expect(totals.superseded == 1)
+        #expect(totals.applied + totals.keptOnMac + totals.superseded + totals.alreadyHandled + totals.duplicates + totals.rejected == 3)
+        let receipt = try #require(store.appliedChangeReceipt)
+        #expect(Set(receipt.resolvedChangeIDs).contains(olderChangeID))
+        #expect(Set(receipt.resolvedChangeIDs).contains(conflictChangeID))
+    }
+
     @Test("checklist conflict recommendation is inserted into store state")
     func checklistConflictHasRealDefaultResolution() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)

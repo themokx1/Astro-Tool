@@ -424,12 +424,12 @@ public struct MobileSyncView: View {
                     .foregroundStyle(AstroTokens.Color.ok)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("v5.mobile-sync.return.safety")
-                if let receipt = store.appliedChangeReceipt {
-                    Text("Applied \(receipt.appliedChangeIDs.count), kept on Mac \(receipt.resolvedChangeIDs.count), superseded \(store.changePreview?.superseded.count ?? 0), already handled \(store.changePreview?.alreadyApplied.count ?? 0), duplicates \(store.changePreview?.duplicates.count ?? 0), rejected \(store.changePreview?.rejected.count ?? 0). A new Mac-to-iPhone package is needed to acknowledge phone changes.")
+                if let totals = store.receiptTotals {
+                    Text("Applied \(totals.applied), kept on Mac \(totals.keptOnMac), superseded \(totals.superseded), already handled \(totals.alreadyHandled), duplicates \(totals.duplicates), rejected \(totals.rejected). A new Mac-to-iPhone package is needed to acknowledge phone changes.")
                         .font(.callout.weight(.semibold))
                         .foregroundStyle(AstroTokens.Color.ok)
                         .accessibilityLabel("Return import result")
-                        .accessibilityValue("Applied \(receipt.appliedChangeIDs.count), kept on Mac \(receipt.resolvedChangeIDs.count), superseded \(store.changePreview?.superseded.count ?? 0), already handled \(store.changePreview?.alreadyApplied.count ?? 0), duplicates \(store.changePreview?.duplicates.count ?? 0), rejected \(store.changePreview?.rejected.count ?? 0)")
+                        .accessibilityValue("Applied \(totals.applied), kept on Mac \(totals.keptOnMac), superseded \(totals.superseded), already handled \(totals.alreadyHandled), duplicates \(totals.duplicates), rejected \(totals.rejected)")
                         .accessibilityIdentifier("v5.mobile-sync.return.result")
                 }
             }
