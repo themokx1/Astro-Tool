@@ -100,4 +100,32 @@ struct MobileSyncSurfaceTests {
         #expect(store.contains("package init("))
         #expect(!store.contains("public typealias PackageAuthenticatedReturn"))
     }
+
+    @Test("The nearby sync surface has the pinned identifiers, the safety sentence, and one retry action")
+    func nearbySyncSurfaceIsPinned() throws {
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncStore.swift"), encoding: .utf8)
+
+        for identifier in ["v5.nearby.start", "v5.nearby.state", "v5.nearby.code", "v5.nearby.confirm", "v5.nearby.reject", "v5.nearby.retry"] {
+            #expect(view.contains(identifier), "missing accessibility identifier \(identifier)")
+        }
+        // Exactly one retry action per spec §4.3 -- pinned by count, not just
+        // presence, so a second retry button added elsewhere would fail this.
+        let retryOccurrences = view.components(separatedBy: "v5.nearby.retry").count - 1
+        #expect(retryOccurrences == 1)
+
+        #expect(view.contains("The local network permission is used only to hand data between your own AstroTool apps."))
+        #expect(view.contains("Sync with iPhone directly"))
+
+        // The nearby coordinator is fed the store's OWN `returnCoordinator`
+        // instance (not one it builds itself) -- see NearbySyncCoordinator's
+        // doc comment for why a separate instance would break `apply`/
+        // `discard` against the live in-memory session.
+        #expect(store.contains("localReturnCoordinator.publishForwardSnapshot"))
+        #expect(store.contains("localReturnCoordinator.preview"))
+        // The production coordinator init taking only rootURL/displayName is
+        // never used by the store directly -- it wires the injectable seam
+        // instead, so this call site would only ever appear in a comment.
+        #expect(!store.contains("NearbySyncCoordinator(rootURL:"))
+    }
 }

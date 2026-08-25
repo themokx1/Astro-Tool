@@ -72,6 +72,16 @@ public struct MobileSyncView: View {
             clearIncomingSelection()
             store.dismiss()
         }
+        .sheet(isPresented: nearbySheetBinding) {
+            nearbySheetContent
+        }
+    }
+
+    private var nearbySheetBinding: Binding<Bool> {
+        Binding(
+            get: { store.nearbyPhase != .idle },
+            set: { isPresented in if !isPresented { store.cancelNearbySync() } }
+        )
     }
 
     private var title: some View {
@@ -225,6 +235,9 @@ public struct MobileSyncView: View {
                     .disabled(!store.isIdentityConfirmed)
                     .accessibilityIdentifier("v5.mobile-sync.confirm-summary")
                 } else {
+                    Button("Sync with iPhone directly") { store.startNearbySync() }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("v5.nearby.start")
                     Button("Create sealed package…") { showsExporter = true }
                         .buttonStyle(.borderedProminent)
                         .accessibilityIdentifier("v5.mobile-sync.export")
@@ -543,6 +556,93 @@ public struct MobileSyncView: View {
             }
         }
         .astroRaisedSurface()
+    }
+
+    private var nearbySheetContent: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.section) {
+            Text("Sync with iPhone directly").astroSectionTitle()
+            Text("The local network permission is used only to hand data between your own AstroTool apps.")
+                .astroBody()
+                .foregroundStyle(AstroTokens.Color.inkDim)
+            nearbyPhaseContent
+        }
+        .padding(AstroTokens.Spacing.spacious)
+        .frame(minWidth: 360, minHeight: 260, alignment: .topLeading)
+    }
+
+    @ViewBuilder
+    private var nearbyPhaseContent: some View {
+        switch store.nearbyPhase {
+        case .idle:
+            EmptyView()
+        case .advertising:
+            nearbyProgress("Waiting for iPhone")
+            Button("Cancel", role: .cancel) { store.cancelNearbySync() }
+                .accessibilityIdentifier("v5.nearby.cancel")
+        case .pairing(let code):
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                Text("Confirm the pairing code")
+                    .astroSectionTitle()
+                    .accessibilityIdentifier("v5.nearby.state")
+                Text(verbatim: code)
+                    .font(.system(.largeTitle, design: .monospaced))
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("v5.nearby.code")
+                HStack {
+                    Button("Confirm") { store.confirmNearbyPairing() }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v5.nearby.confirm")
+                    Button("Reject", role: .destructive) { store.rejectNearbyPairing() }
+                        .accessibilityIdentifier("v5.nearby.reject")
+                }
+            }
+        case .preparing:
+            nearbyProgress("Preparing data")
+        case .transferring:
+            nearbyProgress("Transferring")
+        case .verifying:
+            nearbyProgress("Verifying")
+        case .done:
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                Label("Done", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(AstroTokens.Color.ok)
+                    .accessibilityIdentifier("v5.nearby.state")
+                Button("Close") { store.cancelNearbySync() }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v5.nearby.cancel")
+            }
+        case .failed(let reason):
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                Label(nearbyFailureMessage(reason), systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(AstroTokens.Color.critical)
+                    .accessibilityIdentifier("v5.nearby.state")
+                HStack {
+                    Button("Try again", systemImage: "arrow.clockwise") { store.retryNearbySync() }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v5.nearby.retry")
+                    Button("Cancel", role: .cancel) { store.cancelNearbySync() }
+                        .accessibilityIdentifier("v5.nearby.cancel")
+                }
+            }
+        }
+    }
+
+    private func nearbyProgress(_ label: LocalizedStringKey) -> some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+            ProgressView()
+            Text(label).accessibilityIdentifier("v5.nearby.state")
+        }
+    }
+
+    private func nearbyFailureMessage(_ reason: NearbySyncFailure) -> LocalizedStringKey {
+        switch reason {
+        case .pairingRejected: "Pairing was declined."
+        case .identityChanged: "This iPhone's saved identity changed. Re-pair to continue."
+        case .transferFailed: "The transfer could not complete."
+        case .applyRefused: "The reviewed changes were not applied."
+        case .timeout: "The connection timed out."
+        case .cancelled: "Sync was cancelled."
+        }
     }
 
     private func clearIncomingSelection() {

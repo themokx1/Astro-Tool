@@ -135,16 +135,41 @@ public actor NearbyPackageTransport: MobileSyncTransport {
         let packageDestination = sessionDirectory.appendingPathComponent("package.astromobile", isDirectory: true)
         let wrapping = PairedDeviceKeyWrapping()
         let manifest = try await packageService.export(envelope, to: packageDestination, wrapping: wrapping)
+        try await streamStagedBytes(packageDirectory: packageDestination, packageID: manifest.packageID, wrapping: wrapping)
+    }
 
-        let manifestData = try Data(contentsOf: packageDestination.appendingPathComponent(MobilePackageService.manifestFileName))
-        let payloadData = try Data(contentsOf: packageDestination.appendingPathComponent(MobilePackageService.encryptedPayloadFileName))
+    /// Streams an already-exported package directory (`manifest.json` +
+    /// the encrypted payload file, exactly the shape `MobilePackageService
+    /// .export` produces) as `.packageManifest`/`.packageChunk`/
+    /// `.packageComplete` messages, without exporting anything itself.
+    ///
+    /// This is the seam the Mac nearby coordinator's forward-snapshot send
+    /// needs: a forward snapshot MUST be published through
+    /// `MobileReturnApplicationCoordinator.publishForwardSnapshot` — the only
+    /// place that reserves/marks the sent-base evidence a later return
+    /// package is checked against and advances the snapshot revision lease —
+    /// never through a bare `send(_:MobilePackageEnvelope)`, which would
+    /// silently skip that bookkeeping. `publishForwardSnapshot` already
+    /// writes exactly this manifest+payload shape to its `destination`
+    /// (using the crypto Wave 1 already validates); this method's only job is
+    /// carrying those already-published bytes over the authenticated
+    /// channel. The caller owns `packageDirectory`'s lifetime (create before,
+    /// remove after) since it is the coordinator's own forward-publication
+    /// output, not staging this transport created.
+    public func sendStaged(packageDirectory: URL, packageID: UUID, wrapping: PairedDeviceKeyWrapping) async throws {
+        try await streamStagedBytes(packageDirectory: packageDirectory, packageID: packageID, wrapping: wrapping)
+    }
+
+    private func streamStagedBytes(packageDirectory: URL, packageID: UUID, wrapping: PairedDeviceKeyWrapping) async throws {
+        let manifestData = try Data(contentsOf: packageDirectory.appendingPathComponent(MobilePackageService.manifestFileName))
+        let payloadData = try Data(contentsOf: packageDirectory.appendingPathComponent(MobilePackageService.encryptedPayloadFileName))
 
         let totalChunkCount = payloadData.isEmpty
             ? 0
             : (payloadData.count + Self.chunkByteCount - 1) / Self.chunkByteCount
 
         try await channel.send(.packageManifest(NearbyPackageManifestMessage(
-            packageID: manifest.packageID,
+            packageID: packageID,
             manifestJSON: manifestData,
             totalChunkCount: totalChunkCount,
             totalByteCount: Int64(payloadData.count),
@@ -163,7 +188,7 @@ public actor NearbyPackageTransport: MobileSyncTransport {
         }
 
         try await channel.send(.packageComplete(NearbyPackageCompleteMessage(
-            packageID: manifest.packageID,
+            packageID: packageID,
             sha256Hex: MobilePackageCrypto.sha256Hex(payloadData)
         )))
     }
@@ -172,7 +197,66 @@ public actor NearbyPackageTransport: MobileSyncTransport {
 
     public func receive() async throws -> MobilePackageEnvelope {
         let manifestMessage = try await expectManifest()
+        let payload = try await receiveChunksAndComplete(manifest: manifestMessage)
+        return try await importAssembledPackage(manifestMessage: manifestMessage, payload: payload)
+    }
 
+    /// Waits for the Mac's response to a just-sent forward package: either a
+    /// return package (a `.packageManifest` starting a normal chunk stream,
+    /// staged and handed to `body` exactly like
+    /// `receiveStagedForReturnApplication`), or — since a phone may have
+    /// nothing to send back this session — an explicit `.acknowledgement`
+    /// message with an empty ID list, this transport's own "nothing to
+    /// return" signal (distinct from a package envelope's own
+    /// `acknowledgedChangeIDs` field, which travels only inside a forward
+    /// snapshot). Returns `nil` for that case. Any other message kind, or a
+    /// structurally invalid manifest, fails closed exactly like
+    /// `expectManifest`.
+    public func receiveOptionalReturn<T: Sendable>(
+        _ body: @Sendable (URL, PairedDeviceKeyWrapping) async throws -> T
+    ) async throws -> T? {
+        let first = try await channel.receive()
+        switch first {
+        case .acknowledgement:
+            return nil
+        case .packageManifest(let manifest):
+            try await validateManifestFields(manifest)
+            let payload = try await receiveChunksAndComplete(manifest: manifest)
+            return try await stageAndHandOff(manifestMessage: manifest, payload: payload, body: body)
+        default:
+            await abortReceive()
+            throw NearbyPackageTransportError.unexpectedMessage
+        }
+    }
+
+    /// Assembles and hash-verifies an inbound package exactly like
+    /// `receive()`, but stops before `MobilePackageService
+    /// .authenticatePreview`/`commitImport` — leaving the fully verified
+    /// bytes staged as an on-disk package directory `body` must authenticate
+    /// (and this method always removes afterward, success or failure).
+    ///
+    /// This is the seam `MobileReturnApplicationCoordinator
+    /// .preview(from:wrapping:)` needs for a nearby-received RETURN package:
+    /// that coordinator — not this transport — owns the return-application
+    /// authority (sent-base evidence, human confirmation, domain apply).
+    /// `receive()`'s own tail (`importAssembledPackage`) calls
+    /// `commitImport` unconditionally, which is correct for a forward
+    /// snapshot (nothing to review) but would silently bypass every one of
+    /// those gates for a return package — this method exists so the Mac
+    /// nearby coordinator never has to go through that tail for a return.
+    public func receiveStagedForReturnApplication<T: Sendable>(
+        _ body: @Sendable (URL, PairedDeviceKeyWrapping) async throws -> T
+    ) async throws -> T {
+        let manifestMessage = try await expectManifest()
+        let payload = try await receiveChunksAndComplete(manifest: manifestMessage)
+        return try await stageAndHandOff(manifestMessage: manifestMessage, payload: payload, body: body)
+    }
+
+    /// The chunk-and-complete half of a receive, shared by `receive()`,
+    /// `receiveOptionalReturn`, and `receiveStagedForReturnApplication` —
+    /// every caller has already obtained (and, for the two return-application
+    /// entry points, structurally validated) the leading manifest message.
+    private func receiveChunksAndComplete(manifest manifestMessage: NearbyPackageManifestMessage) async throws -> Data {
         var buffer = Data()
         buffer.reserveCapacity(min(Int(manifestMessage.totalByteCount), NearbyFrameCodec.maxPackageStreamBytes))
         var expectedIndex = 0
@@ -208,7 +292,7 @@ public actor NearbyPackageTransport: MobileSyncTransport {
                     await abortReceive()
                     throw NearbyPackageTransportError.payloadHashMismatch
                 }
-                return try await importAssembledPackage(manifestMessage: manifestMessage, payload: buffer)
+                return buffer
 
             default:
                 // Includes a second `.packageManifest` mid-transfer, and any
@@ -231,6 +315,17 @@ public actor NearbyPackageTransport: MobileSyncTransport {
             await abortReceive()
             throw NearbyPackageTransportError.unexpectedMessage
         }
+        try await validateManifestFields(manifest)
+        return manifest
+    }
+
+    /// The structural checks a leading `.packageManifest` message must pass
+    /// before a single chunk is read, shared by `expectManifest` (used by
+    /// `receive()`/`receiveStagedForReturnApplication`) and
+    /// `receiveOptionalReturn`'s own manifest branch (which peeks the first
+    /// message itself, so it cannot call `expectManifest` without consuming
+    /// a second message from the channel).
+    private func validateManifestFields(_ manifest: NearbyPackageManifestMessage) async throws {
         guard manifest.contentKeyWrapRawRepresentation.count == 32,
               manifest.totalByteCount > 0,
               manifest.totalChunkCount >= 0,
@@ -242,23 +337,23 @@ public actor NearbyPackageTransport: MobileSyncTransport {
             await abortReceive()
             throw NearbyPackageTransportError.oversizedPackageStream
         }
-        return manifest
     }
 
-    /// Stages the fully assembled, hash-verified payload as a package
-    /// directory `MobilePackageService` can read, then imports it through
-    /// exactly the same two calls the AirDrop path uses:
-    /// `authenticatePreview` followed by `commitImport`. Any failure —
-    /// staging, authentication, or the service's own validation (including
-    /// its duplicate-`packageID` rejection, which this deliberately never
-    /// bypasses) — removes the staging copy and rethrows untouched.
-    private func importAssembledPackage(
+    /// Writes the fully assembled, hash-verified payload as a package
+    /// directory `MobilePackageService` can read, reconstructs the
+    /// `pairedDevice` wrap key the manifest carried, and always removes the
+    /// staging directory afterward — success or failure. Shared staging
+    /// logic for `importAssembledPackage` (which continues on to
+    /// authenticate + commit) and the return-application entry points (which
+    /// hand the directory + key to `body` instead).
+    private func stageAndHandOff<T: Sendable>(
         manifestMessage: NearbyPackageManifestMessage,
-        payload: Data
-    ) async throws -> MobilePackageEnvelope {
+        payload: Data,
+        body: @Sendable (URL, PairedDeviceKeyWrapping) async throws -> T
+    ) async throws -> T {
         let fileManager = FileManager.default
         let sessionDirectory = stagingDirectory.appendingPathComponent(
-            "receive-\(peer.deviceID.uuidString)-\(UUID().uuidString)", isDirectory: true
+            "receive-return-\(peer.deviceID.uuidString)-\(UUID().uuidString)", isDirectory: true
         )
         let packageDirectory = sessionDirectory.appendingPathComponent("package.astromobile", isDirectory: true)
         do {
@@ -284,12 +379,28 @@ public actor NearbyPackageTransport: MobileSyncTransport {
             throw error
         }
 
-        do {
-            let authenticated = try await packageService.authenticatePreview(from: packageDirectory, wrapping: wrapping)
-            return try await packageService.commitImport(token: authenticated.token)
-        } catch {
-            await abortReceive()
-            throw error
+        return try await body(packageDirectory, wrapping)
+    }
+
+    /// Stages the fully assembled, hash-verified payload as a package
+    /// directory `MobilePackageService` can read, then imports it through
+    /// exactly the same two calls the AirDrop path uses:
+    /// `authenticatePreview` followed by `commitImport`. Any failure —
+    /// staging, authentication, or the service's own validation (including
+    /// its duplicate-`packageID` rejection, which this deliberately never
+    /// bypasses) — removes the staging copy and rethrows untouched.
+    private func importAssembledPackage(
+        manifestMessage: NearbyPackageManifestMessage,
+        payload: Data
+    ) async throws -> MobilePackageEnvelope {
+        try await stageAndHandOff(manifestMessage: manifestMessage, payload: payload) { packageDirectory, wrapping in
+            do {
+                let authenticated = try await self.packageService.authenticatePreview(from: packageDirectory, wrapping: wrapping)
+                return try await self.packageService.commitImport(token: authenticated.token)
+            } catch {
+                await self.abortReceive()
+                throw error
+            }
         }
     }
 

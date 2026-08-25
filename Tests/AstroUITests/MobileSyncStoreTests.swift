@@ -874,6 +874,229 @@ struct MobileSyncStoreTests {
         #expect(try Data(contentsOf: sentinel) == original)
     }
 
+    // MARK: - Nearby sync phase transitions
+
+    /// Note on coverage: `MobileReturnApplicationReview`'s initializer is
+    /// `fileprivate` to `MobileReturnApplicationCoordinator.swift` -- by
+    /// design, no test anywhere can fabricate one, so a `.receivedReturn`
+    /// event carrying a real review cannot be scripted at this store-unit
+    /// level. That handoff (`.receivedReturn` -> `phase ==
+    /// .importPreviewReady` -> `applyAuthenticatedReturnChanges` ->
+    /// `reportReturnOutcome(.applied)`) is instead proven end-to-end by
+    /// `NearbySyncCoordinatorTests.firstPairingHappyPathRoundTrip`, which
+    /// drives a REAL coordinator+review through the same
+    /// `MobileReturnApplicationReview` type. These tests cover every OTHER
+    /// event the nearby phase state machine reacts to, plus the
+    /// confirm/reject/retry/cancel gating around it.
+
+    @Test("Nearby phase follows a scripted event stream through to done")
+    func nearbyPhaseFollowsScriptedEvents() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let id = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
+        let capturedSnapshot = SnapshotCapture()
+        let (stream, continuation) = AsyncStream<NearbySyncEvent>.makeStream()
+        continuation.yield(.waitingForPhone)
+        continuation.yield(.pairingCode("123456"))
+        continuation.yield(.preparing)
+        continuation.yield(.transferring)
+        continuation.yield(.verifying)
+        continuation.yield(.finished)
+        continuation.finish()
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot },
+            nearbyStartAdvertising: { requestedSnapshot in
+                capturedSnapshot.value = requestedSnapshot
+                return stream
+            }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+        #expect(store.canExport)
+
+        store.startNearbySync()
+        #expect(store.nearbyPhase == .advertising)
+        try await waitFor(store) { if case .done = $0 { return true }; return false }
+
+        #expect(capturedSnapshot.value?.snapshotID == snapshot.snapshotID)
+    }
+
+    @Test("startNearbySync is a no-op until canExport is true")
+    func startNearbySyncRequiresConfirmation() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let id = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
+        let started = ValueCounter()
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot },
+            nearbyStartAdvertising: { _ in
+                started.value += 1
+                return AsyncStream { $0.finish() }
+            }
+        )
+        await store.preview()
+        // Identity is confirmed (alreadyExists), but the summary is not --
+        // canExport is still false.
+        #expect(!store.canExport)
+
+        store.startNearbySync()
+        await Task.yield()
+        #expect(started.value == 0)
+        #expect(store.nearbyPhase == .idle)
+    }
+
+    @Test("A failure event surfaces as nearbyPhase.failed, and retry only fires from that state")
+    func nearbyFailureAndRetryGating() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let id = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
+        let startCount = ValueCounter()
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot },
+            nearbyStartAdvertising: { _ in
+                startCount.value += 1
+                let (stream, continuation) = AsyncStream<NearbySyncEvent>.makeStream()
+                continuation.yield(.failed(.timeout))
+                continuation.finish()
+                return stream
+            }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+
+        // Retry is a no-op before any nearby session ever ran.
+        store.retryNearbySync()
+        await Task.yield()
+        #expect(startCount.value == 0)
+
+        store.startNearbySync()
+        try await waitFor(store) { if case .failed(.timeout) = $0 { return true }; return false }
+        await waitForCount(startCount, toReach: 1)
+        #expect(startCount.value == 1)
+
+        store.retryNearbySync()
+        try await waitFor(store) { if case .failed(.timeout) = $0 { return true }; return false }
+        await waitForCount(startCount, toReach: 2)
+        #expect(startCount.value == 2)
+    }
+
+    @Test("confirmNearbyPairing and rejectNearbyPairing only forward while pairing is awaited")
+    func nearbyConfirmRejectGating() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let id = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
+        let confirmCount = ValueCounter()
+        let rejectCount = ValueCounter()
+        let (stream, continuation) = AsyncStream<NearbySyncEvent>.makeStream()
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot },
+            nearbyStartAdvertising: { _ in stream },
+            nearbyConfirmPairing: { confirmCount.value += 1 },
+            nearbyRejectPairing: { rejectCount.value += 1 }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+
+        // Before any pairing code is offered, both are no-ops.
+        store.confirmNearbyPairing()
+        store.rejectNearbyPairing()
+        await Task.yield()
+        #expect(confirmCount.value == 0)
+        #expect(rejectCount.value == 0)
+
+        store.startNearbySync()
+        continuation.yield(.pairingCode("654321"))
+        try await waitFor(store) { if case .pairing = $0 { return true }; return false }
+
+        store.confirmNearbyPairing()
+        await waitForCount(confirmCount, toReach: 1)
+        #expect(confirmCount.value == 1)
+        #expect(rejectCount.value == 0)
+
+        continuation.yield(.finished)
+        continuation.finish()
+        try await waitFor(store) { if case .done = $0 { return true }; return false }
+
+        // Once the session is no longer pairing, reject is a no-op too.
+        store.rejectNearbyPairing()
+        await Task.yield()
+        #expect(rejectCount.value == 0)
+    }
+
+    @Test("cancelNearbySync stops the live session and returns to idle")
+    func cancelNearbySyncStopsAndResetsToIdle() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let id = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
+        let stopCount = ValueCounter()
+        let (stream, continuation) = AsyncStream<NearbySyncEvent>.makeStream()
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot },
+            nearbyStartAdvertising: { _ in stream },
+            nearbyStop: { stopCount.value += 1 }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+
+        store.startNearbySync()
+        try await waitFor(store) { $0 == .advertising }
+
+        store.cancelNearbySync()
+        await waitForCount(stopCount, toReach: 1)
+        #expect(stopCount.value == 1)
+        #expect(store.nearbyPhase == .idle)
+        continuation.finish()
+    }
+
+    @MainActor
+    private func waitFor(
+        _ store: MobileSyncStore,
+        _ predicate: (NearbySyncPhase) -> Bool,
+        attempts: Int = 200
+    ) async throws {
+        for _ in 0..<attempts {
+            if predicate(store.nearbyPhase) { return }
+            await Task.yield()
+        }
+        Issue.record("nearbyPhase never satisfied the expected predicate; last value: \(store.nearbyPhase)")
+    }
+
+    /// `confirmNearbyPairing`/`rejectNearbyPairing`/`cancelNearbySync` each
+    /// forward through a fire-and-forget `Task { await ... }` — a single
+    /// `Task.yield()` lets that task get SCHEDULED but is not guaranteed to
+    /// let it actually RUN TO COMPLETION under load (observed flaky in a
+    /// parallel `swift test` run). Poll instead of yielding once.
+    private func waitForCount(_ counter: ValueCounter, toReach expected: Int, attempts: Int = 200) async {
+        for _ in 0..<attempts {
+            if counter.value >= expected { return }
+            await Task.yield()
+        }
+        Issue.record("counter never reached \(expected); last value: \(counter.value)")
+    }
+}
+
+private final class SnapshotCapture: @unchecked Sendable {
+    var value: MobileLibrarySnapshot?
 }
 
 private final class WriteCounter: @unchecked Sendable {

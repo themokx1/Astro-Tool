@@ -96,6 +96,26 @@ public enum MobileSyncFailure: Equatable, Sendable {
     case staleOperation
 }
 
+/// The nearby (direct, non-AirDrop) sync flow's own state machine —
+/// deliberately separate from `MobileSyncPhase` (spec §4.3's states:
+/// waiting/pairing/preparing/transferring/verifying/done/failed). Once a
+/// return package is received, that phase's own review/apply UI is the
+/// EXISTING one `MobileSyncPhase.importPreviewReady` already drives — see
+/// `handle(nearbyEvent:)` — so `NearbySyncPhase` never grows a "reviewing"
+/// case of its own; it simply returns to `.idle` and lets the shared
+/// `incomingContent` view (and `applyAuthenticatedReturnChanges`, entirely
+/// unmodified) take over, exactly like the AirDrop return path.
+public enum NearbySyncPhase: Equatable, Sendable {
+    case idle
+    case advertising
+    case pairing(code: String)
+    case preparing
+    case transferring
+    case verifying
+    case done
+    case failed(NearbySyncFailure)
+}
+
 @MainActor
 @Observable
 public final class MobileSyncStore {
@@ -111,6 +131,11 @@ public final class MobileSyncStore {
     package typealias PackageImportDiscardCapability = @Sendable (MobilePackagePreviewToken) async -> Void
     package typealias PackageImportDiscard = @Sendable (UUID) async -> Void
     package typealias DestinationPreparation = @Sendable (URL) throws -> Void
+    package typealias NearbyStartAdvertising = @Sendable (MobileLibrarySnapshot) async throws -> AsyncStream<NearbySyncEvent>
+    package typealias NearbyConfirmPairing = @Sendable () async -> Void
+    package typealias NearbyRejectPairing = @Sendable () async -> Void
+    package typealias NearbyStop = @Sendable () async -> Void
+    package typealias NearbyReportReturnOutcome = @Sendable (NearbyReturnOutcome) async -> Void
 
     public private(set) var phase: MobileSyncPhase = .idle
     public private(set) var preview: MobileSyncPreview?
@@ -129,6 +154,7 @@ public final class MobileSyncStore {
     public private(set) var isSummaryConfirmed = false
     public private(set) var didApplyIncomingChanges = false
     public private(set) var appliedChangeTotals = MobileChangeOutcomeTotals()
+    public private(set) var nearbyPhase: NearbySyncPhase = .idle
 
     /// Disjoint outcome totals for the currently retained
     /// `appliedChangeReceipt`, reused by every view that renders that
@@ -186,6 +212,21 @@ public final class MobileSyncStore {
     @ObservationIgnored private var sentBaseSnapshotIDs: Set<UUID> = []
     @ObservationIgnored private var sentBaseAcknowledgements: [UUID: Set<UUID>] = [:]
 
+    private let nearbyStartAdvertising: NearbyStartAdvertising
+    private let nearbyConfirmPairing: NearbyConfirmPairing
+    private let nearbyRejectPairing: NearbyRejectPairing
+    private let nearbyStop: NearbyStop
+    private let nearbyReportReturnOutcome: NearbyReportReturnOutcome
+    @ObservationIgnored private var nearbyEventTask: Task<Void, Never>?
+    /// True while `incomingReview` (and the fields alongside it) came from
+    /// the nearby flow's `.receivedReturn` event rather than an AirDrop
+    /// import. Every place that clears `incomingReview` — a successful
+    /// apply, a failed apply, or any discard path — reports the outcome
+    /// back to the nearby coordinator through this flag exactly once, then
+    /// clears it; nothing else in the shared apply/discard machinery below
+    /// changes for the AirDrop case.
+    @ObservationIgnored private var incomingReviewIsFromNearby = false
+
     /// Production construction accepts only the library root and the typed,
     /// read-only snapshot provider used by the already-open application
     /// model. Return authentication, sent-base evidence, domain commands and
@@ -218,6 +259,11 @@ public final class MobileSyncStore {
         changeImporter: MobileChangeImporter? = nil,
         changeRecordStore: MobileChangeApplicationRecordStore? = nil,
         sentSnapshotStore: MobileSentSnapshotStore? = nil,
+        nearbyStartAdvertising: NearbyStartAdvertising? = nil,
+        nearbyConfirmPairing: NearbyConfirmPairing? = nil,
+        nearbyRejectPairing: NearbyRejectPairing? = nil,
+        nearbyStop: NearbyStop? = nil,
+        nearbyReportReturnOutcome: NearbyReportReturnOutcome? = nil,
         productionMode: Bool = false,
         fixture: Void = ()
     ) {
@@ -273,6 +319,45 @@ public final class MobileSyncStore {
         self.packageImportDiscardReturn = packageImportDiscardReturn ?? { package in await packageService.discardAuthenticatedReturn(package) }
         self.packageImportDiscardCapability = packageImportDiscardCapability ?? { token in await packageService.discardImportPreview(token: token) }
         self.packageImportDiscard = packageImportDiscard ?? { _ in }
+
+        // The nearby coordinator MUST share this exact `returnCoordinator`
+        // instance (not build its own via `NearbySyncCoordinator
+        // .init(rootURL:displayName:)`): `MobileReturnApplicationCoordinator
+        // .preview`/`.apply`/`.discard` key their live in-memory session by
+        // the coordinator INSTANCE that minted it, so a nearby-received
+        // review handed to `applyAuthenticatedReturnChanges` below could
+        // never be applied against a different instance's coordinator.
+        let localReturnCoordinator = self.returnCoordinator
+        let productionNearbyCoordinator: NearbySyncCoordinator? = {
+            guard productionMode, let rootURL, let localReturnCoordinator else { return nil }
+            let identityStore = KeychainDeviceIdentityStore()
+            let displayName = ProcessInfo.processInfo.hostName
+            guard let identity = try? identityStore.loadOrCreateOwnIdentity(displayName: displayName) else { return nil }
+            let listener = NearbyBonjourListener(serviceName: displayName)
+            let stagingRoot = rootURL.appendingPathComponent(".astro-tool/nearby-staging", isDirectory: true)
+            return NearbySyncCoordinator(
+                identity: identity,
+                trustStore: identityStore,
+                listenerStart: { try await listener.start() },
+                listenerStop: { await listener.stop() },
+                stagingDirectory: stagingRoot,
+                packageService: MobilePackageService(),
+                publishForwardSnapshot: { snapshot, destination, wrapping in
+                    try await localReturnCoordinator.publishForwardSnapshot(snapshot, to: destination, wrapping: wrapping)
+                },
+                previewReturn: { source, wrapping in
+                    try await localReturnCoordinator.preview(from: source, wrapping: wrapping)
+                }
+            )
+        }()
+        self.nearbyStartAdvertising = nearbyStartAdvertising ?? { snapshot in
+            guard let productionNearbyCoordinator else { throw MobileChangeImportError.configurationMissing }
+            return try await productionNearbyCoordinator.startAdvertising(confirmedSnapshot: snapshot)
+        }
+        self.nearbyConfirmPairing = nearbyConfirmPairing ?? { await productionNearbyCoordinator?.confirmPairing() }
+        self.nearbyRejectPairing = nearbyRejectPairing ?? { await productionNearbyCoordinator?.rejectPairing() }
+        self.nearbyStop = nearbyStop ?? { await productionNearbyCoordinator?.stop() }
+        self.nearbyReportReturnOutcome = nearbyReportReturnOutcome ?? { outcome in await productionNearbyCoordinator?.reportReturnOutcome(outcome) }
     }
 
     public var canExport: Bool {
@@ -281,6 +366,114 @@ public final class MobileSyncStore {
 
     public var isBusy: Bool {
         phase == .previewing || phase == .exporting || phase == .finishing || phase == .importing || phase == .applying || phase == .discarding
+    }
+
+    // MARK: - Nearby sync
+
+    /// Starts the direct (non-AirDrop) nearby sync flow using the EXACT
+    /// snapshot the user already confirmed through the existing
+    /// identity/summary review UI — the same `canExport` gate that unlocks
+    /// "Create sealed package…" also unlocks this action, so nearby sync
+    /// can never skip that human confirmation (spec §4.2).
+    public func startNearbySync() {
+        guard canExport, let preview else { return }
+        nearbyEventTask?.cancel()
+        nearbyPhase = .advertising
+        let snapshot = preview.snapshot
+        let startAdvertising = nearbyStartAdvertising
+        nearbyEventTask = Task { [weak self] in
+            do {
+                let events = try await startAdvertising(snapshot)
+                for await event in events {
+                    guard let self else { return }
+                    await self.handle(nearbyEvent: event)
+                }
+            } catch {
+                guard let self else { return }
+                await self.handle(nearbyEvent: .failed(.transferFailed))
+            }
+        }
+    }
+
+    /// Forwards the pairing-code confirmation to the live coordinator. A
+    /// no-op unless a first pairing is currently awaiting one.
+    public func confirmNearbyPairing() {
+        guard case .pairing = nearbyPhase else { return }
+        let confirm = nearbyConfirmPairing
+        Task { await confirm() }
+    }
+
+    /// Forwards the pairing-code rejection to the live coordinator. A
+    /// no-op unless a first pairing is currently awaiting one.
+    public func rejectNearbyPairing() {
+        guard case .pairing = nearbyPhase else { return }
+        let reject = nearbyRejectPairing
+        Task { await reject() }
+    }
+
+    /// The one retry action spec §4.3 allows after an interruption.
+    public func retryNearbySync() {
+        guard case .failed = nearbyPhase else { return }
+        startNearbySync()
+    }
+
+    /// Cancels the nearby session in progress (or clears a finished/failed
+    /// one) and returns to `.idle`.
+    public func cancelNearbySync() {
+        nearbyEventTask?.cancel()
+        nearbyEventTask = nil
+        let stop = nearbyStop
+        Task { await stop() }
+        nearbyPhase = .idle
+    }
+
+    private func handle(nearbyEvent event: NearbySyncEvent) {
+        switch event {
+        case .waitingForPhone:
+            nearbyPhase = .advertising
+        case .pairingCode(let code):
+            nearbyPhase = .pairing(code: code)
+        case .preparing:
+            nearbyPhase = .preparing
+        case .transferring:
+            nearbyPhase = .transferring
+        case .verifying:
+            nearbyPhase = .verifying
+        case .receivedReturn(let review):
+            // Hand off to the EXISTING review/apply UI (`phase ==
+            // .importPreviewReady`, `incomingContent`,
+            // `applyAuthenticatedReturnChanges`) untouched — nearby sync
+            // adds no second apply route. `nearbyPhase` returns to `.idle`
+            // so its own sheet/section closes as the shared review UI takes
+            // over.
+            incomingReviewIsFromNearby = true
+            incomingReview = review
+            incomingPreview = review.packagePreview
+            changePreview = review.changePreview
+            changeResolutions = review.changePreview.conflicts.reduce(into: [:]) { values, conflict in
+                values[conflict.changeID] = conflict.recommendedResolution
+            }
+            didApplyIncomingChanges = false
+            errorMessage = nil
+            failure = nil
+            phase = .importPreviewReady
+            nearbyPhase = .idle
+        case .finished:
+            nearbyPhase = .done
+        case .failed(let reason):
+            nearbyPhase = .failed(reason)
+        }
+    }
+
+    /// Reports the outcome of a nearby-originated review back to the live
+    /// coordinator exactly once, so its session can move past
+    /// `.receivedReturn` to a terminal event. A no-op for an AirDrop-
+    /// originated review (the common, unmodified path).
+    private func reportNearbyOutcomeIfNeeded(_ outcome: NearbyReturnOutcome) {
+        guard incomingReviewIsFromNearby else { return }
+        incomingReviewIsFromNearby = false
+        let report = nearbyReportReturnOutcome
+        Task { await report(outcome) }
     }
 
     public func startPreview() {
@@ -354,6 +547,7 @@ public final class MobileSyncStore {
             appliedChangeReceipt = receipt
             appliedChangeTotals = Self.totals(receipt: receipt, preview: changePreview)
             didApplyIncomingChanges = true
+            reportNearbyOutcomeIfNeeded(.applied)
             incomingCapability = nil
             incomingReturn = nil
             incomingReview = nil
@@ -381,6 +575,7 @@ public final class MobileSyncStore {
             } else if let authenticatedReturn = incomingReturn {
                 await packageImportDiscardReturn(authenticatedReturn)
             }
+            reportNearbyOutcomeIfNeeded(.notApplied)
             incomingCapability = nil
             incomingReturn = nil
             incomingReview = nil
@@ -871,6 +1066,7 @@ public final class MobileSyncStore {
         } else if let packageID = incomingPreview?.packageID {
             await packageImportDiscard(packageID)
         }
+        reportNearbyOutcomeIfNeeded(.notApplied)
         incomingCapability = nil
         incomingReturn = nil
         incomingReview = nil
@@ -889,6 +1085,7 @@ public final class MobileSyncStore {
         let packageID = incomingPreview?.packageID
         let discardCapability = packageImportDiscardCapability
         let discardLegacy = packageImportDiscard
+        reportNearbyOutcomeIfNeeded(.notApplied)
         incomingPreview = nil
         incomingReturn = nil
         incomingReview = nil

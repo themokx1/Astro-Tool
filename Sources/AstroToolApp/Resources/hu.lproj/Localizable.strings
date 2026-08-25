@@ -2823,3 +2823,19 @@
 "This change was not accepted." = "A módosítás nem lett elfogadva.";
 "Some reviewed changes were saved before the receipt failed. Applied %lld; resolved %lld. Keep the phone package and create a fresh forward snapshot after recovery." = "Néhány ellenőrzött módosítás mentése sikerült, mielőtt a bizonylat mentése meghiúsult. Alkalmazva: %lld; rendezve: %lld. Őrizze meg a telefoncsomagot, és helyreállítás után készítsen új előre irányú pillanatképet.";
 "Saved before failure: applied %lld, resolved %lld. Keep the phone package, recover the Mac receipt, then create a fresh forward snapshot." = "Hiba előtt mentve: alkalmazva %lld, rendezve %lld. Őrizze meg a telefoncsomagot, állítsa helyre a Mac bizonylatát, majd készítsen új előre irányú pillanatképet.";
+
+/* V5 Wave 2 -- direct (non-AirDrop) nearby sync flow, spec §4.2-4.3. */
+"Sync with iPhone directly" = "Közvetlen szinkronizálás iPhone-nal";
+"The local network permission is used only to hand data between your own AstroTool apps." = "A helyi hálózati engedélyt csak a saját AstroTool alkalmazásaid közötti adatátvitelhez használjuk.";
+"Waiting for iPhone" = "Várakozás az iPhone-ra";
+"Confirm the pairing code" = "Erősítsd meg a párosítási kódot";
+"Confirm" = "Megerősítés";
+"Preparing data" = "Adatok előkészítése";
+"Transferring" = "Átvitel";
+"Verifying" = "Ellenőrzés";
+"Pairing was declined." = "A párosítást elutasították.";
+"This iPhone's saved identity changed. Re-pair to continue." = "Ennek az iPhone-nak a mentett azonosítója megváltozott. A folytatáshoz párosítsd újra.";
+"The transfer could not complete." = "Az átvitel nem fejeződött be.";
+"The reviewed changes were not applied." = "Az ellenőrzött módosítások nem kerültek alkalmazásra.";
+"The connection timed out." = "A kapcsolat időtúllépés miatt megszakadt.";
+"Sync was cancelled." = "A szinkronizálást megszakítottuk.";
