@@ -37,6 +37,12 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: AstroTool
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.photography
+    info:
+      path: Sources/AstroToolApp/Info.plist
+      properties:
+        NSLocalNetworkUsageDescription: "AstroTool uses the local network only to hand the night plan and your checklist notes between your own Mac and iPhone."
+        NSBonjourServices:
+          - "_astrotool-sync._tcp"
 
   AstroToolUITests:
     type: bundle.ui-testing
@@ -74,6 +80,9 @@ targets:
       path: Sources/AstroToolMobile/Info.plist
       properties:
         NSCameraUsageDescription: "AstroTool uses the camera to scan the one-time key for a mobile package from your Mac."
+        NSLocalNetworkUsageDescription: "AstroTool uses the local network only to hand the night plan and your checklist notes between your own Mac and iPhone."
+        NSBonjourServices:
+          - "_astrotool-sync._tcp"
         CFBundleDocumentTypes:
           - CFBundleTypeName: AstroTool Mobile Package
             CFBundleTypeRole: Viewer

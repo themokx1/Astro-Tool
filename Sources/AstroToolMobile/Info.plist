@@ -31,10 +31,16 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
-	<key>NSCameraUsageDescription</key>
-	<string>AstroTool uses the camera to scan the one-time key for a mobile package from your Mac.</string>
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<false/>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_astrotool-sync._tcp</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>AstroTool uses the camera to scan the one-time key for a mobile package from your Mac.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>AstroTool uses the local network only to hand the night plan and your checklist notes between your own Mac and iPhone.</string>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

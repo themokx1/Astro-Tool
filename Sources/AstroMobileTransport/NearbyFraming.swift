@@ -90,6 +90,16 @@ public enum NearbyTransportError: Error, Equatable, Sendable {
     /// under the channel's frame cap. Rejected before anything is sent; the
     /// channel remains usable for subsequent, correctly sized messages.
     case oversizedMessage
+
+    /// `NearbyBonjourBrowser.connectToFirstMatch(timeout:)` did not discover
+    /// and connect to a peer within the configured timeout. Distinct from
+    /// `.handshakeTimeout` (which fires once a pairing session is already
+    /// talking to a connected peer): this fires before any peer is even
+    /// reached — e.g. no Bonjour result ever arrived, or the underlying
+    /// `NWConnection` sat retrying a refused/unreachable endpoint. Terminal:
+    /// the in-flight browse/connect attempt is cancelled before this is
+    /// thrown.
+    case connectionTimeout
 }
 
 /// Encodes and decodes `NearbyFrame`s to and from the wire format.

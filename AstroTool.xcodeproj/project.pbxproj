@@ -174,6 +174,7 @@
 		A8AD694B72922B42FC930F17 /* AstroToolMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = AstroToolMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AABC7F22396B6E2B9FEE5747 /* TargetDetailPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TargetDetailPage.swift; sourceTree = "<group>"; };
 		AB7CF9D430F24282E4A4B22F /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		B495DEF22472FB4AB18DF89F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		B4A4985497B7FD86AE138793 /* EquipmentSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EquipmentSettingsView.swift; sourceTree = "<group>"; };
 		BCA4C8EB67054238E7DB1078 /* AuditPage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuditPage.swift; sourceTree = "<group>"; };
 		C2030586FE977C0AC4F0DF2F /* OverviewSegment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverviewSegment.swift; sourceTree = "<group>"; };
@@ -348,6 +349,7 @@
 				55E36DB00A781CDFE160D171 /* AppState.swift */,
 				3C2173E433C466197C9DBABE /* AppState+Support.swift */,
 				A03DD33D1EC84BB01DE53331 /* AstroToolApp.swift */,
+				B495DEF22472FB4AB18DF89F /* Info.plist */,
 				10C70E6F5E6F1627F61DE501 /* Resources */,
 				059A75FAE62BC075C1C61082 /* Views */,
 			);
@@ -817,6 +819,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/AstroToolApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AstroTool;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -854,6 +857,7 @@
 				CODE_SIGN_IDENTITY = "-";
 				COMBINE_HIDPI_IMAGES = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Sources/AstroToolApp/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = AstroTool;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				LD_RUNPATH_SEARCH_PATHS = (
