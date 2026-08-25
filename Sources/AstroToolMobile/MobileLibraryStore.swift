@@ -494,14 +494,35 @@ public actor MobileLibraryStore {
         } catch {
             throw error
         }
-        try await performImport(key: key)
+        try await performImport(key: key, fingerprintMaterial: Data(key.qrPayload.utf8))
     }
 
     func importCurrentStagedPackage(key: OneTimePackageKey) async throws {
-        try await performImport(key: key)
+        try await performImport(key: key, fingerprintMaterial: Data(key.qrPayload.utf8))
     }
 
-    private func performImport(key: OneTimePackageKey) async throws {
+    /// Imports the currently staged package using a `pairedDevice`-style key
+    /// carried over an authenticated nearby session instead of a scanned QR
+    /// payload. Runs through exactly the same validation as the QR path
+    /// above — same `performImport`, same duplicate-key fingerprinting, same
+    /// revision/library checks — just parameterized over the wrap-key type,
+    /// since `MobilePackageService.authenticatePreview` already accepts any
+    /// `MobilePackageKeyWrapping` and never itself required `OneTimePackageKey`
+    /// specifically. `package` visibility mirrors the QR-key overload above
+    /// (`key: OneTimePackageKey`): reachable only via `@testable import` or,
+    /// in the Xcode module `AstroToolMobile` actually compiles as, the
+    /// nearby-sync screen in the same module.
+    func importCurrentStagedPackage(pairedWrapping: PairedDeviceKeyWrapping) async throws {
+        try await performImport(key: pairedWrapping, fingerprintMaterial: pairedWrapping.rawRepresentation)
+    }
+
+    /// Shared validation for both `importCurrentStagedPackage` overloads.
+    /// `fingerprintMaterial` is whatever bytes uniquely identify `key`'s own
+    /// secret material (the QR-key overload hashes its `qrPayload` string;
+    /// the paired-device overload hashes its raw 32 bytes directly) — used
+    /// only to reject re-consuming the same key twice, never as part of the
+    /// cryptographic unwrap itself.
+    private func performImport(key: some MobilePackageKeyWrapping, fingerprintMaterial: Data) async throws {
         try ensureWritable()
         try Task.checkCancellation()
         guard let current = currentStagedPackage,
@@ -509,7 +530,7 @@ public actor MobileLibraryStore {
             throw MobileLibraryStoreError.invalidPackage
         }
         let source = current.url
-        let fingerprint = SHA256.hash(data: Data(key.qrPayload.utf8)).map { String(format: "%02x", $0) }.joined()
+        let fingerprint = SHA256.hash(data: fingerprintMaterial).map { String(format: "%02x", $0) }.joined()
         if keyFingerprints[fingerprint] != nil {
             await discardCurrentStagedPackageIfMatching(source)
             throw MobileLibraryStoreError.packageAlreadyConsumed

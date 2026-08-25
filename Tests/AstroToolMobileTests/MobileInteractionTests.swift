@@ -86,7 +86,8 @@ func mobileMutationSurfaceContract() throws {
         "Sources/AstroToolMobile/TonightMobileView.swift",
         "Sources/AstroToolMobile/ProjectsMobileView.swift",
         "Sources/AstroToolMobile/BriefingsMobileView.swift",
-        "Sources/AstroToolMobile/SyncMobileView.swift"
+        "Sources/AstroToolMobile/SyncMobileView.swift",
+        "Sources/AstroToolMobile/MobileNearbySyncScreen.swift"
     ]
     let source = try surfaceFiles
         .map { try String(contentsOf: repository.appendingPathComponent($0), encoding: .utf8) }

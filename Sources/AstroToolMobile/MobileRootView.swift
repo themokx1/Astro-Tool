@@ -2,11 +2,64 @@ import SwiftUI
 import Foundation
 import UniformTypeIdentifiers
 import Darwin
+import UIKit
 import AstroMobileDomain
 import AstroMobileTransport
 
 private enum MobileTab: Hashable {
     case tonight, projects, briefings, sync
+}
+
+/// The nearby-sync screen's own plain, `AstroMobileTransport`-free state
+/// mirror of `NearbyPhoneSyncState`/`NearbyPhoneSyncFailure` — see
+/// `MobileNearbySyncScreen.swift`'s doc comment for why the screen itself
+/// never imports that module directly.
+enum MobileNearbySyncUIState: Equatable {
+    case idle
+    case searching
+    case pairingCode(String)
+    case connecting
+    case receiving
+    case staged
+    case sendingReturn
+    case finished
+    case failed(MobileNearbySyncUIFailure)
+
+    init(_ state: NearbyPhoneSyncState) {
+        switch state {
+        case .idle: self = .idle
+        case .searching: self = .searching
+        case .pairingCode(let code): self = .pairingCode(code)
+        case .connecting: self = .connecting
+        case .receiving: self = .receiving
+        case .staged: self = .staged
+        case .sendingReturn: self = .sendingReturn
+        case .finished: self = .finished
+        case .failed(let failure): self = .failed(MobileNearbySyncUIFailure(failure))
+        }
+    }
+}
+
+enum MobileNearbySyncUIFailure: Equatable {
+    case peerNotFound
+    case pairingRejected
+    case identityChanged
+    case transferFailed
+    case importFailed
+    case timeout
+    case cancelled
+
+    init(_ failure: NearbyPhoneSyncFailure) {
+        switch failure {
+        case .peerNotFound: self = .peerNotFound
+        case .pairingRejected: self = .pairingRejected
+        case .identityChanged: self = .identityChanged
+        case .transferFailed: self = .transferFailed
+        case .importFailed: self = .importFailed
+        case .timeout: self = .timeout
+        case .cancelled: self = .cancelled
+        }
+    }
 }
 
 enum MobileSnapshotFreshness: Equatable, Sendable {
@@ -168,6 +221,10 @@ struct MobileRootView: View {
     @State private var returnExportTask: Task<Void, Never>?
     @State private var returnExportGeneration = 0
     @State private var selectedTab: MobileTab = .tonight
+    @State private var showingNearbySync = false
+    @State private var nearbySyncState: MobileNearbySyncUIState = .idle
+    @State private var nearbySyncSession: NearbyPhoneSyncSession?
+    @State private var nearbySyncTask: Task<Void, Never>?
     private let scanner: any MobileQRScanner
     private let fixtureMode: String?
     private let fixtureQRPayload: String?
@@ -342,6 +399,22 @@ struct MobileRootView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingNearbySync, onDismiss: { cancelNearbySync() }) {
+                MobileNearbySyncScreen(
+                    state: nearbySyncState,
+                    onStart: startNearbySync,
+                    onConfirmCode: confirmNearbySyncCode,
+                    onRejectCode: rejectNearbySyncCode,
+                    onCancel: { showingNearbySync = false },
+                    onRetry: startNearbySync,
+                    onOpenSettings: openNearbySyncSettings,
+                    onUseAirDropInstead: { showingNearbySync = false },
+                    onDone: {
+                        showingNearbySync = false
+                        Task { await refresh() }
+                    }
+                )
+            }
         }
     }
 
@@ -355,6 +428,9 @@ struct MobileRootView: View {
                 Text("No AstroTool library on this iPhone yet.")
                     .font(.title2.weight(.semibold))
                     .accessibilityAddTraits(.isHeader)
+                Button("Connect to my Mac") { showingNearbySync = true }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v5.mobile.nearby.open")
                 Text("On your Mac, choose iPhone Sync, then send the mobile package with AirDrop.")
                     .font(.body)
                 Text("Original photos stay on your Mac or external drive.")
@@ -422,7 +498,7 @@ struct MobileRootView: View {
             BriefingsMobileView(snapshot: snapshot, changes: changes, store: store, onStoreChange: refresh)
                 .tabItem { Label("Briefings", systemImage: "doc.text.fill") }
                 .tag(MobileTab.briefings)
-            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, onCancelExport: cancelReturnExport, onDiscardReturnExport: discardReturnExport, isExporting: returnExportTask != nil, returnQRCode: returnQRCode)
+            SyncMobileView(snapshot: snapshot, changes: changes, queuedChangeCount: queuedChangeCount, stagedPackageURL: stagedPackageURL, onScan: { showingScanner = true }, onImport: primaryImportAction, onDiscard: discardStagedPackage, onExport: { showingReturnExporter = true }, onCancelExport: cancelReturnExport, onDiscardReturnExport: discardReturnExport, isExporting: returnExportTask != nil, returnQRCode: returnQRCode, onNearbySync: { showingNearbySync = true })
                 .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
                 .tag(MobileTab.sync)
         }
@@ -439,6 +515,90 @@ struct MobileRootView: View {
         durabilityAmbiguousWarning = await store.durabilityAmbiguousWarning
         stagedPackageURL = await store.stagedPackageURL
         returnQRCode = await store.recoverableReturnExport?.oneTimeQRPayload
+    }
+
+    /// Starts (or, called again from a `.failed` state, retries) exactly one
+    /// nearby session. A received plan enters through the SAME two store
+    /// routes the AirDrop path uses (`stagePackage` then
+    /// `importCurrentStagedPackage`, here with the received `pairedDevice`
+    /// key instead of a scanned QR payload); a queued reply leaves through
+    /// the unmodified `exportReturnPackage`. Neither route is new — this
+    /// only adds a second way to reach them.
+    private func startNearbySync() {
+        guard nearbySyncSession == nil else { return }
+        let currentStore = store
+        do {
+            let session = try NearbyPhoneSyncSession(rootURL: currentStore.applicationSupportURL, displayName: UIDevice.current.name)
+            nearbySyncSession = session
+            nearbySyncTask = Task { @MainActor in
+                let stream = await session.run(handleForwardPackage: { directory, wrapping in
+                    try await currentStore.stagePackage(from: directory)
+                    try await currentStore.importCurrentStagedPackage(pairedWrapping: wrapping)
+                    return try await Self.nearbyReturnPackage(store: currentStore)
+                })
+                for await state in stream {
+                    nearbySyncState = MobileNearbySyncUIState(state)
+                    if case .staged = state {
+                        await refresh()
+                    }
+                }
+                await Self.clearNearbyReturnStaging(store: currentStore)
+                nearbySyncSession = nil
+                nearbySyncTask = nil
+            }
+        } catch {
+            nearbySyncState = .failed(.peerNotFound)
+        }
+    }
+
+    private func confirmNearbySyncCode() {
+        guard let nearbySyncSession else { return }
+        Task { await nearbySyncSession.confirmPairing() }
+    }
+
+    private func rejectNearbySyncCode() {
+        guard let nearbySyncSession else { return }
+        Task { await nearbySyncSession.rejectPairing() }
+    }
+
+    private func cancelNearbySync() {
+        if let nearbySyncSession {
+            Task { await nearbySyncSession.cancel() }
+        }
+        nearbySyncTask?.cancel()
+        nearbySyncTask = nil
+        nearbySyncSession = nil
+        nearbySyncState = .idle
+    }
+
+    private func openNearbySyncSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    /// Builds the phone's reply from its own queued checklist/note changes,
+    /// through the unmodified `exportReturnPackage` — export still never
+    /// clears the queue — then carries its one-time key over the nearby
+    /// session as a `pairedDevice`-style key built from the exact same raw
+    /// bytes (see `OneTimePackageKey.rawRepresentation`'s own doc comment
+    /// for why that is sound). Returns `nil`, meaning "nothing to send
+    /// back", when there is nothing queued.
+    private static func nearbyReturnPackage(store: MobileLibraryStore) async throws -> NearbyPhoneReturnPackage? {
+        guard await !store.queuedChanges.isEmpty else { return nil }
+        let outboxRoot = store.applicationSupportURL.appendingPathComponent(
+            ".astro-tool/nearby-return-outbox/\(UUID().uuidString)", isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: outboxRoot, withIntermediateDirectories: true)
+        let destination = outboxRoot.appendingPathComponent("package.astromobile", isDirectory: true)
+        let exported = try await store.exportReturnPackage(to: destination)
+        let oneTimeKey = try OneTimePackageKey(scanning: exported.oneTimeQRPayload)
+        let wrapping = try PairedDeviceKeyWrapping(rawRepresentation: oneTimeKey.rawRepresentation)
+        return NearbyPhoneReturnPackage(packageDirectory: destination, packageID: exported.packageID, wrapping: wrapping)
+    }
+
+    private static func clearNearbyReturnStaging(store: MobileLibraryStore) async {
+        let outboxRoot = store.applicationSupportURL.appendingPathComponent(".astro-tool/nearby-return-outbox", isDirectory: true)
+        try? FileManager.default.removeItem(at: outboxRoot)
     }
 
     private func cancelReturnExport() {

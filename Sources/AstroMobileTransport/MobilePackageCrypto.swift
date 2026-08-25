@@ -190,6 +190,22 @@ public struct OneTimePackageKey: MobilePackageKeyWrapping, Sendable, Equatable {
         Self.qrPrefix + Self.encodeBase64URL(rawKey)
     }
 
+    /// This key's raw 32-byte material — the same bytes `qrPayload` already
+    /// encodes, just without the prefix/base64url wrapping a human scans
+    /// from a QR code. Exposed so a nearby session can carry an
+    /// already-exported `OneTimePackageKey`-wrapped package (the unmodified
+    /// `MobileLibraryStore.exportReturnPackage` output — see that method's
+    /// doc comment) as a `pairedDevice`-style wire key without re-deriving
+    /// or weakening either type's own `wrap`/`unwrap`:
+    /// `PairedDeviceKeyWrapping(rawRepresentation:)` built from these same
+    /// bytes wraps and unwraps byte-for-byte identically to this key, since
+    /// both types run the exact same AEAD-over-raw-key algorithm — only the
+    /// manifest `keyMode` tag they cause `MobilePackageService.export` to
+    /// write differs, and that tag comes from the wrapping value's own
+    /// Swift type, never from these bytes. This exposes nothing `qrPayload`
+    /// did not already make public.
+    public var rawRepresentation: Data { rawKey }
+
     public func wrap(_ key: SymmetricKey) throws -> Data {
         guard key.bitCount == 256 else { throw MobilePackageError.invalidKey }
         return MobilePackageCrypto.combinedBytes(

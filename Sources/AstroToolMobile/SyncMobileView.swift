@@ -15,6 +15,7 @@ struct SyncMobileView: View {
     let onDiscardReturnExport: () -> Void
     let isExporting: Bool
     let returnQRCode: String?
+    let onNearbySync: () -> Void
 
     private var checklistCount: Int { snapshot.briefings.flatMap(\.checklist).flatMap(\.items).count }
 
@@ -61,6 +62,15 @@ struct SyncMobileView: View {
                 .padding(.vertical, 5)
             }
             .accessibilityIdentifier("v5.mobile.safety")
+
+            Section {
+                Button("Connect to my Mac") { onNearbySync() }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v5.mobile.nearby.open")
+                Text("Pairs directly with your Mac over the local network — no AirDrop needed.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
 
             Section("Bring in a newer plan") {
                 if stagedPackageURL != nil {
