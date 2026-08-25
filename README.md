@@ -87,11 +87,15 @@ prototípus, amit magad fordítasz le Xcode-ból a saját telefonodra, ingyenes
 Apple Accounttal és Xcode Personal Teammel. A provisioning hét nap után
 lejár, ezért a prototípust időnként újra kell telepíteni.
 
-A Mac és a telefon kizárólag egy titkosított `.astromobile` fájllal,
-AirDroppal beszélget egymással — nincs CloudKit, nincs iCloud-szinkron és
-nincs TestFlight vagy App Store-terjesztés. Az eredeti fotók soha nem
-kerülnek át, és az iPhone nem módosíthatja a képkönyvtár fájljait; a
-telefonról kizárólag ellenőrzőlista-pipálások és jegyzetek jönnek vissza,
+A Mac és a telefon elsősorban a helyi hálózaton, közvetlen kapcsolattal
+szinkronizál egy titkosított `.astromobile` csomaggal — hatjegyű párosító
+kóddal az első alkalommal, amit mindkét eszközön meg kell erősíteni —, és
+AirDrop marad a teljes értékű tartalék, ha a helyi hálózat nem elérhető
+vagy az engedélyt megtagadod. Egyik út sem használ CloudKitet,
+iCloud-szinkront vagy TestFlight/App Store-terjesztést, és mindkét
+alkalmazásnak előtérben kell lennie a szinkronizáláshoz. Az eredeti fotók
+soha nem kerülnek át, és az iPhone nem módosíthatja a képkönyvtár fájljait;
+a telefonról kizárólag ellenőrzőlista-pipálások és jegyzetek jönnek vissza,
 minden változást a Mac mutat meg jóváhagyás előtt.
 
 Részletes, nem-technikai útmutató: [Első lépések — iPhone-kísérő

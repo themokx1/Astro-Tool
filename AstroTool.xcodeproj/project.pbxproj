@@ -37,6 +37,7 @@
 		559907DB3EE7CA187E470267 /* SirilHelpSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 58870E13536205127A6F21F4 /* SirilHelpSheet.swift */; };
 		55EF54B84D7B22BAF1F4998B /* ThumbnailCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0ACAF94584632F7F955F5468 /* ThumbnailCell.swift */; };
 		578E4221A93AEA0F2AF95F11 /* ProductStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ABEE9EF3C25E7AB2AA65A1F /* ProductStyle.swift */; };
+		5D215DC0043E8E6979E48B5B /* MobileNearbySyncScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F8BD81157BF032014FBE66C /* MobileNearbySyncScreen.swift */; };
 		5DA60A885E2ACE3D59C2F903 /* PreviousNightPage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 15DF4B8323B1DB6767465D7A /* PreviousNightPage.swift */; };
 		61D356BC0948C48B2CD4B93E /* FirstScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EEA40C4DF03ABB297618F10 /* FirstScanView.swift */; };
 		645183E09A1663041B54035B /* TonightMobileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37189B1D029AC15BF42BBBAE /* TonightMobileView.swift */; };
@@ -159,6 +160,7 @@
 		865D9AB0199F3CDB0F90C92E /* AstroToolMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = AstroToolMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		86B50A088FE68F49D85EEB3F /* LibraryRulesSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryRulesSettingsView.swift; sourceTree = "<group>"; };
 		8F5FD1E2A0196BF313079EFD /* CameraQRScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraQRScanner.swift; sourceTree = "<group>"; };
+		8F8BD81157BF032014FBE66C /* MobileNearbySyncScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileNearbySyncScreen.swift; sourceTree = "<group>"; };
 		92706D204E8A85DEFC0F8E38 /* VerifyConfirmationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VerifyConfirmationSheet.swift; sourceTree = "<group>"; };
 		92B4D65C4CE8741F0C986087 /* MetricInfoButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetricInfoButton.swift; sourceTree = "<group>"; };
 		9328F7F42F822BFB20411F0F /* MosaicPanelTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MosaicPanelTable.swift; sourceTree = "<group>"; };
@@ -385,6 +387,7 @@
 				9CEF9DFC08F996EC79513F02 /* Info.plist */,
 				1951B3823B698AF8B821643D /* MobileDocumentIntake.swift */,
 				6506AA17E940B02F2B7EE272 /* MobileLibraryStore.swift */,
+				8F8BD81157BF032014FBE66C /* MobileNearbySyncScreen.swift */,
 				537EC0A1C143D675F5FD9D78 /* MobileRootView.swift */,
 				A1C7ED1E7B0CB179226C7F54 /* ProjectsMobileView.swift */,
 				640A6A141D03CD60EAA40B4E /* SyncMobileView.swift */,
@@ -698,6 +701,7 @@
 				144D7A72C14F2071E5293BB5 /* CameraQRScanner.swift in Sources */,
 				9888BBE48D25824FDA23A49A /* MobileDocumentIntake.swift in Sources */,
 				E0CEE5655536EFA7F4889504 /* MobileLibraryStore.swift in Sources */,
+				5D215DC0043E8E6979E48B5B /* MobileNearbySyncScreen.swift in Sources */,
 				7B6BF6E6D6B7DE4A8D08803E /* MobileRootView.swift in Sources */,
 				EFF7592BE9AB7E4E781427B5 /* ProjectsMobileView.swift in Sources */,
 				854124A6298A5B915D5FE91C /* SyncMobileView.swift in Sources */,

@@ -110,6 +110,35 @@ struct PublicWebsiteSurfaceTests {
         }
     }
 
+    @Test("First Steps documents nearby sync as the primary Wave 2 path, with AirDrop as the honest fallback")
+    func firstStepsDocumentsNearbySync() throws {
+        let hungarian = try source("docs/first-steps.html")
+        for text in [
+            "helyi hálózat",
+            "párosító kód",
+            "Közvetlen szinkronizálás iPhone-nal",
+            "Kapcsolódás a Macemhez",
+            "helyi hálózati engedélyt",
+            "AirDrop",
+            "előtérben",
+        ] {
+            #expect(hungarian.contains(text), Comment(rawValue: text))
+        }
+
+        let english = try source("docs/en/first-steps.html")
+        for text in [
+            "local network",
+            "pairing code",
+            "Sync with iPhone directly",
+            "Connect to my Mac",
+            "local network permission",
+            "AirDrop",
+            "foreground",
+        ] {
+            #expect(english.contains(text), Comment(rawValue: text))
+        }
+    }
+
     @Test("Homepage describes the real stable 4.0 product and Universal download")
     func accurateHomepage() throws {
         let html = try source("docs/index.html")
