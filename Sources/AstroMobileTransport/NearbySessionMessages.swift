@@ -71,12 +71,28 @@ public struct NearbyPackageManifestMessage: Codable, Equatable, Sendable {
     public let manifestJSON: Data
     public let totalChunkCount: Int
     public let totalByteCount: Int64
+    /// The raw 32-byte `pairedDevice` content-key wrap key for this transfer
+    /// (see `PairedDeviceKeyWrapping` in `MobilePackageCrypto.swift`). It
+    /// travels here — as a field of a message that only ever crosses the
+    /// wire inside `NearbySecureChannel.send`/`receive` — rather than as a
+    /// QR-scanned secret, because that already-authenticated AEAD channel
+    /// IS this key's transport. Defaults to `Data()` so call sites that only
+    /// exercise wire framing or the secure channel (Tasks 1 and 3's tests)
+    /// keep compiling without ever touching package crypto.
+    public let contentKeyWrapRawRepresentation: Data
 
-    public init(packageID: UUID, manifestJSON: Data, totalChunkCount: Int, totalByteCount: Int64) {
+    public init(
+        packageID: UUID,
+        manifestJSON: Data,
+        totalChunkCount: Int,
+        totalByteCount: Int64,
+        contentKeyWrapRawRepresentation: Data = Data()
+    ) {
         self.packageID = packageID
         self.manifestJSON = manifestJSON
         self.totalChunkCount = totalChunkCount
         self.totalByteCount = totalByteCount
+        self.contentKeyWrapRawRepresentation = contentKeyWrapRawRepresentation
     }
 }
 
