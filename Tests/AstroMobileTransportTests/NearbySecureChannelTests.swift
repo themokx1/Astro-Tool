@@ -140,6 +140,46 @@ import Testing
         }
     }
 
+    // MARK: - I/O timeout
+
+    /// A peer that never answers must not hang `receive()` forever: it fails
+    /// closed with `.transferTimeout` within the (tiny, injected) `ioTimeout`,
+    /// and the channel is dead afterward exactly like every other terminal
+    /// failure mode (a subsequent call hits the top-of-method `isFailed`
+    /// guard, which always reports `.secureChannelFailed` regardless of the
+    /// original terminal error).
+    ///
+    /// Send-side coverage is intentionally NOT duplicated here:
+    /// `InMemoryDuplexConnection.send` (`Mailbox.deliver`) never suspends —
+    /// it either appends to an unbounded buffer or resumes a waiter
+    /// immediately — so there is no way to make a send actually stall
+    /// against this double. The receive-side path already exercises the
+    /// exact same `withIOTimeout` helper `send` also routes through, so it
+    /// is the meaningful coverage for this type; a real stalled-send timeout
+    /// would need a live `NWConnection` double (out of scope for this
+    /// in-memory suite).
+    @Test func receiveTimesOutWhenThePeerNeverAnswersAndChannelIsDeadAfter() async throws {
+        let (_, rawB) = InMemoryDuplexConnection.makePair()
+        let channelB = NearbySecureChannel(
+            connection: rawB,
+            sendKey: SymmetricKey(size: .bits256),
+            receiveKey: SymmetricKey(size: .bits256),
+            ioTimeout: .milliseconds(150)
+        )
+
+        await #expect(throws: NearbyTransportError.transferTimeout) {
+            _ = try await channelB.receive()
+        }
+        // Terminal: a later call hits the general "already failed" guard
+        // rather than attempting another timed-out wait.
+        await #expect(throws: NearbyTransportError.secureChannelFailed) {
+            _ = try await channelB.receive()
+        }
+        await #expect(throws: NearbyTransportError.secureChannelFailed) {
+            try await channelB.send(.failure(NearbyFailureMessage(reason: .transferAborted)))
+        }
+    }
+
     // MARK: - Counter exhaustion
 
     @Test func counterWrapIsTerminalForSendAndReceive() async throws {

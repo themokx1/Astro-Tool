@@ -28,14 +28,25 @@ public actor NearbySecureChannel {
     private let connection: any NearbyByteConnection
     private let sendKey: SymmetricKey
     private let receiveKey: SymmetricKey
+    private let ioTimeout: Duration
     private var sendCounter: UInt64 = 0
     private var receiveCounter: UInt64 = 0
     private var isFailed = false
 
-    init(connection: any NearbyByteConnection, sendKey: SymmetricKey, receiveKey: SymmetricKey) {
+    /// - Parameter ioTimeout: How long a single `send`/`receive` may await
+    ///   the underlying connection before this channel gives up on it.
+    ///   Without this, a stalled-but-still-`.ready` `NWConnection` (peer
+    ///   process alive, socket open, but never writing/reading again) leaves
+    ///   `send`/`receive` suspended forever — and, one layer up, wedges
+    ///   `NearbySyncCoordinator`'s one-session-at-a-time accept loop shut
+    ///   until the app is force-quit. `NearbyPairingSession` (the only
+    ///   production constructor of this type) threads its own handshake
+    ///   `timeout` through as this value — see that initializer's call site.
+    init(connection: any NearbyByteConnection, sendKey: SymmetricKey, receiveKey: SymmetricKey, ioTimeout: Duration = .seconds(30)) {
         self.connection = connection
         self.sendKey = sendKey
         self.receiveKey = receiveKey
+        self.ioTimeout = ioTimeout
     }
 
     /// Seals `message` under this channel's send-direction key and counter,
@@ -79,7 +90,7 @@ public actor NearbySecureChannel {
         }
 
         do {
-            try await connection.send(NearbyFrame(kind: plaintextFrame.kind, payload: sealedPayload))
+            try await withIOTimeout { try await self.connection.send(NearbyFrame(kind: plaintextFrame.kind, payload: sealedPayload)) }
         } catch {
             isFailed = true
             throw error
@@ -103,7 +114,7 @@ public actor NearbySecureChannel {
 
         let frame: NearbyFrame
         do {
-            frame = try await connection.receive()
+            frame = try await withIOTimeout { try await self.connection.receive() }
         } catch {
             isFailed = true
             throw error
@@ -152,6 +163,44 @@ public actor NearbySecureChannel {
 
     private static func counterBytes(_ counter: UInt64) -> Data {
         withUnsafeBytes(of: counter.bigEndian) { Data($0) }
+    }
+
+    // MARK: - Connection I/O with timeout
+
+    /// Races one post-handshake connection operation (`connection.send` or
+    /// `connection.receive`) against `ioTimeout`. Mirrors
+    /// `NearbyPairingSession.withTimeout`'s commit-winner-first race exactly:
+    /// the timeout branch never touches the connection until AFTER it has
+    /// already won the race (so the two branches can never both decide the
+    /// outcome), and only then cancels `connection` — purely to unblock the
+    /// loser so the task group's implicit "await every child" on scope exit
+    /// cannot hang forever. The loser's own result, if any, is simply
+    /// discarded by the group's cleanup. Every caller (`send`/`receive`)
+    /// already wraps this in a `do`/`catch` that latches `isFailed = true`
+    /// and rethrows on ANY error, including `.transferTimeout`, so a timeout
+    /// is terminal for this channel exactly like every other failure mode.
+    private func withIOTimeout<T: Sendable>(_ operation: @escaping @Sendable () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T?.self) { group in
+            group.addTask { try await operation() }
+            group.addTask { [ioTimeout] in
+                try await Task.sleep(for: ioTimeout)
+                return nil
+            }
+
+            guard let first = try await group.next() else {
+                group.cancelAll()
+                throw NearbyTransportError.transferTimeout
+            }
+            if let value = first {
+                group.cancelAll()
+                return value
+            }
+            // The timeout sentinel won the race: commit to failing before
+            // touching the connection.
+            await connection.cancel()
+            group.cancelAll()
+            throw NearbyTransportError.transferTimeout
+        }
     }
 
     // MARK: - Test-only seams

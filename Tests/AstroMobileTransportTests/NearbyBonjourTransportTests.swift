@@ -136,6 +136,117 @@ struct NearbyBonjourTransportTests {
         }
     }
 
+    // MARK: - Bounded pending-connection buffer (Finding 3)
+
+    /// Before the fix, `newConnectionHandler` wrapped and buffered every
+    /// inbound connection into a plain (unbounded) `AsyncStream` ahead of
+    /// the coordinator's own one-at-a-time gate — a flood of connections
+    /// could grow that buffer without bound. The listener now bounds itself
+    /// to at most one pending, undelivered connection
+    /// (`.bufferingOldest(1)`) and cancels any further inbound connection
+    /// immediately rather than letting it accumulate.
+    @Test func onlyOnePendingInboundConnectionIsDeliveredAndExtrasAreCancelledNotBuffered() async throws {
+        let listener = NearbyBonjourListener.loopbackForTesting()
+        let connections = try await listener.start()
+        let port = try await requireBoundPort(listener)
+
+        // All three connect concurrently, before anything is ever dequeued
+        // from `connections` — this is what makes the LISTENER's own bound
+        // (as opposed to the coordinator's separate one-at-a-time gate,
+        // which sits a layer above this type and never even sees the
+        // extras) observable in isolation.
+        let browserA = NearbyBonjourBrowser()
+        let browserB = NearbyBonjourBrowser()
+        let browserC = NearbyBonjourBrowser()
+        async let clientAResult = browserA.connectDirectlyForTesting(port: port, timeout: .seconds(5))
+        async let clientBResult = browserB.connectDirectlyForTesting(port: port, timeout: .seconds(5))
+        async let clientCResult = browserC.connectDirectlyForTesting(port: port, timeout: .seconds(5))
+        let clients = try await [clientAResult, clientBResult, clientCResult]
+
+        // Give the listener's own `accept()` Task hops time to settle for
+        // all three connections before this test ever touches `connections`.
+        var attempts = 0
+        while await listener.acceptedConnectionCountForTesting < 3, attempts < 100 {
+            try await Task.sleep(for: .milliseconds(20))
+            attempts += 1
+        }
+        #expect(await listener.acceptedConnectionCountForTesting == 3)
+
+        var iterator = connections.makeAsyncIterator()
+        guard let delivered = await iterator.next() else {
+            Issue.record("listener never delivered the one connection it should have buffered")
+            return
+        }
+
+        // No unbounded growth: nothing further is buffered behind the one
+        // delivered connection. Observed via a background task rather than
+        // an unguarded `await iterator.next()`, since that call never
+        // throws or times out on its own — it would simply hang the test
+        // forever if this regressed back to unbounded buffering with a
+        // second item actually queued.
+        let observedSecond = ObservedDequeue()
+        let secondDequeueTask = Task {
+            var pendingIterator = iterator
+            _ = await pendingIterator.next()
+            observedSecond.markObserved()
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!observedSecond.value)
+
+        // The two extras were cancelled server-side before ever reaching
+        // the stream. A plain `send()` is not a reliable enough signal on
+        // its own — a local `NWConnection.send` completion only means "the
+        // kernel accepted these bytes," which can still succeed once even
+        // against an already-cancelled peer — so this instead has the
+        // server reply on the one delivered connection and races a
+        // `receive()` per client: exactly the survivor should ever see that
+        // reply; the other two should fail (or, generously, time out)
+        // because their underlying connection was actually torn down.
+        let ackPayload = Data("ack".utf8)
+        try await delivered.send(NearbyFrame(kind: .acknowledgement, payload: ackPayload))
+
+        var receivedCount = 0
+        var failedOrTimedOutCount = 0
+        for client in clients {
+            switch await Self.raceReceive(client, timeout: .milliseconds(800)) {
+            case .received(let frame):
+                #expect(frame.payload == ackPayload)
+                receivedCount += 1
+            case .failed, .timedOut:
+                failedOrTimedOutCount += 1
+            }
+        }
+        #expect(receivedCount == 1)
+        #expect(failedOrTimedOutCount == 2)
+
+        await delivered.cancel()
+        for client in clients { await client.cancel() }
+        await listener.stop()
+        _ = await secondDequeueTask.value
+    }
+
+    /// Pins the new `readyTimeout:` parameter's happy path. A genuine
+    /// timeout-firing test is not reliably constructible for the LISTENER
+    /// side: binding a fresh loopback ephemeral port (`127.0.0.1:0`) reaches
+    /// `.ready` essentially instantly at the OS level, and there is no
+    /// listener-side equivalent of `connectingToAnUnattendedPortTimesOut`'s
+    /// "nobody is listening" trick (that trick is inherently about the
+    /// CONNECT side finding no peer). The timeout RACE mechanism itself
+    /// (`raceListenerReady`) is the exact same commit-winner-first pattern
+    /// already exercised end to end by `connectingToAnUnattendedPortTimesOut`
+    /// above and by `NearbyPairingSessionTests
+    /// .establishTimesOutWhenThePeerNeverAnswers`.
+    @Test func startAcceptsAnInjectableReadyTimeoutAndStillSucceedsQuickly() async throws {
+        let listener = NearbyBonjourListener.loopbackForTesting()
+        let connections = try await listener.start(readyTimeout: .milliseconds(500))
+        _ = try await requireBoundPort(listener)
+
+        await listener.stop()
+        var iterator = connections.makeAsyncIterator()
+        let next = await iterator.next()
+        #expect(next == nil)
+    }
+
     @Test func listenerStopEndsTheAsyncStream() async throws {
         let listener = NearbyBonjourListener.loopbackForTesting()
         let connections = try await listener.start()
@@ -149,6 +260,35 @@ struct NearbyBonjourTransportTests {
     }
 
     // MARK: - Helpers
+
+    private enum ReceiveOutcome {
+        case received(NearbyFrame)
+        case failed(Error)
+        case timedOut
+    }
+
+    /// Races one `connection.receive()` against `timeout` — used where a
+    /// call might genuinely hang forever (an already-cancelled connection
+    /// that never fails promptly would otherwise stall the test) rather than
+    /// throw quickly.
+    private static func raceReceive(_ connection: any NearbyByteConnection, timeout: Duration) async -> ReceiveOutcome {
+        await withTaskGroup(of: ReceiveOutcome.self) { group in
+            group.addTask {
+                do {
+                    return .received(try await connection.receive())
+                } catch {
+                    return .failed(error)
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return .timedOut
+            }
+            let first = await group.next() ?? .timedOut
+            group.cancelAll()
+            return first
+        }
+    }
 
     /// `start()` only returns once the underlying `NWListener` reached
     /// `.ready`, at which point a `loopbackForTesting()` listener's bound
@@ -170,5 +310,27 @@ struct NearbyBonjourTransportTests {
         let port = try await requireBoundPort(probe)
         await probe.stop()
         return port
+    }
+}
+
+/// A tiny lock-guarded flag for asserting "a background `AsyncStream.next()`
+/// call has not yet resolved" without a data race — mirrors
+/// `NearbyPairingSessionTests.ManagedAtomicBool`'s own pattern for the same
+/// reason (a plain `Bool` is not safely shared across a concurrently
+/// running background `Task`).
+private final class ObservedDequeue: @unchecked Sendable {
+    private let lock = NSLock()
+    private var flag = false
+
+    func markObserved() {
+        lock.lock()
+        flag = true
+        lock.unlock()
+    }
+
+    var value: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return flag
     }
 }

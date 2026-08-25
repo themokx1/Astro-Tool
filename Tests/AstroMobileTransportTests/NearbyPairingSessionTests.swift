@@ -141,6 +141,81 @@ import Testing
         }
     }
 
+    // MARK: - MITM: tampered sessionIDContribution fails signature verification
+
+    /// Hardening regression test: `sessionIDContribution` used to travel
+    /// alongside the signed transcript without itself being signed, so an
+    /// on-path attacker could tamper it in a relayed `.keyExchange` (silently
+    /// changing the derived `sessionID` both sides agree on) without
+    /// touching anything the known-peer/first-pairing signature check
+    /// actually covered. Each side now signs its OWN `sessionIDContribution`
+    /// as part of its transcript digest, so a relay that forwards the
+    /// ephemeral key and signature untouched but flips a byte of
+    /// `sessionIDContribution` must now fail signature verification exactly
+    /// like a substituted ephemeral key does.
+    @Test func tamperedSessionIDContributionOnRelayedKeyExchangeFailsSignatureVerification() async throws {
+        let (aRaw, relayToA) = InMemoryDuplexConnection.makePair()
+        let (bRaw, relayToB) = InMemoryDuplexConnection.makePair()
+
+        let aStore = InMemoryDeviceIdentityStore()
+        let bStore = InMemoryDeviceIdentityStore()
+        let aIdentity = try aStore.loadOrCreateOwnIdentity(displayName: "Victim A")
+        let bIdentity = try bStore.loadOrCreateOwnIdentity(displayName: "Victim B")
+
+        let aSession = NearbyPairingSession(role: .listener, identity: aIdentity, trustStore: aStore, connection: aRaw)
+        let bSession = NearbyPairingSession(role: .initiator, identity: bIdentity, trustStore: bStore, connection: bRaw)
+
+        let relayTask = Task {
+            await Self.runSessionIDContributionTamperingRelay(sideA: relayToA, sideB: relayToB)
+        }
+
+        async let aResult: Result<NearbyPairingOutcome, Error> = Self.awaitOutcome(aSession)
+        async let bResult: Result<NearbyPairingOutcome, Error> = Self.awaitOutcome(bSession)
+
+        let (resultA, resultB) = await (aResult, bResult)
+        relayTask.cancel()
+
+        guard case .failure(let errorA) = resultA, case .failure(let errorB) = resultB else {
+            Issue.record("expected both sides to fail closed on a tampered sessionIDContribution")
+            return
+        }
+        #expect(errorA as? NearbyTransportError == .signatureVerificationFailed)
+        #expect(errorB as? NearbyTransportError == .signatureVerificationFailed)
+
+        #expect(try aStore.trustedPeers().isEmpty)
+        #expect(try bStore.trustedPeers().isEmpty)
+    }
+
+    private static func runSessionIDContributionTamperingRelay(sideA: InMemoryDuplexConnection, sideB: InMemoryDuplexConnection) async {
+        async let aToB: Void = relayOneDirectionTamperingSessionIDContribution(from: sideA, to: sideB)
+        async let bToA: Void = relayOneDirectionTamperingSessionIDContribution(from: sideB, to: sideA)
+        _ = await (aToB, bToA)
+    }
+
+    /// Relays `.hello` and `.keyExchange` frames untouched EXCEPT for one
+    /// flipped byte of `sessionIDContribution` — the ephemeral key and
+    /// signature are forwarded exactly as sent, so this isolates the
+    /// hardening's own coverage from the pre-existing ephemeral-key-swap
+    /// test above.
+    private static func relayOneDirectionTamperingSessionIDContribution(from: InMemoryDuplexConnection, to: InMemoryDuplexConnection) async {
+        while !Task.isCancelled {
+            guard let frame = try? await from.receive() else { return }
+            if frame.kind == .keyExchange, let message = try? NearbySessionMessage(frame: frame), case .keyExchange(let exchange) = message {
+                var tamperedContribution = exchange.sessionIDContribution
+                tamperedContribution[tamperedContribution.startIndex] ^= 0xFF
+                let tampered = NearbyKeyExchangeMessage(
+                    ephemeralPublicKey: exchange.ephemeralPublicKey,
+                    sessionIDContribution: tamperedContribution,
+                    identitySignature: exchange.identitySignature
+                )
+                guard let tamperedFrame = try? NearbySessionMessage.keyExchange(tampered).encodedFrame() else { return }
+                _ = try? await to.send(tamperedFrame)
+            } else {
+                _ = try? await to.send(frame)
+            }
+        }
+    }
+
     private static func awaitOutcome(_ session: NearbyPairingSession) async -> Result<NearbyPairingOutcome, Error> {
         // Auto-confirm in the background in case the handshake somehow
         // reaches the SAS-suspend point (it should not, in the MITM case,

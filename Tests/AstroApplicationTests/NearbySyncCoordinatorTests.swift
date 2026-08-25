@@ -256,6 +256,104 @@ struct NearbySyncCoordinatorTests {
         #expect(collected.last.map { if case .finished = $0 { return true }; return false } == true)
     }
 
+    /// Regression test for the finding that a post-handshake connection
+    /// await (inside `NearbyPackageTransport`'s use of `NearbySecureChannel
+    /// .send`/`receive`) had no timeout: a phone that completes the
+    /// handshake and then goes silent — never touching the channel again —
+    /// used to leave the Mac coordinator's `runSession` suspended forever
+    /// inside `receiveOptionalReturn`'s `channel.receive()`, which never
+    /// called `listenerStop()`, so the coordinator's one-session-at-a-time
+    /// design ("one AT A TIME, not one EVER" — see `NearbySyncCoordinator`'s
+    /// own doc comment) could never move on to a fresh session either.
+    /// `NearbySecureChannel`'s new `ioTimeout` (threaded from this
+    /// coordinator's own `handshakeTimeout`) fixes the hang directly; this
+    /// test pins both halves of the fix: the stream still reaches exactly
+    /// one terminal `.failed` event instead of hanging, AND — because
+    /// `runSession` finishing is what lets `listenerStop()` run and this
+    /// call's `acceptLoopTask` end — a completely fresh `startAdvertising`
+    /// cycle on the SAME coordinator afterward still pairs and completes
+    /// normally, exactly like `knownPeerSecondSessionSkipsPairingCode`
+    /// already proves for two back-to-back NORMAL sessions.
+    @Test("a phone that goes silent after pairing times out instead of hanging, and the coordinator accepts a fresh session afterward")
+    func silentPhoneAfterPairingTimesOutAndCoordinatorAcceptsFreshSession() async throws {
+        let fixture = try await Fixture()
+        defer { fixture.cleanUp() }
+        let (macConnectionA, phoneConnectionA) = InMemoryDuplexConnection.makePair()
+        let (macConnectionB, phoneConnectionB) = InMemoryDuplexConnection.makePair()
+        let listener = ScriptedListener(batches: [[macConnectionA], [macConnectionB]])
+        let coordinator = fixture.makeCoordinator(listener: listener, handshakeTimeout: .milliseconds(300))
+
+        let phoneIdentityStore = InMemoryDeviceIdentityStore()
+        let phoneIdentity = try phoneIdentityStore.loadOrCreateOwnIdentity(displayName: "Zoltán iPhone")
+
+        // First session: the phone double completes the full handshake
+        // (confirming the pairing code, so trust IS stored on both sides)
+        // and then deliberately never touches the channel/connection again.
+        async let silentPhoneTask: Void = Self.runSilentPhoneAfterPairing(
+            connection: phoneConnectionA,
+            identity: phoneIdentity,
+            trustStore: phoneIdentityStore
+        )
+
+        let firstEvents = try await coordinator.startAdvertising(confirmedSnapshot: try await fixture.baseSnapshot())
+        var firstCollected: [NearbySyncEvent] = []
+        for await event in firstEvents {
+            firstCollected.append(event)
+            if case .pairingCode = event { await coordinator.confirmPairing() }
+        }
+        try await silentPhoneTask
+
+        #expect(firstCollected.last.map {
+            if case .failed(.transferFailed) = $0 { return true }; return false
+        } == true)
+
+        // A completely fresh `startAdvertising` cycle on the SAME
+        // coordinator must still pair and finish normally — the earlier
+        // hang-turned-timeout must not have wedged the accept loop shut.
+        // Both sides already trust each other from the first session's
+        // successful handshake, so this is a known-peer session (mirrors
+        // `knownPeerSecondSessionSkipsPairingCode`).
+        async let secondPhoneResult: PhoneSessionResult = Self.runPhoneSession(
+            connection: phoneConnectionB,
+            identity: phoneIdentity,
+            trustStore: phoneIdentityStore,
+            stagingDirectory: fixture.phoneStagingDirectory,
+            confirm: true,
+            buildReturn: { _ in nil }
+        )
+        let secondEvents = try await coordinator.startAdvertising(confirmedSnapshot: try await fixture.baseSnapshot())
+        var secondCollected: [NearbySyncEvent] = []
+        for await event in secondEvents {
+            secondCollected.append(event)
+            if case .pairingCode = event { await coordinator.confirmPairing() }
+        }
+        let secondPhoneOutcome = try await secondPhoneResult
+
+        #expect(!secondPhoneOutcome.wasFirstPairing)
+        #expect(secondCollected.last.map { if case .finished = $0 { return true }; return false } == true)
+    }
+
+    /// Drives the phone side of a pairing handshake to completion (first
+    /// pairing: confirms the short authentication code as soon as it is
+    /// available) and then deliberately returns WITHOUT ever calling
+    /// `send`/`receive` on the resulting channel or connection again —
+    /// standing in for a phone that pairs successfully and then goes silent
+    /// (backgrounded, killed, out of range) before any package bytes cross
+    /// the wire.
+    private static func runSilentPhoneAfterPairing(
+        connection: any NearbyByteConnection,
+        identity: MobileDeviceIdentity,
+        trustStore: any MobileDeviceIdentityStoring
+    ) async throws {
+        let session = NearbyPairingSession(role: .initiator, identity: identity, trustStore: trustStore, connection: connection)
+        async let outcome = session.establish()
+        if let code = try? await session.shortAuthenticationCode {
+            _ = code
+            await session.confirmPairing()
+        }
+        _ = try await outcome
+    }
+
     // MARK: - Phone-side test double
 
     private struct PhoneSessionResult {
@@ -422,7 +520,7 @@ struct NearbySyncCoordinatorTests {
             )
         }
 
-        func makeCoordinator(listener: ScriptedListener) -> NearbySyncCoordinator {
+        func makeCoordinator(listener: ScriptedListener, handshakeTimeout: Duration = .seconds(5)) -> NearbySyncCoordinator {
             NearbySyncCoordinator(
                 identity: macIdentity,
                 trustStore: macTrustStore,
@@ -436,7 +534,7 @@ struct NearbySyncCoordinatorTests {
                 previewReturn: { source, wrapping in
                     try await self.returnCoordinator.preview(from: source, wrapping: wrapping)
                 },
-                handshakeTimeout: .seconds(5)
+                handshakeTimeout: handshakeTimeout
             )
         }
 

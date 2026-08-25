@@ -100,6 +100,21 @@ public enum NearbyTransportError: Error, Equatable, Sendable {
     /// the in-flight browse/connect attempt is cancelled before this is
     /// thrown.
     case connectionTimeout
+
+    /// A `NearbySecureChannel.send`/`receive` did not complete within the
+    /// channel's configured `ioTimeout` — the post-handshake analogue of
+    /// `.handshakeTimeout` (which only ever fires during pairing, before a
+    /// channel exists). Terminal: the underlying connection is cancelled as
+    /// part of raising this error, and the channel latches failed exactly
+    /// like every other terminal `NearbySecureChannel` error.
+    case transferTimeout
+
+    /// `NearbyBonjourListener.start()` did not observe the underlying
+    /// `NWListener` reach `.ready` within the configured `readyTimeout`
+    /// (e.g. the OS never resolves `.setup`/`.waiting`). Terminal: the
+    /// listener is cancelled and torn down before this is thrown, so a
+    /// caller may safely construct and start a fresh listener afterward.
+    case listenerStartTimeout
 }
 
 /// Encodes and decodes `NearbyFrame`s to and from the wire format.

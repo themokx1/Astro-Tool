@@ -401,8 +401,15 @@ public actor MobileLibraryStore {
             throw MobilePackageError.invalidManifest
         }
         let manifest = try MobileJSON.decoder.decode(MobilePackageManifest.self, from: data)
+        // `.pairedDevice` is the keyMode `NearbyPackageTransport` always
+        // exports nearby-forwarded packages under (see `PairedDeviceKeyWrapping`
+        // in `MobilePackageCrypto.swift`); it is cryptographically identical
+        // to `.oneTimeQR` — the same random 256-bit AEAD wrap key sealed the
+        // same way — so rejecting it here would make every nearby-forward
+        // import throw `unsupportedFormatVersion` before it could ever reach
+        // `importCurrentStagedPackage(pairedWrapping:)`'s own validation.
         guard manifest.formatVersion == MobilePackageService.currentFormatVersion,
-              manifest.keyMode == .oneTimeQR,
+              manifest.keyMode == .oneTimeQR || manifest.keyMode == .pairedDevice,
               manifest.createdAt.timeIntervalSince1970.isFinite,
               manifest.encryptedByteCount >= 28,
               manifest.encryptedByteCount <= MobilePackageService.maximumEncryptedByteCount,

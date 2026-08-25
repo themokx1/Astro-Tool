@@ -208,6 +208,7 @@ public actor NearbyPairingSession {
             ownIdentityPub: ownIdentityPub,
             peerIdentityPub: peerIdentityPub,
             ownEphemeralPub: ownEphemeralPub,
+            ownContribution: ownContribution,
             ownHelloNonce: ownHelloNonce,
             peerHelloNonce: peerHello.helloNonce
         ))
@@ -237,6 +238,7 @@ public actor NearbyPairingSession {
             ownIdentityPub: peerIdentityPub,
             peerIdentityPub: ownIdentityPub,
             ownEphemeralPub: peerKeyExchange.ephemeralPublicKey,
+            ownContribution: peerKeyExchange.sessionIDContribution,
             ownHelloNonce: peerHello.helloNonce,
             peerHelloNonce: ownHelloNonce
         ))
@@ -314,10 +316,19 @@ public actor NearbyPairingSession {
             ))
         }
 
+        // Reuses this session's own handshake `timeout` as the channel's
+        // post-handshake I/O timeout, rather than adding a second
+        // caller-configurable duration: both bound "an await on this same
+        // connection that should complete quickly against a cooperative
+        // peer," and every production/test call site that configures one
+        // already means the same thing for the other (see
+        // `NearbySyncCoordinator`/`NearbyPhoneSyncSession`, which both pass
+        // a single `timeout`/`handshakeTimeout` through to this initializer).
         let channel = NearbySecureChannel(
             connection: connection,
             sendKey: Self.deriveTrafficKey(sharedSecret: sharedSecret, transcriptHash: transcriptHash, sender: role),
-            receiveKey: Self.deriveTrafficKey(sharedSecret: sharedSecret, transcriptHash: transcriptHash, sender: role.opposite)
+            receiveKey: Self.deriveTrafficKey(sharedSecret: sharedSecret, transcriptHash: transcriptHash, sender: role.opposite),
+            ioTimeout: timeout
         )
 
         return NearbyPairingOutcome(
@@ -418,18 +429,32 @@ public actor NearbyPairingSession {
     // MARK: - Transcript / key derivation
 
     /// `protocolVersion(1) ‖ ownIdentityPub(32) ‖ peerIdentityPub(32) ‖
-    /// ownEphemeralPub(32) ‖ ownHelloNonce(16) ‖ peerHelloNonce(16)` — every
-    /// field is a fixed length (validated on any peer-supplied value before
-    /// this is called), so the concatenation is injective.
+    /// ownEphemeralPub(32) ‖ ownContribution(16) ‖ ownHelloNonce(16) ‖
+    /// peerHelloNonce(16)` — every field is a fixed length (validated on any
+    /// peer-supplied value before this is called), so the concatenation is
+    /// injective.
+    ///
+    /// `ownContribution` is the signer's own `sessionIDContribution` (the
+    /// same 16 random bytes carried alongside the signature in the same
+    /// `.keyExchange` message) — folded into the signed transcript so an
+    /// on-path attacker cannot tamper a relayed `.keyExchange`'s
+    /// `sessionIDContribution` field without also failing the known-peer
+    /// signature check. Only the SIGNER's own contribution is ever included:
+    /// this digest is computed before the peer's `.keyExchange` (and thus
+    /// its contribution) has arrived, so each side signs its own view of the
+    /// transcript — a verifier passes the value it actually received from
+    /// the peer (`peerKeyExchange.sessionIDContribution`) as `ownContribution`
+    /// here, since that is what the peer, as signer, included.
     private static func signedTranscript(
         protocolVersion: UInt8,
         ownIdentityPub: Data,
         peerIdentityPub: Data,
         ownEphemeralPub: Data,
+        ownContribution: Data,
         ownHelloNonce: Data,
         peerHelloNonce: Data
     ) -> Data {
-        Data([protocolVersion]) + ownIdentityPub + peerIdentityPub + ownEphemeralPub + ownHelloNonce + peerHelloNonce
+        Data([protocolVersion]) + ownIdentityPub + peerIdentityPub + ownEphemeralPub + ownContribution + ownHelloNonce + peerHelloNonce
     }
 
     private static func shortAuthenticationCode(fromTranscriptHash hash: Data) -> String {

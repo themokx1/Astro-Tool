@@ -153,6 +153,55 @@ import Testing
     if case .checklistCompletion = remaining[0] {} else { Issue.record("The unrelated queued change was not retained") }
 }
 
+/// Regression test for the finding that `stagePackage(from:)`'s public
+/// manifest guard hard-coded `manifest.keyMode == .oneTimeQR`, rejecting
+/// every package `NearbyPackageTransport` exports — nearby forward sync
+/// always wraps the content key with `PairedDeviceKeyWrapping`, which
+/// `MobilePackageService.export` tags `keyMode: .pairedDevice` (see
+/// `MobilePackageCrypto.swift`'s doc comment on `PairedDeviceKeyWrapping`).
+/// Before the fix, staging a `.pairedDevice`-keyed package threw
+/// `unsupportedFormatVersion` before `importCurrentStagedPackage
+/// (pairedWrapping:)` ever ran. Both key modes seal the content key with
+/// the exact same AEAD construction (`MobilePackageCrypto.seal`/`open`
+/// under a random 256-bit key) — only the manifest's `keyMode` tag differs,
+/// driven by the wrapping value's own Swift type, never by the key bytes
+/// — so accepting `.pairedDevice` here weakens nothing.
+@Test func pairedDeviceKeyedPackageStagesAndImportsSuccessfully() async throws {
+    let libraryID = UUID()
+    let fixture = try MobileStoreFixture(snapshotRevision: 1, libraryID: libraryID)
+    let forwardFixture = try MobileStoreFixture(snapshotRevision: 2, libraryID: libraryID)
+
+    let pairedWrapping = PairedDeviceKeyWrapping()
+    let pairedPackageURL = fixture.rootURL.appendingPathComponent("paired.astromobile", isDirectory: true)
+    _ = try await MobilePackageService().export(
+        MobilePackageEnvelope(snapshot: forwardFixture.snapshot, changes: [], acknowledgedChangeIDs: []),
+        to: pairedPackageURL,
+        wrapping: pairedWrapping
+    )
+
+    _ = try await fixture.store.stagePackage(from: pairedPackageURL)
+    try await fixture.store.importCurrentStagedPackage(pairedWrapping: pairedWrapping)
+
+    #expect(await fixture.store.activeSnapshot?.revision == 2)
+    #expect(await fixture.store.activeSnapshot?.snapshotID == forwardFixture.snapshot.snapshotID)
+
+    // No regression on the existing QR-scan path: a `.oneTimeQR`-keyed
+    // package must still stage and import cleanly.
+    let secondForwardFixture = try MobileStoreFixture(snapshotRevision: 3, libraryID: libraryID)
+    let oneTimeKey = OneTimePackageKey()
+    let oneTimePackageURL = fixture.rootURL.appendingPathComponent("onetime.astromobile", isDirectory: true)
+    _ = try await MobilePackageService().export(
+        MobilePackageEnvelope(snapshot: secondForwardFixture.snapshot, changes: [], acknowledgedChangeIDs: []),
+        to: oneTimePackageURL,
+        wrapping: oneTimeKey
+    )
+    _ = try await fixture.store.stagePackage(from: oneTimePackageURL)
+    try await fixture.store.importCurrentStagedPackage(key: oneTimeKey)
+
+    #expect(await fixture.store.activeSnapshot?.revision == 3)
+    #expect(await fixture.store.activeSnapshot?.snapshotID == secondForwardFixture.snapshot.snapshotID)
+}
+
 @Test func relaunchRecoversSnapshotQueueAndDeviceID() async throws {
     let fixture = try MobileStoreFixture(snapshotRevision: 1)
     let first = fixture.store

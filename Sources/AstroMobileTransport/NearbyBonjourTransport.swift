@@ -332,10 +332,15 @@ public actor NearbyBonjourListener {
 
     /// Starts listening and returns a stream of every inbound connection,
     /// each already wrapped as a `NearbyByteConnection`. Throws if the
-    /// underlying `NWListener` fails to reach `.ready` (e.g. the OS refuses
-    /// to bind). Call `stop()` to end the stream and tear the listener down;
-    /// `start()` may not be called again on the same instance afterward.
-    public func start() async throws -> AsyncStream<any NearbyByteConnection> {
+    /// underlying `NWListener` fails to reach `.ready` within `readyTimeout`
+    /// (e.g. the OS refuses to bind, or never resolves out of `.setup`/
+    /// `.waiting`) — `.listenerStartTimeout` on a timeout, same as any other
+    /// start failure. On any throw the listener is fully torn down, so a
+    /// fresh `start()` call (on a new instance; see `stop()`'s own doc
+    /// comment) is always safe afterward. Call `stop()` to end the stream
+    /// and tear the listener down; `start()` may not be called again on the
+    /// SAME instance afterward.
+    public func start(readyTimeout: Duration = .seconds(10)) async throws -> AsyncStream<any NearbyByteConnection> {
         precondition(listener == nil, "NearbyBonjourListener.start() called more than once")
 
         let parameters = NWParameters.tcp
@@ -355,7 +360,15 @@ public actor NearbyBonjourListener {
             )
         }
 
-        let (stream, continuation) = AsyncStream<any NearbyByteConnection>.makeStream()
+        // `.bufferingOldest(1)`, not the default unbounded policy: bounds
+        // this listener to at most one accepted-but-not-yet-dequeued
+        // connection. `accept(_:)` below inspects each `yield`'s result and
+        // cancels any connection the stream reports as `.dropped` (the
+        // buffer already held one) rather than letting it accumulate — a
+        // flood of inbound connections can no longer grow this stream's
+        // buffer without bound ahead of the coordinator's own one-at-a-time
+        // gate.
+        let (stream, continuation) = AsyncStream<any NearbyByteConnection>.makeStream(bufferingPolicy: .bufferingOldest(1))
         streamContinuation = continuation
 
         newListener.newConnectionHandler = { [weak self] connection in
@@ -366,11 +379,62 @@ public actor NearbyBonjourListener {
         }
 
         listener = newListener
+        do {
+            try await raceListenerReady(newListener, timeout: readyTimeout)
+        } catch {
+            newListener.stateUpdateHandler = nil
+            newListener.newConnectionHandler = nil
+            newListener.cancel()
+            listener = nil
+            loopbackPortValue = nil
+            streamContinuation = nil
+            continuation.finish()
+            startContinuation = nil
+            throw error
+        }
+        return stream
+    }
+
+    /// Races `NWListener.start()` reaching `.ready` against `timeout`,
+    /// mirroring `NearbyPairingSession.withTimeout` / `NearbyBonjourBrowser
+    /// .raceAgainstTimeout` exactly: the timeout branch never touches the
+    /// listener until AFTER it has already won the race — so the two
+    /// branches can never both decide the outcome — and only then cancels
+    /// `newListener`, purely to unblock the loser (`handle(listenerState:)`
+    /// observing `.cancelled` resumes `startContinuation`) so the task
+    /// group's implicit "await every child" on scope exit cannot hang.
+    private func raceListenerReady(_ newListener: NWListener, timeout: Duration) async throws {
+        try await withThrowingTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                try await self.awaitListenerReady(newListener)
+                return true
+            }
+            group.addTask { [timeout] in
+                try await Task.sleep(for: timeout)
+                return false
+            }
+
+            guard let first = try await group.next() else {
+                group.cancelAll()
+                throw NearbyTransportError.listenerStartTimeout
+            }
+            if first {
+                group.cancelAll()
+                return
+            }
+            // The timeout sentinel won the race: commit to failing before
+            // touching the listener.
+            newListener.cancel()
+            group.cancelAll()
+            throw NearbyTransportError.listenerStartTimeout
+        }
+    }
+
+    private func awaitListenerReady(_ newListener: NWListener) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             startContinuation = continuation
             newListener.start(queue: Self.queue)
         }
-        return stream
     }
 
     /// Tears the listener down and ends the `AsyncStream` returned by
@@ -386,11 +450,41 @@ public actor NearbyBonjourListener {
         resumeStart(with: .failure(NearbyTransportError.connectionClosed))
     }
 
+    /// Wraps and yields one inbound connection. The stream's own
+    /// `.bufferingOldest(1)` policy is what actually bounds "at most one
+    /// pending" — this only has to act on what `yield` reports: `.dropped`
+    /// means a connection was already buffered (so this new one is
+    /// cancelled immediately rather than left to accumulate), `.terminated`
+    /// means the stream has already ended (`stop()` raced this accept).
+    /// `acceptedConnectionCountForTesting` counts every call here
+    /// regardless of outcome, so a test can confirm the listener keeps
+    /// engaging every inbound connection (accepting the TCP-level cost of
+    /// wrapping it) while still only ever delivering a bounded number
+    /// onward — i.e. it fails closed by cancelling excess connections
+    /// rather than by silently refusing to `accept()` at the OS level.
     private func accept(_ connection: NWConnection) async {
+        acceptedConnectionCountForTesting += 1
         let wrapper = NearbyNWConnection(connection: connection)
         await wrapper.start()
-        streamContinuation?.yield(wrapper)
+        guard let result = streamContinuation?.yield(wrapper) else {
+            await wrapper.cancel()
+            return
+        }
+        switch result {
+        case .enqueued:
+            break
+        case .dropped, .terminated:
+            await wrapper.cancel()
+        @unknown default:
+            await wrapper.cancel()
+        }
     }
+
+    /// Test-only counter: every `newConnectionHandler` invocation this
+    /// listener has processed, whether or not it was ultimately delivered
+    /// through the stream. `package` visibility: only reachable via
+    /// `@testable import AstroMobileTransport`.
+    package private(set) var acceptedConnectionCountForTesting = 0
 
     private func handle(listenerState: NWListener.State) {
         switch listenerState {
