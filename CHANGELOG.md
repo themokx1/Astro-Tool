@@ -8,6 +8,27 @@ történik.
 
 ## [Unreleased]
 
+## [4.0.2] - 2026-08-23
+
+### Javítva
+
+- A natív mappaválasztó után újranyitott első-beolvasási lap most már
+  megbízhatóan bezáródik a „Tovább a könyvtárhoz” gombbal. Az új lap csak az
+  előző modális lap bezárásának teljes befejezése után jelenik meg.
+- A közvetlen könyvtárbelépés elmenti az onboarding befejezett állapotát, így
+  a következő indításkor nem tér vissza fölöslegesen az első lépésekhez.
+
+## [4.0.1] - 2026-08-23
+
+### Javítva
+
+- Az első indítás „Képkönyvtár kiválasztása…” művelete ismét megnyitja a
+  natív macOS mappaválasztót. Az onboarding előbb bezárja a saját modális
+  lapját, majd a V1-ben már bevált `NSOpenPanel`-folyamatot indítja el; a
+  választás után automatikusan visszatér a beolvasási workflow-ba.
+- A mappaválasztó megszakítása nem hagyja elakadva vagy használhatatlanul az
+  alkalmazást: az első lépések felülete újra megjelenik.
+
 ## [4.0.0] - 2026-08-21
 
 A V4 az otthon, Macen elkészíthető teljes megfigyelési tervet teszi

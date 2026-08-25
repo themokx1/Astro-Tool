@@ -46,6 +46,43 @@ final class AstroToolLaunchTests: XCTestCase {
     // MARK: - Tests
 
     @MainActor
+    func testContinueWorksAfterFolderPickerReopensOnboarding() throws {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-UseV2UI",
+            "-ApplePersistenceIgnoreState", "YES",
+            "-NSQuitAlwaysKeepsWindows", "NO",
+            "-onboardingCompletedVersion", "0",
+            "-v2.library.scanOnOpen", "NO",
+            "-UITestLibraryPickerResult", fixtureContainer.path,
+        ]
+        app.launch()
+        app.activate()
+
+        let mainWindow = app.windows.firstMatch
+        if !mainWindow.waitForExistence(timeout: 3) {
+            let newWindow = app.menuItems["New Window"]
+            XCTAssertTrue(newWindow.waitForExistence(timeout: 5))
+            app.typeKey("n", modifierFlags: .command)
+        }
+        XCTAssertTrue(mainWindow.waitForExistence(timeout: 15))
+
+        let summary = element("v2.onboarding.summary", in: app)
+        XCTAssertTrue(
+            summary.waitForExistence(timeout: 25),
+            "The picker handoff should reopen onboarding at the completed scan summary."
+        )
+
+        let continueButton = element("v2.onboarding.continue", in: app)
+        XCTAssertTrue(continueButton.waitForExistence(timeout: 8))
+        continueButton.click()
+        XCTAssertTrue(
+            summary.waitForNonExistence(timeout: 8),
+            "Continue must dismiss the sheet that was reopened after the native picker."
+        )
+    }
+
+    @MainActor
     func testV2ShellNavigationIsResponsive() throws {
         let app = launchFixtureApp()
         completeOnboarding(app)

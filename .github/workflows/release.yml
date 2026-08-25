@@ -77,3 +77,8 @@ jobs:
             build/SHA256SUMS.txt \
             "${release_args[@]}" \
             --notes-file "$notes_file"
+
+      - name: Verify GitHub latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-github-latest-release.sh "$GITHUB_REF_NAME"

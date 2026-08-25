@@ -350,6 +350,9 @@ private struct V2Shell: View {
     @Binding var isOnboardingPresented: Bool
     @Binding var libraryPreparationError: String?
     let retryLibraryPreparation: () -> Void
+    @State private var pendingLibraryPicker = false
+    @State private var showsDirectLibraryWelcome = false
+    @State private var didRunUITestLibraryPickerHandoff = false
     @State private var showsSearch = false
     @State private var isMobileSyncPresented = false
     @State private var globalSearch = GlobalSearchStore()
@@ -842,8 +845,8 @@ private struct V2Shell: View {
                 }
             }
         }
-        .sheet(isPresented: $isOnboardingPresented) {
-            if libraryRootFallback != nil {
+        .sheet(isPresented: $isOnboardingPresented, onDismiss: finishOnboardingDismissal) {
+            if libraryRootFallback != nil || showsDirectLibraryWelcome {
                 // The injected UI fixture already supplies a complete,
                 // read-only library and its smoke tests deliberately start
                 // at the scan receipt. Keep that deterministic test-only
@@ -851,13 +854,15 @@ private struct V2Shell: View {
                 LibraryWelcomeView(
                     store: onboardingStore,
                     onContinue: {
+                        completedOnboardingVersion = OnboardingLifecycle.currentVersion
                         isOnboardingPresented = false
                         router.navigate(to: .library)
                     },
                     onPersonalize: {
                         isOnboardingPresented = false
                         openSettings()
-                    }
+                    },
+                    requestLibraryPicker: requestLibraryPicker
                 )
             } else {
                 FirstSuccessOnboardingView(
@@ -873,7 +878,8 @@ private struct V2Shell: View {
                         router.navigate(to: .library)
                     },
                     runScan: performRescan,
-                    dismiss: { isOnboardingPresented = false }
+                    dismiss: { isOnboardingPresented = false },
+                    requestLibraryPicker: requestLibraryPicker
                 )
             }
         }
@@ -916,6 +922,15 @@ private struct V2Shell: View {
             // rollback and calibration link apply.
             libraryHealthStore.onLibraryFindingsChanged = refreshSidebarBadges
         }
+        .task {
+            guard !didRunUITestLibraryPickerHandoff,
+                  Self.uiTestLibraryPickerResult() != nil
+            else { return }
+            didRunUITestLibraryPickerHandoff = true
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(300))
+            requestLibraryPicker()
+        }
         .onChange(of: nightsStore.nights) { _, _ in refreshSidebarBadges() }
         .sheet(isPresented: $isMobileSyncPresented) {
             MobileSyncView(
@@ -938,7 +953,83 @@ private struct V2Shell: View {
 
     private func presentOnboarding() {
         onboardingStore.returnToLibraryChoice()
+        showsDirectLibraryWelcome = false
         isOnboardingPresented = true
+    }
+
+    private func requestLibraryPicker() {
+        // `NSOpenPanel` cannot reliably present on top of the onboarding
+        // sheet. Close that sheet first; its onDismiss callback launches the
+        // same native picker the original AppState workflow uses.
+        pendingLibraryPicker = true
+        isOnboardingPresented = false
+    }
+
+    private func finishOnboardingDismissal() {
+        guard pendingLibraryPicker else { return }
+        pendingLibraryPicker = false
+
+        let root: URL?
+        if let uiTestRoot = Self.uiTestLibraryPickerResult() {
+            root = uiTestRoot
+        } else {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.prompt = "Kiválasztás"
+            panel.message = "Válaszd ki a képkönyvtár gyökerét"
+            root = panel.runModal() == .OK ? panel.url : nil
+        }
+
+        guard let root else {
+            presentOnboardingAfterDismissal(directLibraryWelcome: false)
+            return
+        }
+
+        presentOnboardingAfterDismissal(directLibraryWelcome: true, scanning: root)
+    }
+
+    /// SwiftUI is still completing the old sheet's dismissal while
+    /// `onDismiss` runs. Re-presenting synchronously from that callback can
+    /// leave a visible sheet whose binding no longer dismisses it. Yield one
+    /// main-actor turn so the old presentation is fully gone first.
+    private func presentOnboardingAfterDismissal(
+        directLibraryWelcome: Bool,
+        scanning root: URL? = nil
+    ) {
+        Task { @MainActor in
+            await Task.yield()
+            showsDirectLibraryWelcome = directLibraryWelcome
+            isOnboardingPresented = true
+            if let root {
+                try? await onboardingStore.openAndScan(root)
+            }
+        }
+    }
+
+    /// Deterministic UI-test seam for the real dismiss -> picker -> reopen
+    /// lifecycle. It only accepts a directory inside macOS's temporary
+    /// location, so a normal launch cannot use it to scan arbitrary paths.
+    private static func uiTestLibraryPickerResult(
+        arguments: [String] = ProcessInfo.processInfo.arguments
+    ) -> URL? {
+        guard let argumentIndex = arguments.firstIndex(of: "-UITestLibraryPickerResult") else {
+            return nil
+        }
+        let pathIndex = arguments.index(after: argumentIndex)
+        guard pathIndex < arguments.endIndex else { return nil }
+
+        let root = URL(fileURLWithPath: arguments[pathIndex], isDirectory: true).standardizedFileURL
+        let temporaryRoot = FileManager.default.temporaryDirectory.standardizedFileURL
+        let temporaryPrefix = temporaryRoot.path.hasSuffix("/")
+            ? temporaryRoot.path
+            : temporaryRoot.path + "/"
+        let uiTestContainerPrefix = "/Library/Containers/com.astrotool.app.UITests.xctrunner/Data/tmp/"
+        guard root.path.hasPrefix(temporaryPrefix)
+                || root.path.contains(uiTestContainerPrefix)
+        else { return nil }
+        return root
     }
 
     /// Backs the access-problem banner's "Retry" action -- re-attempts the

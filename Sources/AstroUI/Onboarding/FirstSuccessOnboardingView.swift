@@ -22,6 +22,7 @@ public struct FirstSuccessOnboardingView: View {
     private let onContinue: () -> Void
     private let runScan: () -> Void
     private let dismiss: () -> Void
+    private let requestLibraryPicker: (() -> Void)?
 
     public init(
         mode: FirstSuccessOnboardingStore.Mode,
@@ -32,7 +33,8 @@ public struct FirstSuccessOnboardingView: View {
         onEnableWrites: @escaping () -> Void,
         onContinue: @escaping () -> Void,
         runScan: @escaping () -> Void,
-        dismiss: @escaping () -> Void
+        dismiss: @escaping () -> Void,
+        requestLibraryPicker: (() -> Void)? = nil
     ) {
         _coordinator = State(initialValue: FirstSuccessOnboardingStore(mode: mode))
         _libraryStore = Bindable(libraryStore)
@@ -43,6 +45,7 @@ public struct FirstSuccessOnboardingView: View {
         self.onContinue = onContinue
         self.runScan = runScan
         self.dismiss = dismiss
+        self.requestLibraryPicker = requestLibraryPicker
     }
 
     public var body: some View {
@@ -59,13 +62,6 @@ public struct FirstSuccessOnboardingView: View {
         }
         .frame(minWidth: 720, idealWidth: 820, minHeight: 570, idealHeight: 680)
         .background(AstroTokens.Color.ground)
-        .fileImporter(
-            isPresented: $isChoosingParent,
-            allowedContentTypes: [.folder],
-            allowsMultipleSelection: false
-        ) { result in
-            if case .success(let urls) = result { chosenParent = urls.first }
-        }
         .alert(
             "This step needs attention",
             isPresented: Binding(
@@ -207,13 +203,21 @@ public struct FirstSuccessOnboardingView: View {
             }
         }
         .padding(AstroTokens.Spacing.spacious)
+        .fileImporter(
+            isPresented: $isChoosingParent,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result { chosenParent = urls.first }
+        }
     }
 
     private var openLibrary: some View {
         LibraryWelcomeView(
             store: libraryStore,
             onContinue: libraryReady,
-            onPersonalize: libraryReady
+            onPersonalize: libraryReady,
+            requestLibraryPicker: requestLibraryPicker
         )
         .overlay(alignment: .topLeading) {
             Button("Back") { coordinator.returnToLanding() }
