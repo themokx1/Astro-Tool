@@ -480,8 +480,20 @@ public actor NearbyBonjourBrowser {
                 continuation.resume(returning: first.endpoint)
             }
             newBrowser.stateUpdateHandler = { state in
-                if case .failed = state, resumeOnce.tryResume() {
-                    continuation.resume(throwing: NearbyTransportError.connectionClosed)
+                // Both `.failed` (a genuine browse error) and `.cancelled`
+                // (this browser being torn down by `cancelInFlight()` when
+                // the outer timeout wins) must resume this continuation —
+                // otherwise a cancellation that arrives before any result
+                // ever leaves this child task permanently suspended, and the
+                // enclosing task group's implicit "await every child" on
+                // scope exit hangs forever.
+                switch state {
+                case .failed, .cancelled:
+                    if resumeOnce.tryResume() {
+                        continuation.resume(throwing: NearbyTransportError.connectionClosed)
+                    }
+                default:
+                    break
                 }
             }
             newBrowser.start(queue: Self.queue)
