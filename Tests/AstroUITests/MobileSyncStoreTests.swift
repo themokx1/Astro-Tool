@@ -10,7 +10,9 @@ import Testing
 struct MobileSyncStoreTests {
     @Test("Preview is read-only until identity and exact summary are confirmed")
     func previewRequiresBothConfirmations() async throws {
-        let root = URL(fileURLWithPath: "/tmp/AstroTool-mobile-sync-test", isDirectory: true)
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let identity = PortableLibraryID(rawValue: UUID())
         let snapshot = MobileLibrarySnapshot(
             schemaVersion: 1,
@@ -43,9 +45,12 @@ struct MobileSyncStoreTests {
 
     @Test("A mismatched confirmation fails closed and keeps the package key empty")
     func mismatchedConfirmationsFailClosed() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let expected = PortableLibraryID(rawValue: UUID())
         let store = MobileSyncStore(
-            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            rootURL: root,
             identityPreview: { _ in PortableIdentityPreview(proposedID: expected, relativePath: "id", alreadyExists: false) },
             snapshotProvider: { _, _ in .empty(libraryID: expected) }
         )
@@ -58,9 +63,12 @@ struct MobileSyncStoreTests {
 
     @Test("Cancellation invalidates stale preview work")
     func cancellationWinsOverStaleAsyncResult() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let id = PortableLibraryID(rawValue: UUID())
         let store = MobileSyncStore(
-            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            rootURL: root,
             identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
             snapshotProvider: { _, _ in
                 try await Task.sleep(for: .milliseconds(40))
@@ -77,9 +85,12 @@ struct MobileSyncStoreTests {
 
     @Test("Export failure and existing destination are visible recovery states")
     func exportFailuresAreVisible() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let id = PortableLibraryID(rawValue: UUID())
         let store = MobileSyncStore(
-            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            rootURL: root,
             identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
             snapshotProvider: { _, _ in .empty(libraryID: id) },
             packageExport: { _, _, _ in throw MobilePackageError.destinationExists }
@@ -87,7 +98,7 @@ struct MobileSyncStoreTests {
         await store.preview()
         store.confirmSummary(store.preview!.confirmationToken)
         #expect(store.canExport)
-        await store.export(to: URL(fileURLWithPath: "/tmp/existing.astroMobile"))
+        await store.export(to: root.appendingPathComponent("existing.astroMobile"))
         #expect(store.phase == .failed)
         #expect(store.errorMessage?.localizedCaseInsensitiveContains("already") == true)
         #expect(store.oneTimeQRPayload == nil)
@@ -95,9 +106,12 @@ struct MobileSyncStoreTests {
 
     @Test("A confirmed summary follows the export state machine and reset clears the one-time code")
     func exportStateMachineAndReset() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let id = PortableLibraryID(rawValue: UUID())
         let store = MobileSyncStore(
-            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            rootURL: root,
             identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
             snapshotProvider: { _, _ in .empty(libraryID: id) },
             packageExport: { _, _, key in
@@ -107,7 +121,7 @@ struct MobileSyncStoreTests {
         )
         await store.preview()
         store.confirmSummary(store.preview!.confirmationToken)
-        await store.export(to: URL(fileURLWithPath: "/tmp/new-package.astroMobile"))
+        await store.export(to: root.appendingPathComponent("new-package.astroMobile"))
         #expect(store.phase == .exported)
         #expect(store.oneTimeQRPayload != nil)
         store.reset()
@@ -126,7 +140,8 @@ struct MobileSyncStoreTests {
             rootURL: nil,
             packageImportPreview: { _, _ in throw MobilePackageError.authenticationFailed }
         )
-        await imported.previewIncomingPackage(from: URL(fileURLWithPath: "/tmp/package"), qrPayload: OneTimePackageKey().qrPayload)
+        let missingSource = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("package")
+        await imported.previewIncomingPackage(from: missingSource, qrPayload: OneTimePackageKey().qrPayload)
         #expect(imported.phase == .failed)
         #expect(imported.failure == .importFailed)
         #expect(imported.incomingPreview == nil)
@@ -144,7 +159,8 @@ struct MobileSyncStoreTests {
             rootURL: nil,
             packageImportPreview: { _, _ in imported }
         )
-        await store.previewIncomingPackage(from: URL(fileURLWithPath: "/tmp/package"), qrPayload: OneTimePackageKey().qrPayload)
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("package")
+        await store.previewIncomingPackage(from: source, qrPayload: OneTimePackageKey().qrPayload)
         #expect(store.phase == .importPreviewReady)
         #expect(store.incomingPreview == imported)
         #expect(store.didApplyIncomingChanges == false)
@@ -528,10 +544,13 @@ struct MobileSyncStoreTests {
 
     @Test("Summary confirmation is bound to the exact displayed snapshot token")
     func exactSnapshotTokenRequired() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let id = PortableLibraryID(rawValue: UUID())
         let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
         let store = MobileSyncStore(
-            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            rootURL: root,
             identityPreview: { _ in .init(proposedID: id, relativePath: "id", alreadyExists: true) },
             snapshotProvider: { _, _ in snapshot }
         )
@@ -544,10 +563,13 @@ struct MobileSyncStoreTests {
 
     @Test("A cancelled export records a late published result and keeps its unlock code")
     func cancellationDoesNotLosePublishedPackage() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let id = PortableLibraryID(rawValue: UUID())
         let gate = SignalGate()
         let store = MobileSyncStore(
-            rootURL: URL(fileURLWithPath: "/tmp/library"),
+            rootURL: root,
             identityPreview: { _ in .init(proposedID: id, relativePath: "id", alreadyExists: true) },
             snapshotProvider: { _, _ in .empty(libraryID: id) },
             packageExport: { _, _, _ in
@@ -557,7 +579,7 @@ struct MobileSyncStoreTests {
         )
         await store.preview()
         store.confirmSummary(store.preview!.confirmationToken)
-        let task = Task { await store.export(to: URL(fileURLWithPath: "/tmp/new-package.astroMobile")) }
+        let task = Task { await store.export(to: root.appendingPathComponent("new-package.astroMobile")) }
         await Task.yield()
         store.cancel()
         #expect(store.phase == .finishing)
@@ -625,7 +647,7 @@ struct MobileSyncStoreTests {
             }
         )
         let task = Task {
-            await store.previewIncomingPackage(from: URL(fileURLWithPath: "/tmp/package"), qrPayload: OneTimePackageKey().qrPayload)
+            await store.previewIncomingPackage(from: URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true), qrPayload: OneTimePackageKey().qrPayload)
         }
         await Task.yield()
         store.cancel()
@@ -653,7 +675,7 @@ struct MobileSyncStoreTests {
                 return imported
             }
         )
-        let source = URL(fileURLWithPath: "/tmp/package")
+        let source = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         let code = OneTimePackageKey().qrPayload
         await store.previewIncomingPackage(from: source, qrPayload: code)
         #expect(store.phase == .failed)
@@ -682,7 +704,7 @@ struct MobileSyncStoreTests {
                 await discardRelease.wait()
             }
         )
-        let source = URL(fileURLWithPath: "/tmp/package")
+        let source = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
         let code = OneTimePackageKey().qrPayload
         await store.previewIncomingPackage(from: source, qrPayload: code)
         store.cancel()
