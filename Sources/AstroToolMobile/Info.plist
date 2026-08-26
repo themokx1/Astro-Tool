@@ -41,6 +41,13 @@
 	<string>AstroTool uses the camera to scan the one-time key for a mobile package from your Mac.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>AstroTool uses the local network only to hand the night plan and your checklist notes between your own Mac and iPhone.</string>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+	</array>
 	<key>UTExportedTypeDeclarations</key>
 	<array>
 		<dict>

@@ -79,6 +79,13 @@ targets:
     info:
       path: Sources/AstroToolMobile/Info.plist
       properties:
+        # Without a UILaunchScreen declaration iOS treats the app as a legacy
+        # binary and renders it scaled/letterboxed in a centered card instead
+        # of native edge-to-edge resolution (observed on the owner's iPhone).
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
         NSCameraUsageDescription: "AstroTool uses the camera to scan the one-time key for a mobile package from your Mac."
         NSLocalNetworkUsageDescription: "AstroTool uses the local network only to hand the night plan and your checklist notes between your own Mac and iPhone."
         NSBonjourServices:
