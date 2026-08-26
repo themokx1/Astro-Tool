@@ -101,6 +101,23 @@ enum MobileProjectProgress {
     }
 }
 
+/// Decides whether a project row's monospaced catalog identifier is worth
+/// showing beside the bold display name. Real-library owner data (see the
+/// v5-iphone-companion screenshot audit) commonly has `catalogID ==
+/// displayName`, in which case repeating the identical string twice — once
+/// bold, once monospaced — is pure noise and, for long identifiers, forces
+/// the row into a mid-token line wrap. The comparison is trimmed and
+/// case-insensitive so incidental whitespace or casing differences between
+/// the two fields don't resurrect a duplicate-looking row.
+enum MobileProjectRowModel {
+    static func showsCatalogID(displayName: String, catalogID: String) -> Bool {
+        let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCatalogID = catalogID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedCatalogID.isEmpty else { return false }
+        return trimmedCatalogID.caseInsensitiveCompare(trimmedDisplayName) != .orderedSame
+    }
+}
+
 enum MobileProjectPhaseLabel {
     static func label(for value: String) -> String {
         switch value.lowercased() {

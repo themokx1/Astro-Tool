@@ -89,14 +89,27 @@ struct ProjectsMobileView: View {
 private struct ProjectRow: View {
     let project: MobileProject
 
+    private var showsCatalogID: Bool {
+        MobileProjectRowModel.showsCatalogID(displayName: project.displayName, catalogID: project.catalogID)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
-                Text(project.displayName).font(.body.weight(.semibold))
-                Spacer()
-                Text(project.catalogID)
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
+                Text(project.displayName)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
+                if showsCatalogID {
+                    Spacer(minLength: 8)
+                    Text(project.catalogID)
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.trailing)
+                }
             }
             HStack {
                 Text(phaseLabel(project.phase)).font(.footnote).foregroundStyle(.secondary)

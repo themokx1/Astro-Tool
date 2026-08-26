@@ -58,19 +58,22 @@ struct TonightMobileView: View {
 
     private var horizonBand: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Label("Plan from Mac", systemImage: freshness == .stale ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+            Text("Plan from Mac")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            Label(freshness == .stale ? "Needs a newer plan" : "Ready for tonight", systemImage: freshness == .stale ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
                 .font(.subheadline.weight(.semibold))
-            HStack(spacing: 5) {
-                Text("Updated")
-                Text(snapshot.createdAt, format: .dateTime.year().month(.abbreviated).day().hour().minute())
-                Text("(")
-                Text(snapshot.createdAt, style: .relative)
-                Text(")")
-                Text("·")
-                Text(freshness == .stale ? "Needs a newer plan" : "Ready for tonight")
-            }
-            .font(.footnote.monospacedDigit())
-            .foregroundStyle(freshness == .stale ? Color(red: 1, green: 0.77, blue: 0.25) : .white)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+            (Text("Updated") + Text(verbatim: " ")
+                + Text(snapshot.createdAt, format: .dateTime.year().month(.abbreviated).day().hour().minute())
+                + Text(verbatim: " ") + Text("(")
+                + Text(snapshot.createdAt, style: .relative)
+                + Text(")"))
+                .font(.footnote.monospacedDigit())
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .foregroundStyle(freshness == .stale ? Color(red: 1, green: 0.77, blue: 0.25) : .white)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)

@@ -43,6 +43,21 @@ func projectProgressNeverProducesInvalidUIValues() {
     #expect(MobileProjectProgress.fraction(integrationSeconds: 1, goalHours: nil) == nil)
 }
 
+@Test("project row hides the catalog identifier when it duplicates the display name")
+func projectRowHidesDuplicateCatalogID() {
+    // Real owner-library data (see the v5-iphone-companion screenshot audit)
+    // frequently has catalogID == displayName; showing both is pure noise
+    // and forces long identifiers into a mid-token wrap.
+    #expect(MobileProjectRowModel.showsCatalogID(displayName: "IC 4604 Rho Ophiuchi", catalogID: "IC 4604 Rho Ophiuchi") == false)
+    // Trimmed and case-insensitive: incidental whitespace or casing still counts as a duplicate.
+    #expect(MobileProjectRowModel.showsCatalogID(displayName: "IC 4604 Rho Ophiuchi", catalogID: "  ic 4604 rho ophiuchi  ") == false)
+    // A genuinely distinct catalog identifier is still shown.
+    #expect(MobileProjectRowModel.showsCatalogID(displayName: "Rho Ophiuchi", catalogID: "IC 4604") == true)
+    // An empty/blank catalog identifier has nothing worth showing.
+    #expect(MobileProjectRowModel.showsCatalogID(displayName: "Rho Ophiuchi", catalogID: "") == false)
+    #expect(MobileProjectRowModel.showsCatalogID(displayName: "Rho Ophiuchi", catalogID: "   ") == false)
+}
+
 @Test("mobile labels use the production project, readiness, and target values")
 func productionDomainValuesHaveHumanLabels() {
     #expect(MobileProjectPhaseLabel.label(for: "planned") == "Planned")
