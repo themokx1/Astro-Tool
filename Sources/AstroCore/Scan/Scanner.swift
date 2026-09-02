@@ -1,28 +1,82 @@
 import Foundation
 
 /// Decides what error a missing root/subpath should surface as. Split out
-/// from `LibraryScanner.scan` so the decision (which never needs disk
-/// access beyond one `volumeExists` check) can be unit-tested directly
-/// without touching a real `/Volumes` mount point.
+/// from `LibraryScanner.scan` so the decision can be unit-tested directly
+/// without touching a real `/Volumes` mount point or iCloud Drive — the only
+/// filesystem access it needs comes through the injected `probe`.
 enum RootErrorClassifier {
-    /// - `rootPath` starts with `/Volumes/` and its volume portion (the
-    ///   first two path components, e.g. `/Volumes/AstroDrive`) doesn't exist
-    ///   per `volumeExists` → `.volumeNotMounted(path: rootPath)`.
+    /// The real filesystem/volume facts this classifier needs beyond plain
+    /// path existence, injected so its decision logic can be unit-tested
+    /// deterministically. `LibraryScanner.scan`'s call site backs these with
+    /// `FileManager`/`URLResourceKey` reads; a test injects a fake table
+    /// instead of requiring a real removable drive or iCloud container.
+    struct VolumeProbe: Sendable {
+        /// Same semantics as `FileManager.fileExists`.
+        var pathExists: @Sendable (String) -> Bool
+        /// Whether `path` (already known to exist) looks like a volume
+        /// mount point rather than an ordinary directory on the same
+        /// filesystem as its parent -- `URLResourceKey.volumeIsRemovableKey
+        /// == true`, `.volumeIsInternalKey == false`, or (the fallback for a
+        /// boundary neither of those reliably flags, e.g. a firmlink-style
+        /// mount like `/System/Volumes/Data`) its `.volumeIdentifierKey`
+        /// differing from its own parent directory's.
+        var isVolumeBoundary: @Sendable (String) -> Bool
+
+        init(
+            pathExists: @escaping @Sendable (String) -> Bool,
+            isVolumeBoundary: @escaping @Sendable (String) -> Bool
+        ) {
+            self.pathExists = pathExists
+            self.isVolumeBoundary = isVolumeBoundary
+        }
+    }
+
+    /// - `rootPath` starts with `/Volumes/`: its volume portion (the first
+    ///   two path components, e.g. `/Volumes/AstroDrive`) missing per
+    ///   `probe.pathExists` → `.volumeNotMounted(path: rootPath)`; present →
+    ///   `.pathNotFound` straight away (a real missing subpath on a properly
+    ///   mounted drive, not an unmount) without falling through to the
+    ///   generic boundary check below, which would otherwise flag the mount
+    ///   point itself as "a volume" every time.
+    /// - `rootPath` has a path component literally named `Mobile Documents`
+    ///   (iCloud Drive's on-disk container, `~/Library/Mobile
+    ///   Documents/...`) → `.volumeNotMounted`: content that hasn't been
+    ///   downloaded locally yet reads as "missing" exactly like an unmounted
+    ///   network share, and "wait/retry" is the right recovery, not
+    ///   "re-pick the folder".
+    /// - Otherwise, walk up from `rootPath` to its nearest existing
+    ///   ancestor (per `probe.pathExists`); if that ancestor looks like a
+    ///   volume boundary per `probe.isVolumeBoundary` → `.volumeNotMounted`
+    ///   -- covers a root that sits on a since-detached external/network
+    ///   volume mounted somewhere other than `/Volumes/` (e.g. a
+    ///   `/System/Volumes/Data`-relative path).
     /// - Otherwise the missing root/subpath itself doesn't exist (but its
-    ///   parent does) → `.pathNotFound(path:)`, using `subpath` when one was
-    ///   given (a scoped scan under an existing root) or `rootPath` when the
-    ///   root itself is what's missing.
+    ///   parent does, on the SAME ordinary volume) → `.pathNotFound(path:)`,
+    ///   using `subpath` when one was given (a scoped scan under an
+    ///   existing root) or `rootPath` when the root itself is what's
+    ///   missing.
     static func classify(
         rootPath: String,
         subpath: String?,
-        volumeExists: (String) -> Bool
+        probe: VolumeProbe
     ) -> AstroError {
         if rootPath.hasPrefix("/Volumes/") {
             let volume = volumePortion(of: rootPath)
-            if !volumeExists(volume) {
-                return .volumeNotMounted(path: rootPath)
-            }
+            return probe.pathExists(volume)
+                ? .pathNotFound(path: subpath ?? rootPath)
+                : .volumeNotMounted(path: rootPath)
         }
+
+        if hasMobileDocumentsComponent(rootPath) {
+            return .volumeNotMounted(path: rootPath)
+        }
+
+        if let ancestor = nearestExistingAncestor(of: rootPath, pathExists: probe.pathExists),
+           ancestor != "/", probe.isVolumeBoundary(ancestor)
+        {
+            return .volumeNotMounted(path: rootPath)
+        }
+
         return .pathNotFound(path: subpath ?? rootPath)
     }
 
@@ -32,6 +86,28 @@ enum RootErrorClassifier {
         let comps = path.split(separator: "/", omittingEmptySubsequences: true)
         guard comps.count >= 2 else { return path }
         return "/" + comps[0] + "/" + comps[1]
+    }
+
+    /// Whether `path` has a path component literally named `Mobile
+    /// Documents` — iCloud Drive's real on-disk container directory under
+    /// `~/Library/`.
+    static func hasMobileDocumentsComponent(_ path: String) -> Bool {
+        path.split(separator: "/").contains("Mobile Documents")
+    }
+
+    /// Walks up `path` one path component at a time until `pathExists`
+    /// reports true, or there's nowhere left to go. `nil` only if not even
+    /// `"/"` exists per `pathExists` — never happens against the real
+    /// filesystem, but a fake in a test might omit it, so this doesn't loop
+    /// forever in that case.
+    static func nearestExistingAncestor(of path: String, pathExists: (String) -> Bool) -> String? {
+        var current = path
+        while true {
+            if pathExists(current) { return current }
+            let parent = (current as NSString).deletingLastPathComponent
+            guard parent != current, !parent.isEmpty else { return nil }
+            current = parent
+        }
     }
 }
 
@@ -166,6 +242,35 @@ public final class LibraryScanner {
         self.db = db
     }
 
+    /// The real-filesystem backing for `RootErrorClassifier.classify` --
+    /// `RootErrorClassifierTests` injects a fake `VolumeProbe` instead so
+    /// the boundary-detection logic doesn't need a real removable drive or
+    /// iCloud container to test.
+    static let realVolumeProbe = RootErrorClassifier.VolumeProbe(
+        pathExists: { FileManager.default.fileExists(atPath: $0) },
+        isVolumeBoundary: { path in
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            guard let values = try? url.resourceValues(forKeys: [
+                .volumeIsRemovableKey, .volumeIsInternalKey, .volumeIdentifierKey,
+            ]) else { return false }
+            if values.volumeIsRemovable == true { return true }
+            if values.volumeIsInternal == false { return true }
+
+            // Neither resource value flagged it -- fall back to comparing
+            // this path's volume identifier against its own parent's. A
+            // mismatch means this path sits at a filesystem boundary
+            // (e.g. a firmlink-style mount like `/System/Volumes/Data`)
+            // that the two booleans above don't reliably describe.
+            guard let ownIdentifier = values.volumeIdentifier as? NSObject else { return false }
+            let parentURL = url.deletingLastPathComponent()
+            guard parentURL.path != url.path,
+                  let parentValues = try? parentURL.resourceValues(forKeys: [.volumeIdentifierKey]),
+                  let parentIdentifier = parentValues.volumeIdentifier as? NSObject
+            else { return false }
+            return !ownIdentifier.isEqual(parentIdentifier)
+        }
+    )
+
     /// Scans `config.rootPath`, or just the `subpath` subtree of it when
     /// given. `progress` is called every 100 files with the running count
     /// of files processed so far in this scan.
@@ -196,7 +301,7 @@ public final class LibraryScanner {
             throw RootErrorClassifier.classify(
                 rootPath: config.rootPath,
                 subpath: subpath,
-                volumeExists: { FileManager.default.fileExists(atPath: $0) }
+                probe: Self.realVolumeProbe
             )
         }
 

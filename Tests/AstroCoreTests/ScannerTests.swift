@@ -482,24 +482,103 @@ private struct ScanFixture {
     }
 }
 
-@Test func rootErrorClassifierDecidesVolumeNotMountedVsPathNotFound() throws {
+/// A probe whose `pathExists` claims every path under `existingPrefixes`
+/// exists (nothing else does), and whose `isVolumeBoundary` returns `true`
+/// only for paths in `boundaries` -- deterministic, no real filesystem
+/// access, so the classifier's decision logic can be tested without a real
+/// removable drive or iCloud container.
+private func fakeVolumeProbe(
+    existingPrefixes: Set<String>,
+    boundaries: Set<String> = []
+) -> RootErrorClassifier.VolumeProbe {
+    RootErrorClassifier.VolumeProbe(
+        pathExists: { existingPrefixes.contains($0) },
+        isVolumeBoundary: { boundaries.contains($0) }
+    )
+}
+
+@Test func rootErrorClassifierDecidesVolumeNotMountedVsPathNotFoundUnderVolumes() throws {
     #expect(
-        RootErrorClassifier.classify(rootPath: "/Volumes/images/sessions", subpath: nil, volumeExists: { _ in false })
-            == .volumeNotMounted(path: "/Volumes/images/sessions")
+        RootErrorClassifier.classify(
+            rootPath: "/Volumes/images/sessions", subpath: nil,
+            probe: fakeVolumeProbe(existingPrefixes: [])
+        ) == .volumeNotMounted(path: "/Volumes/images/sessions")
     )
     #expect(
-        RootErrorClassifier.classify(rootPath: "/Volumes/images/sessions", subpath: nil, volumeExists: { _ in true })
-            == .pathNotFound(path: "/Volumes/images/sessions")
-    )
-    #expect(
-        RootErrorClassifier.classify(rootPath: "/tmp/foo/bar", subpath: nil, volumeExists: { _ in true })
-            == .pathNotFound(path: "/tmp/foo/bar")
-    )
-    #expect(
-        RootErrorClassifier.classify(rootPath: "/tmp/foo", subpath: "sub/dir", volumeExists: { _ in true })
-            == .pathNotFound(path: "sub/dir")
+        RootErrorClassifier.classify(
+            rootPath: "/Volumes/images/sessions", subpath: nil,
+            probe: fakeVolumeProbe(existingPrefixes: ["/Volumes/images"])
+        ) == .pathNotFound(path: "/Volumes/images/sessions")
     )
     #expect(RootErrorClassifier.volumePortion(of: "/Volumes/images/sessions/2026") == "/Volumes/images")
+}
+
+@Test func rootErrorClassifierFallsBackToPathNotFoundWhenNearestAncestorIsOrdinary() throws {
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: "/tmp/foo/bar", subpath: nil,
+            probe: fakeVolumeProbe(existingPrefixes: ["/tmp"])
+        ) == .pathNotFound(path: "/tmp/foo/bar")
+    )
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: "/tmp/foo", subpath: "sub/dir",
+            probe: fakeVolumeProbe(existingPrefixes: ["/tmp"])
+        ) == .pathNotFound(path: "sub/dir")
+    )
+}
+
+/// iCloud Drive's real on-disk container is `~/Library/Mobile
+/// Documents/...` -- content not yet downloaded locally reads as "missing"
+/// exactly like an unmounted network share, so a root under it should get
+/// the "retry" recovery (`.volumeNotMounted`), not "re-pick the folder"
+/// (`.pathNotFound`), regardless of what the ancestor-walk probe reports.
+@Test func rootErrorClassifierTreatsAMobileDocumentsRootAsVolumeNotMounted() throws {
+    let root = "/Users/x/Library/Mobile Documents/com~apple~CloudDocs/Astro"
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: root, subpath: nil,
+            probe: fakeVolumeProbe(existingPrefixes: ["/Users/x/Library"])
+        ) == .volumeNotMounted(path: root)
+    )
+    #expect(RootErrorClassifier.hasMobileDocumentsComponent(root))
+    #expect(!RootErrorClassifier.hasMobileDocumentsComponent("/Volumes/images/sessions"))
+}
+
+/// A root that isn't under `/Volumes/` can still sit on a since-detached
+/// volume mounted somewhere unusual (e.g. a firmlink-style boundary like
+/// `/System/Volumes/Data`) -- when the nearest surviving ancestor looks
+/// like a volume boundary, that's `.volumeNotMounted`, not `.pathNotFound`.
+@Test func rootErrorClassifierTreatsANonVolumesRootOnADetachedBoundaryAsVolumeNotMounted() throws {
+    let root = "/System/Volumes/Data/mnt/astro/sessions"
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: root, subpath: nil,
+            probe: fakeVolumeProbe(
+                existingPrefixes: ["/System/Volumes/Data"],
+                boundaries: ["/System/Volumes/Data"]
+            )
+        ) == .volumeNotMounted(path: root)
+    )
+}
+
+/// The generic ancestor-boundary check never fires when the nearest
+/// surviving ancestor is the filesystem root "/" itself, even if a
+/// (deliberately unrealistic) probe claims "/" is a volume boundary --
+/// "/" is never "unmounted".
+@Test func rootErrorClassifierNeverTreatsTheFilesystemRootItselfAsAVolumeBoundary() throws {
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: "/foo/bar", subpath: nil,
+            probe: fakeVolumeProbe(existingPrefixes: ["/"], boundaries: ["/"])
+        ) == .pathNotFound(path: "/foo/bar")
+    )
+}
+
+@Test func rootErrorClassifierNearestExistingAncestorWalksUpPastMissingComponents() throws {
+    let probe = fakeVolumeProbe(existingPrefixes: ["/a/b"])
+    #expect(RootErrorClassifier.nearestExistingAncestor(of: "/a/b/c/d", pathExists: probe.pathExists) == "/a/b")
+    #expect(RootErrorClassifier.nearestExistingAncestor(of: "/a/b", pathExists: probe.pathExists) == "/a/b")
 }
 
 @Test func scanCapturesFITSMetaForNewFITSFile() throws {
