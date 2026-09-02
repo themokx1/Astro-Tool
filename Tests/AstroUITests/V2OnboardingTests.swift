@@ -524,6 +524,58 @@ struct V2OnboardingTests {
         #expect(nextLaunch.selectedRoot == fixture.root.standardizedFileURL)
     }
 
+    // MARK: - Bookmark persistence has a plain-path fallback
+    // (2026-09-02 first-run audit, fix G)
+
+    @Test("A saved library is remembered by plain path as well as by bookmark")
+    func savingALibraryRecordsItsPlainPathToo() throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let suiteName = "astrotool.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LibraryBookmarkStore.production(defaults: defaults)
+
+        store.save(fixture.root)
+
+        #expect(defaults.string(forKey: "v2.library.rootPath") == fixture.root.standardizedFileURL.path)
+        #expect(store.load() == fixture.root.standardizedFileURL)
+    }
+
+    @Test("With no usable bookmark the remembered plain path still opens the same library")
+    func plainPathIsUsedWhenTheBookmarkIsGone() throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let suiteName = "astrotool.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LibraryBookmarkStore.production(defaults: defaults)
+        store.save(fixture.root)
+
+        // Exactly what an unsandboxed machine where `.withSecurityScope`
+        // bookmark creation failed looks like on the next launch.
+        defaults.removeObject(forKey: "v2.library.securityScopedBookmark")
+        defaults.removeObject(forKey: "rootBookmark")
+
+        #expect(store.load() == fixture.root.standardizedFileURL)
+    }
+
+    @Test("Clearing the remembered library forgets the plain path as well")
+    func clearingForgetsThePlainPathToo() throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let suiteName = "astrotool.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LibraryBookmarkStore.production(defaults: defaults)
+        store.save(fixture.root)
+
+        store.clear()
+
+        #expect(store.load() == nil)
+        #expect(defaults.string(forKey: "v2.library.rootPath") == nil)
+    }
+
     @Test("Onboarding surfaces use honest actions and contain no personal defaults")
     func sourceSafetyAndActions() throws {
         let sourceRoot = repositoryRoot.appendingPathComponent("Sources/AstroUI")

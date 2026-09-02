@@ -189,46 +189,70 @@ public struct LibraryBookmarkStore: @unchecked Sendable {
     public func save(_ url: URL) { saveURL(url.standardizedFileURL) }
     public func clear() { clearURL() }
 
+    /// 2026-09-02 first-run audit, fix G: the plain path is now persisted
+    /// alongside the bookmark, and `load` falls back to it. AstroTool is
+    /// unsandboxed (there is no entitlements file), so a security-scoped
+    /// bookmark is a convenience here, not a requirement -- but
+    /// `bookmarkData(options: .withSecurityScope)` can still fail, and when
+    /// it did the old `guard ... else { return }` swallowed the failure
+    /// entirely: the user re-picked their library at every single launch,
+    /// with nothing on screen ever explaining why.
     public static func production(defaults: UserDefaults = .standard) -> Self {
         let key = "v2.library.securityScopedBookmark"
         let legacyKey = "rootBookmark"
+        let pathKey = "v2.library.rootPath"
         return Self(
             load: {
                 let isLegacy = defaults.data(forKey: key) == nil
-                guard let data = defaults.data(forKey: key)
-                    ?? defaults.data(forKey: legacyKey)
-                else { return nil }
-                var isStale = false
-                guard let url = try? URL(
-                    resolvingBookmarkData: data,
-                    options: .withSecurityScope,
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                ) else {
+                if let data = defaults.data(forKey: key) ?? defaults.data(forKey: legacyKey) {
+                    var isStale = false
+                    if let url = try? URL(
+                        resolvingBookmarkData: data,
+                        options: .withSecurityScope,
+                        relativeTo: nil,
+                        bookmarkDataIsStale: &isStale
+                    ) {
+                        if isLegacy { defaults.set(data, forKey: key) }
+                        if isStale,
+                           let refreshed = try? url.bookmarkData(
+                               options: .withSecurityScope,
+                               includingResourceValuesForKeys: nil,
+                               relativeTo: nil
+                           ) {
+                            defaults.set(refreshed, forKey: key)
+                        }
+                        return url
+                    }
+                    // An unresolvable bookmark is worthless; the plain path
+                    // below may still be right (a moved home directory, an
+                    // unmounted volume that is back).
                     defaults.removeObject(forKey: key)
                     if isLegacy { defaults.removeObject(forKey: legacyKey) }
-                    return nil
                 }
-                if isLegacy { defaults.set(data, forKey: key) }
-                if isStale,
-                   let refreshed = try? url.bookmarkData(
-                       options: .withSecurityScope,
-                       includingResourceValuesForKeys: nil,
-                       relativeTo: nil
-                   ) {
-                    defaults.set(refreshed, forKey: key)
-                }
-                return url
+                guard let path = defaults.string(forKey: pathKey), !path.isEmpty else { return nil }
+                // Returned even when the directory is currently absent: the
+                // onboarding store then diagnoses it properly ("the volume
+                // holding X is not mounted", with Retry) instead of silently
+                // starting up as if no library had ever been chosen. It also
+                // only forgets the path when that diagnosis says the path
+                // itself is wrong -- see `forgetBookmarkIfPermanentlyWrong`.
+                return URL(fileURLWithPath: path, isDirectory: true)
             },
             save: { url in
-                guard let data = try? url.bookmarkData(
+                defaults.set(url.path, forKey: pathKey)
+                let data = (try? url.bookmarkData(
                     options: .withSecurityScope,
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
-                ) else { return }
+                )) ?? (try? url.bookmarkData())
+                guard let data else { return }
                 defaults.set(data, forKey: key)
             },
-            clear: { defaults.removeObject(forKey: key) }
+            clear: {
+                defaults.removeObject(forKey: key)
+                defaults.removeObject(forKey: legacyKey)
+                defaults.removeObject(forKey: pathKey)
+            }
         )
     }
 
