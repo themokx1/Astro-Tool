@@ -204,20 +204,28 @@ public enum FITSReader {
 
                 // Decode byte-by-byte (`Unicode.Scalar` per byte) rather
                 // than via `String(data:encoding:.ascii)` + `Array(_:)`:
-                // ASCII bytes are all valid Unicode scalars, but Swift's
-                // `Character` grapheme-cluster rules merge some adjacent
-                // scalar pairs (notably CR+LF, `0x0D 0x0A`) into a SINGLE
-                // `Character`. A block containing such a pair anywhere would
-                // then produce a 2879-element (or shorter) array for a
-                // 2880-byte block, and the fixed `cardIndex * cardSize`
-                // slicing below -- which assumes exactly one array element
-                // per input byte -- traps with "Array index is out of
-                // range" once it reaches a card whose range no longer fits.
-                // Scalar-per-byte decoding keeps a strict 1:1 byte↔element
-                // correspondence regardless of byte content.
-                guard blockData.allSatisfy({ $0 < 0x80 }) else {
-                    throw AstroError.corruptFITS(path: path, reason: "header block contains non-ASCII bytes")
-                }
+                // grapheme-cluster merging (notably CR+LF, `0x0D 0x0A`,
+                // Unicode's do-not-break rule UAX #29 GB3) only happens when
+                // a `String`'s own characters are re-segmented, e.g. by
+                // iterating `Array(someString)`. Building `blockChars` as a
+                // plain `[Character]` from independently-constructed
+                // `Character(Unicode.Scalar($0))` values sidesteps that
+                // entirely -- each element is its own grapheme cluster of
+                // one scalar, and a Swift `Array` never re-clusters its own
+                // elements. That keeps a strict 1:1 byte↔element
+                // correspondence for EVERY byte value 0x00-0xFF (every byte
+                // maps to a valid Latin-1 Unicode scalar), not just ASCII --
+                // so there's no need to reject header blocks whose bytes are
+                // >= 0x80. N.I.N.A./SGP and other capture tools write UTF-8
+                // text into free-form cards (`OBJECT`, `OBSERVER`,
+                // `COMMENT`) for non-ASCII target/observer names; rejecting
+                // those bytes here used to throw `corruptFITS` for an
+                // otherwise perfectly valid file, discarding its real
+                // EXPTIME/FILTER/DATE-OBS along with it. The rejected bytes
+                // won't round-trip as the original UTF-8 text (this reads
+                // Latin-1, not UTF-8), but every ASCII FITS keyword/value --
+                // which is all `string(_:)`/`double(_:)`/etc ever look at --
+                // is unaffected either way.
                 let blockChars = blockData.map { Character(Unicode.Scalar($0)) }
                 for cardIndex in 0..<cardsPerBlock {
                     let start = cardIndex * cardSize

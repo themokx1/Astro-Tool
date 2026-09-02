@@ -292,6 +292,58 @@ import Testing
     #expect(header.allCards["NOPE"] == nil)
 }
 
+// MARK: - Non-ASCII header bytes (N.I.N.A./SGP UTF-8 OBJECT/OBSERVER values)
+
+/// Builds one exact 80-byte card as raw bytes: `keyword` padded to 8 bytes,
+/// `"= "`, then `valueBytes` right-padded with ASCII spaces to fill the
+/// remaining 70 bytes. Unlike `card(_:)`/`buildHeaderData` (which pad by
+/// `String.count`, i.e. one Unicode grapheme per byte -- fine for ASCII-only
+/// cards), this pads by actual BYTE count, which is what a card with a
+/// multi-byte UTF-8 value needs to land on the fixed 80-byte boundary
+/// `FITSReader` assumes.
+private func utf8Card(keyword: String, valueBytes: [UInt8]) -> Data {
+    var bytes = Array(keyword.padding(toLength: 8, withPad: " ", startingAt: 0).utf8)
+    bytes.append(contentsOf: Array("= ".utf8))
+    precondition(valueBytes.count <= 70, "value too long to fit an 80-byte card")
+    bytes.append(contentsOf: valueBytes)
+    bytes.append(contentsOf: Array(repeating: UInt8(ascii: " "), count: 70 - valueBytes.count))
+    precondition(bytes.count == 80)
+    return bytes.withUnsafeBufferPointer { Data(buffer: $0) }
+}
+
+/// R11 fix: a header card written by N.I.N.A./Sequence Generator Pro can
+/// carry raw UTF-8 bytes in a free-text keyword (`OBJECT`, `OBSERVER`,
+/// `COMMENT`) for a non-ASCII target/observer name -- e.g. a Hungarian
+/// target name with `á`/`ő`/`ű`. `readOneHeader` used to reject any header
+/// block containing a byte >= 0x80 as `corruptFITS`, which discarded a
+/// perfectly valid file's EXPTIME/FILTER/DATE-OBS along with it. This
+/// asserts the fix: those other keys still parse, and the 2880-byte block
+/// length math still holds (the card carrying the UTF-8 bytes doesn't throw
+/// off the fixed-width card slicing).
+@Test func headerWithUTF8ObjectValueStillParsesRemainingKeysAndPreservesBlockLength() throws {
+    var data = Data()
+    data.append(Data(card("SIMPLE  =                    T").utf8))
+    data.append(Data(card("BITPIX  =                   16").utf8))
+    data.append(Data(card("NAXIS   =                    2").utf8))
+    data.append(Data(card("EXPTIME =                300.0").utf8))
+    data.append(Data(card("FILTER  = 'Ha      '").utf8))
+    data.append(utf8Card(keyword: "OBJECT", valueBytes: Array("'Fátyol-köd'".utf8)))
+    data.append(Data(card("END").utf8))
+    while data.count % 2880 != 0 {
+        data.append(Data(card("").utf8))
+    }
+    #expect(data.count == 2880, "single-block header: UTF-8 OBJECT card must not shift the 2880-byte boundary")
+
+    let header = try FITSReader.parse(data: data)
+    #expect(header.double("EXPTIME") == 300.0)
+    #expect(header.string("FILTER") == "Ha")
+    // The OBJECT value itself round-trips byte-for-byte as Latin-1, not
+    // UTF-8 (documented tradeoff in FITSReader) -- what matters here is that
+    // parsing the file no longer throws `corruptFITS` just because this
+    // card's bytes are >= 0x80.
+    #expect(header.allCards["OBJECT"] != nil)
+}
+
 // MARK: - Crash regression: CR+LF byte pair inside a header block
 
 /// Real FITS headers are supposed to be padded with ASCII space (0x20)
