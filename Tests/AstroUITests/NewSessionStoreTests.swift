@@ -188,4 +188,49 @@ struct NewSessionStoreTests {
         #expect(!fm.fileExists(atPath: root.appendingPathComponent("sessions/M1_Crab_Nebula/\(firstStore.dateText)/captures/l-extreme_dual-band").path))
         #expect(fm.fileExists(atPath: root.appendingPathComponent("sessions/M1_Crab_Nebula/\(firstStore.dateText)/captures/sv220_dual-band/lights").path))
     }
+
+    // MARK: - v5 flow fixes, item 2: "Create Structure" used to be able to
+    // fail with zero visible feedback -- `command.create(...)`'s own
+    // failure runs INSIDE `operationHost.run`'s detached task, so it was
+    // only ever announced by a toast on a layer mounted behind the modal
+    // wizard's sheet, never reaching this store at all.
+
+    @Test("A failed create surfaces its failure on the store instead of leaving receipt == nil with no explanation")
+    func failedCreateSurfacesCreateErrorMessage() async throws {
+        let root = try newSessionStoreTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let db = try newSessionStoreDatabase(at: root)
+        // The store itself is `.mutationEnabled` (so `canCreate` passes),
+        // but the factory hands back a command permanently pinned to
+        // `.readOnly` -- deterministically forcing `command.create(...)` to
+        // throw `LibraryMutationError.readOnly` deep inside `operationHost
+        // .run`'s own work closure, the exact failure shape this fix has to
+        // surface.
+        let factory: NewSessionStore.CommandFactory = { root, _, folders in
+            SessionCreationCommand(root: root, db: db, accessMode: .readOnly, indexedFolders: folders)
+        }
+        let operationHost = OperationHost(center: OperationCenter())
+
+        let store = NewSessionStore(
+            rootURL: root, accessMode: .mutationEnabled, indexedFolders: [], prefill: nil, commandFactory: factory
+        )
+        store.catalogRaw = "M1"
+        store.nameRaw = "Crab Nebula"
+        store.refreshPreview()
+        #expect(store.canCreate)
+
+        await store.create(operationHost: operationHost)
+        await operationHost.settle()
+
+        #expect(store.receipt == nil)
+        #expect(store.createErrorMessage != nil)
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("sessions/M1_Crab_Nebula").path))
+
+        // Editing a field again (the user trying something different)
+        // clears the stale failure banner instead of leaving it stuck next
+        // to a freshly recomputed preview.
+        store.nameRaw = "Crab Nebula II"
+        store.refreshPreview()
+        #expect(store.createErrorMessage == nil)
+    }
 }

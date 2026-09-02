@@ -91,6 +91,14 @@ public actor NearbyPairingSession {
     private var localDecision: LocalDecision?
     private var confirmationContinuation: CheckedContinuation<Void, Never>?
 
+    /// The peer's `.hello`-supplied display name, set as soon as that
+    /// message is received — before the ephemeral key exchange, and so
+    /// before `shortAuthenticationCode` ever resolves. Multi-Mac/multi-
+    /// iPhone disambiguation (fix item 3): the pairing-code confirmation UI
+    /// needs to say WHICH device answered before the user compares digits,
+    /// not just after `establish()` returns.
+    private var resolvedPeerDisplayName: String = ""
+
     public init(
         role: NearbyRole,
         identity: MobileDeviceIdentity,
@@ -131,6 +139,15 @@ public actor NearbyPairingSession {
         localDecision = .confirmed
         confirmationContinuation?.resume()
         confirmationContinuation = nil
+    }
+
+    /// The peer's display name, readable as soon as its `.hello` message has
+    /// been received — empty until then. By the time
+    /// `shortAuthenticationCode` resolves (which requires the peer's hello
+    /// AND its key exchange) this is always already populated, so a caller
+    /// can safely read it right alongside the code.
+    public var peerDisplayName: String {
+        resolvedPeerDisplayName
     }
 
     /// Records local rejection of the short authentication code. A no-op if
@@ -177,6 +194,11 @@ public actor NearbyPairingSession {
               peerHello.signingPublicKeyRawRepresentation.count == 32 else {
             throw NearbyTransportError.invalidMessage
         }
+        // Set as soon as the hello is structurally valid -- well before the
+        // trust decision, key exchange, or SAS derivation below, so
+        // `peerDisplayName` is already readable the instant a caller sees
+        // the pairing code (fix item 3).
+        resolvedPeerDisplayName = peerHello.displayName
 
         // Trust decision, from the hello exchange alone.
         let storedPeer = try trustStore.trustedPeers().first { $0.deviceID == peerHello.deviceID }

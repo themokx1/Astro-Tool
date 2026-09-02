@@ -11,10 +11,23 @@ public enum NearbySyncFailure: Equatable, Sendable {
     case pairingRejected
     /// The connecting peer's stored identity key no longer matches the key
     /// it presented — a hard re-pairing signal, never silently accepted.
-    case identityChanged
+    /// Carries the peer's deviceID so the recovery UI can offer "Forget this
+    /// iPhone and pair again" (`NearbySyncCoordinator.forgetPeer(deviceID:)`)
+    /// without a second round trip to look it up.
+    case identityChanged(deviceID: UUID)
     /// The authenticated handshake, the forward-snapshot publish, or the
-    /// wire-level package transfer itself failed.
+    /// wire-level package transfer itself failed for a reason other than an
+    /// idle stall (a corrupted/rejected chunk stream, a closed connection,
+    /// staging failure, etc).
     case transferFailed
+    /// A `NearbySecureChannel` `send`/`receive` during the post-handshake
+    /// transfer (forward publish, return receive) idled past its own
+    /// `ioTimeout` (`NearbyTransportError.transferTimeout`) — a stalled Wi-Fi
+    /// link, or a peer that paired and then went silent, rather than a
+    /// rejected or malformed transfer. Distinct from `.transferFailed` so
+    /// the UI can say plainly that the CONNECTION stalled, not that
+    /// something about the data was wrong.
+    case connectionStalled
     /// A return package was received and previewed, but the session ended
     /// without a confirmed apply — the user dismissed the review, rejected
     /// it, or the apply itself failed. Nothing phone-side was acknowledged.
@@ -33,7 +46,10 @@ public enum NearbySyncFailure: Equatable, Sendable {
 public enum NearbySyncEvent: Sendable {
     case waitingForPhone
     /// A first pairing only — a known peer's session never produces this.
-    case pairingCode(String)
+    /// `peerDisplayName` is the connecting iPhone's own name (fix item 3:
+    /// multi-Mac/multi-iPhone disambiguation), so the confirmation UI can
+    /// show "Pairing with: <name>" before the user compares the code.
+    case pairingCode(code: String, peerDisplayName: String)
     case preparing
     case transferring
     case verifying
@@ -235,6 +251,27 @@ public actor NearbySyncCoordinator {
         await currentPairingSession?.rejectPairing()
     }
 
+    /// Removes `deviceID` from the Mac's own trust store — the recovery
+    /// action behind "Forget this iPhone and pair again" on the
+    /// `.failed(.identityChanged)` state, and the same action the "Forget
+    /// paired devices" list in iPhone Sync settings offers per-peer. The
+    /// next `startAdvertising` session with this deviceID then goes through
+    /// a fresh first pairing instead of repeating the same
+    /// `peerIdentityChanged` failure forever. Never touches the iPhone's own
+    /// trust store, which must forget this Mac the same way on its side for
+    /// the next handshake to succeed (see `NearbyPairingSessionTests
+    /// .forgettingTheStalePeerOnBothSidesAfterIdentityChangedAllowsAFreshPairing`).
+    public func forgetPeer(deviceID: UUID) throws {
+        try trustStore.removeTrustedPeer(deviceID: deviceID)
+    }
+
+    /// The last known display name for `deviceID`, if the Mac still has it
+    /// trusted. Used to label the recovery action with the iPhone's name
+    /// instead of a bare UUID.
+    public func trustedPeerDisplayName(deviceID: UUID) -> String? {
+        (try? trustStore.trustedPeers())?.first { $0.deviceID == deviceID }?.displayName
+    }
+
     /// Reports the outcome of a `.receivedReturn` review resolved through
     /// the caller's own apply/discard UI. A no-op unless a session is
     /// currently suspended waiting for exactly this call.
@@ -311,7 +348,7 @@ public actor NearbySyncCoordinator {
         // it here runs concurrently with `establishTask` driving the same
         // handshake forward (both operate on `session`, an actor).
         if let code = try? await session.shortAuthenticationCode {
-            emit(.pairingCode(code))
+            emit(.pairingCode(code: code, peerDisplayName: await session.peerDisplayName))
         }
 
         let outcome: NearbyPairingOutcome
@@ -361,7 +398,7 @@ public actor NearbySyncCoordinator {
             try await packageTransport.sendStaged(packageDirectory: packageDestination, packageID: publication.packageID, wrapping: wrapping)
         } catch {
             try? fileManager.removeItem(at: sendSessionDirectory)
-            finishTerminal(.failed(.transferFailed))
+            finishTerminal(.failed(Self.mapTransferFailure(error)))
             await listenerStop()
             return
         }
@@ -374,7 +411,7 @@ public actor NearbySyncCoordinator {
                 try await previewReturnClosure(directory, wrapping)
             }
         } catch {
-            finishTerminal(.failed(.transferFailed))
+            finishTerminal(.failed(Self.mapTransferFailure(error)))
             await listenerStop()
             return
         }
@@ -413,13 +450,24 @@ public actor NearbySyncCoordinator {
         eventContinuation = nil
     }
 
+    /// Maps a failure from the post-handshake transfer phase (forward
+    /// publish + send, or the return receive) to `.connectionStalled` for an
+    /// idle-timeout specifically, `.transferFailed` for everything else —
+    /// see `NearbySyncFailure.connectionStalled`'s own doc comment.
+    private static func mapTransferFailure(_ error: Error) -> NearbySyncFailure {
+        if let transportError = error as? NearbyTransportError, transportError == .transferTimeout {
+            return .connectionStalled
+        }
+        return .transferFailed
+    }
+
     private static func mapHandshakeFailure(_ error: Error) -> NearbySyncFailure {
         guard let transportError = error as? NearbyTransportError else { return .transferFailed }
         switch transportError {
         case .pairingRejected, .pairingConfirmationFailed:
             return .pairingRejected
-        case .peerIdentityChanged:
-            return .identityChanged
+        case .peerIdentityChanged(let deviceID):
+            return .identityChanged(deviceID: deviceID)
         case .handshakeTimeout:
             return .timeout
         default:

@@ -437,6 +437,18 @@ public struct CaptureImportView: View {
     let dismiss: () -> Void
     let runScan: () -> Void
     let importCompleted: () -> Void
+    /// W-fix (item 3): `store` is `@State`, so it dies the moment this view
+    /// is unmounted (e.g. the guided first-success journey backing out to
+    /// its own `.importOffer` step) -- a caller that needs to remember past
+    /// this view's lifetime whether "Create Structure" actually wrote a
+    /// session/capture tree has nowhere else to learn that. Defaults to a
+    /// no-op for the other two call sites (`V2RootView`, `IngestHomeCard`),
+    /// which have no such outer journey to keep honest.
+    var structureCreated: (_ targetFolder: String, _ date: String, _ captureSlug: String?) -> Void = { _, _, _ in }
+    /// Mirrors `structureCreated` for the wizard's own Undo, so a caller
+    /// that recorded the structure's creation can also un-record it once
+    /// the user removes it again before leaving.
+    var structureUndone: () -> Void = {}
     @Environment(OperationHost.self) private var operationHost
 
     public init(
@@ -446,7 +458,9 @@ public struct CaptureImportView: View {
         existingProjects: [ProjectRecord],
         dismiss: @escaping () -> Void,
         runScan: @escaping () -> Void,
-        importCompleted: @escaping () -> Void = {}
+        importCompleted: @escaping () -> Void = {},
+        structureCreated: @escaping (_ targetFolder: String, _ date: String, _ captureSlug: String?) -> Void = { _, _, _ in },
+        structureUndone: @escaping () -> Void = {}
     ) {
         _store = State(initialValue: CaptureImportStore(
             rootURL: rootURL, accessMode: accessMode,
@@ -455,6 +469,8 @@ public struct CaptureImportView: View {
         self.dismiss = dismiss
         self.runScan = runScan
         self.importCompleted = importCompleted
+        self.structureCreated = structureCreated
+        self.structureUndone = structureUndone
     }
 
     /// V3 pre-stack program, section 5.1 (Ingest-figyelő): the Home banner's
@@ -907,13 +923,33 @@ public struct CaptureImportView: View {
                 Label(previewErrorKey, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(AstroTokens.Color.attention)
             }
+            // W-fix (item 2): "Create Structure" used to be able to fail
+            // with zero visible feedback -- `command.create(...)`'s failure
+            // was only ever announced by a toast on `OperationHost`'s
+            // overlay, which is mounted on the window BEHIND this modal
+            // wizard's sheet. `NewSessionStore.create` now surfaces the same
+            // failure inline via `createErrorMessage`.
+            if let createErrorMessage = destination.createErrorMessage {
+                Label("AstroTool could not create the structure: \(createErrorMessage)", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(AstroTokens.Color.critical)
+                    .accessibilityIdentifier("v2.capture-import.create-structure-error")
+            }
 
             HStack {
                 Button("Back") { store.step = .classify }
                 Spacer()
                 if destination.isCreating { ProgressView().controlSize(.small) }
                 Button("Create Structure") {
-                    Task { await store.createDestinationStructure(operationHost: operationHost) }
+                    Task {
+                        await store.createDestinationStructure(operationHost: operationHost)
+                        // W-fix (item 3): tell a caller that outlives this
+                        // view (the guided first-success journey's own
+                        // coordinator) that real folders now exist, before
+                        // this view's `@State` store has any chance to die.
+                        if let receipt = destination.receipt, let slug = receipt.captureSlug {
+                            structureCreated(receipt.targetFolder, receipt.date, slug)
+                        }
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!destination.canCreate)
@@ -968,6 +1004,32 @@ public struct CaptureImportView: View {
                 Label(copyErrorKey, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(AstroTokens.Color.attention)
             }
+            // W-fix (item 3): "Create Structure" already wrote a real
+            // session/capture folder tree by the time this step shows --
+            // this is the user's one chance to remove it again, from
+            // INSIDE this view, before backing out destroys `store` (its
+            // `@State`) and the receipt this undo needs along with it.
+            // Reuses `NewSessionStore.undo` verbatim, the same call
+            // `NewSessionView`'s own Undo button makes.
+            if store.destinationStore.isUndone {
+                Label("Undone — the empty folders were removed.", systemImage: "arrow.uturn.backward.circle")
+                    .font(.caption).foregroundStyle(AstroTokens.Color.attention)
+            } else if store.destinationStore.receipt != nil {
+                HStack {
+                    if store.destinationStore.isUndoing { ProgressView().controlSize(.small) }
+                    Button("Undo") {
+                        Task {
+                            await store.destinationStore.undo(operationHost: operationHost)
+                            if store.destinationStore.isUndone { structureUndone() }
+                        }
+                    }
+                    .disabled(store.destinationStore.isUndoing)
+                    .accessibilityIdentifier("v2.capture-import.undo-structure")
+                }
+            }
+            if let undoErrorKey = store.destinationStore.undoErrorKey {
+                Text(undoErrorKey).font(.caption).foregroundStyle(AstroTokens.Color.attention)
+            }
             HStack {
                 Button("Back") { store.step = .destination }
                 Spacer()
@@ -975,7 +1037,7 @@ public struct CaptureImportView: View {
                     Task { await store.runCopy(operationHost: operationHost, runScan: runScan) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(store.preview == nil)
+                .disabled(store.preview == nil || store.destinationStore.isUndone)
                 .accessibilityIdentifier("v2.capture-import.start-copy")
             }
         }
@@ -999,8 +1061,22 @@ public struct CaptureImportView: View {
     private var receiptStep: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
             if let receipt = store.receipt {
-                Label("\(receipt.copied.count) files copied · \(AstroFormat.bytes(receipt.totalBytesCopied))", systemImage: "checkmark.circle.fill")
-                    .font(.headline).foregroundStyle(AstroTokens.Color.ok)
+                // W-fix (item 1): a copy stopped mid-way through (the
+                // toolbar's Activity popover can cancel this operation like
+                // any other) still produced real, checksum-verified copies
+                // -- `receipt.wasCancelled` says so honestly instead of the
+                // ordinary "files copied" success banner, which would bury
+                // the fact that some files were never attempted at all.
+                if receipt.wasCancelled {
+                    Label(
+                        "Copy stopped — \(receipt.copied.count) files already copied and verified, \(notCopiedCount(receipt)) not copied.",
+                        systemImage: "stop.circle"
+                    )
+                    .font(.headline).foregroundStyle(AstroTokens.Color.attention)
+                } else {
+                    Label("\(receipt.copied.count) files copied · \(AstroFormat.bytes(receipt.totalBytesCopied))", systemImage: "checkmark.circle.fill")
+                        .font(.headline).foregroundStyle(AstroTokens.Color.ok)
+                }
                 Text(verbatim: "sessions/\(receipt.target)/\(receipt.date)/captures/\(receipt.slug)")
                     .font(.callout.monospaced()).textSelection(.enabled)
 
@@ -1013,8 +1089,11 @@ public struct CaptureImportView: View {
                         Text("\(receipt.failed.count) files failed to copy:")
                             .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.critical)
                         ForEach(receipt.failed, id: \.sourceURL) { failure in
-                            Text(verbatim: "\(failure.sourceURL.lastPathComponent): \(failure.reason)")
-                                .font(.caption).foregroundStyle(.secondary)
+                            HStack(spacing: 0) {
+                                Text(verbatim: "\(failure.sourceURL.lastPathComponent): ")
+                                failureReasonText(failure)
+                            }
+                            .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -1055,5 +1134,35 @@ public struct CaptureImportView: View {
             }
         }
         .accessibilityIdentifier("v2.capture-import.receipt")
+    }
+
+    /// W-fix (item 6): a failed copy's reason used to always render
+    /// `failure.reason` verbatim -- for an `AstroError`-caused failure,
+    /// that is `error.localizedDescription`, a real English sentence but
+    /// still English no matter the app's own language, since `AstroError
+    /// .errorDescription` deliberately never translates (see its own doc
+    /// comment). When `failure.astroError` is set, this renders the SAME
+    /// translated sentence `LibraryWelcomeView`'s own access-problem screen
+    /// shows for that error, via its `accessProblemText(for:)`; otherwise
+    /// it falls back to the plain English `reason` (already a fixed,
+    /// localized sentence for the one non-`AstroError` failure this engine
+    /// produces -- the checksum mismatch).
+    private func failureReasonText(_ failure: CaptureImportReceipt.FailedFile) -> Text {
+        if let astroError = failure.astroError {
+            return LibraryWelcomeView.accessProblemText(for: astroError)
+        }
+        return Text(verbatim: failure.reason)
+    }
+
+    /// How many of the items submitted to `CaptureImportCommand.copy` never
+    /// got a resolved outcome at all -- the ones a cancellation stopped the
+    /// loop before reaching, distinct from `skippedCollisions`/`failed`
+    /// (both of which DID get processed, just not copied). `store.preview`
+    /// still holds the exact item count `copy` was given, since it is never
+    /// cleared once the copy step starts.
+    private func notCopiedCount(_ receipt: CaptureImportReceipt) -> Int {
+        let total = store.preview?.entries.count ?? receipt.copied.count
+        let accounted = receipt.copied.count + receipt.skippedCollisions.count + receipt.failed.count
+        return max(total - accounted, 0)
     }
 }

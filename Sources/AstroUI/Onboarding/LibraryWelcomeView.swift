@@ -189,46 +189,70 @@ public struct LibraryBookmarkStore: @unchecked Sendable {
     public func save(_ url: URL) { saveURL(url.standardizedFileURL) }
     public func clear() { clearURL() }
 
+    /// 2026-09-02 first-run audit, fix G: the plain path is now persisted
+    /// alongside the bookmark, and `load` falls back to it. AstroTool is
+    /// unsandboxed (there is no entitlements file), so a security-scoped
+    /// bookmark is a convenience here, not a requirement -- but
+    /// `bookmarkData(options: .withSecurityScope)` can still fail, and when
+    /// it did the old `guard ... else { return }` swallowed the failure
+    /// entirely: the user re-picked their library at every single launch,
+    /// with nothing on screen ever explaining why.
     public static func production(defaults: UserDefaults = .standard) -> Self {
         let key = "v2.library.securityScopedBookmark"
         let legacyKey = "rootBookmark"
+        let pathKey = "v2.library.rootPath"
         return Self(
             load: {
                 let isLegacy = defaults.data(forKey: key) == nil
-                guard let data = defaults.data(forKey: key)
-                    ?? defaults.data(forKey: legacyKey)
-                else { return nil }
-                var isStale = false
-                guard let url = try? URL(
-                    resolvingBookmarkData: data,
-                    options: .withSecurityScope,
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                ) else {
+                if let data = defaults.data(forKey: key) ?? defaults.data(forKey: legacyKey) {
+                    var isStale = false
+                    if let url = try? URL(
+                        resolvingBookmarkData: data,
+                        options: .withSecurityScope,
+                        relativeTo: nil,
+                        bookmarkDataIsStale: &isStale
+                    ) {
+                        if isLegacy { defaults.set(data, forKey: key) }
+                        if isStale,
+                           let refreshed = try? url.bookmarkData(
+                               options: .withSecurityScope,
+                               includingResourceValuesForKeys: nil,
+                               relativeTo: nil
+                           ) {
+                            defaults.set(refreshed, forKey: key)
+                        }
+                        return url
+                    }
+                    // An unresolvable bookmark is worthless; the plain path
+                    // below may still be right (a moved home directory, an
+                    // unmounted volume that is back).
                     defaults.removeObject(forKey: key)
                     if isLegacy { defaults.removeObject(forKey: legacyKey) }
-                    return nil
                 }
-                if isLegacy { defaults.set(data, forKey: key) }
-                if isStale,
-                   let refreshed = try? url.bookmarkData(
-                       options: .withSecurityScope,
-                       includingResourceValuesForKeys: nil,
-                       relativeTo: nil
-                   ) {
-                    defaults.set(refreshed, forKey: key)
-                }
-                return url
+                guard let path = defaults.string(forKey: pathKey), !path.isEmpty else { return nil }
+                // Returned even when the directory is currently absent: the
+                // onboarding store then diagnoses it properly ("the volume
+                // holding X is not mounted", with Retry) instead of silently
+                // starting up as if no library had ever been chosen. It also
+                // only forgets the path when that diagnosis says the path
+                // itself is wrong -- see `forgetBookmarkIfPermanentlyWrong`.
+                return URL(fileURLWithPath: path, isDirectory: true)
             },
             save: { url in
-                guard let data = try? url.bookmarkData(
+                defaults.set(url.path, forKey: pathKey)
+                let data = (try? url.bookmarkData(
                     options: .withSecurityScope,
                     includingResourceValuesForKeys: nil,
                     relativeTo: nil
-                ) else { return }
+                )) ?? (try? url.bookmarkData())
+                guard let data else { return }
                 defaults.set(data, forKey: key)
             },
-            clear: { defaults.removeObject(forKey: key) }
+            clear: {
+                defaults.removeObject(forKey: key)
+                defaults.removeObject(forKey: legacyKey)
+                defaults.removeObject(forKey: pathKey)
+            }
         )
     }
 
@@ -254,6 +278,13 @@ public enum LibraryAccessProblem: Equatable, Sendable {
     /// dropped) -- not an `AstroError`, so it is modeled here directly
     /// instead of forcing an artificial `AstroError` case for it.
     case notDirectory
+    /// The chosen folder would contain AstroTool's own private data area
+    /// (`AppStoragePaths`/`LibrarySession` refuse to put the index inside
+    /// the library it indexes) -- what picking the home folder, `/`, or
+    /// `~/Library` produces. 2026-09-02: these used to fall through to
+    /// `.other`'s "AstroTool could not complete this action", which named
+    /// neither the cause nor a fix.
+    case storageInsideLibrary
     case astro(AstroError)
     /// A failure that is neither of the above (should be rare to never in
     /// production -- every real open/scan failure throws `AstroError` or
@@ -265,6 +296,8 @@ public enum LibraryAccessProblem: Equatable, Sendable {
     init(catching error: any Error) {
         if error as? OnboardingStoreError == .notDirectory {
             self = .notDirectory
+        } else if Self.isStorageInsideLibrary(error) {
+            self = .storageInsideLibrary
         } else if let astroError = error as? AstroError {
             self = .astro(astroError)
         } else {
@@ -272,9 +305,23 @@ public enum LibraryAccessProblem: Equatable, Sendable {
         }
     }
 
+    /// Every shape the "AstroTool's own storage would land inside the
+    /// library" refusal can arrive in -- two from `AppStoragePaths.init`
+    /// (the storage ROOTS, and the individual destinations under them) and
+    /// one from `LibrarySession`, which re-checks the same invariant when it
+    /// opens the index.
+    private static func isStorageInsideLibrary(_ error: any Error) -> Bool {
+        if let storageError = error as? AppStoragePathsError {
+            return storageError == .storageRootInsideLibrary
+                || storageError == .storageDestinationInsideLibrary
+        }
+        return error as? LibrarySessionError == .indexDestinationInsideLibrary
+    }
+
     public var recovery: AstroErrorRecovery {
         switch self {
         case .notDirectory: .rechooseLibrary
+        case .storageInsideLibrary: .rechooseLibrary
         case .astro(let error): error.recovery
         case .other: .rechooseLibrary
         }
@@ -286,6 +333,8 @@ public enum LibraryAccessProblem: Equatable, Sendable {
         switch self {
         case .notDirectory:
             "Choose a folder that contains your image library. Individual files cannot be scanned as a library."
+        case .storageInsideLibrary:
+            "This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures."
         case .astro(let error):
             error.errorDescription ?? "AstroTool could not complete this action."
         case .other:
@@ -349,8 +398,8 @@ public final class OnboardingStore {
 
         do {
             try Task.checkCancellation()
-            guard Self.isDirectory(root) else {
-                throw OnboardingStoreError.notDirectory
+            if let rootFailure = Self.rootFailure(root) {
+                throw rootFailure
             }
             let storage = try storageFactory(root: root)
             guard isActive(operationID) else { return }
@@ -411,9 +460,23 @@ public final class OnboardingStore {
             try await openAndScan(root)
             return true
         } catch {
-            bookmarkStore.clear()
+            forgetBookmarkIfPermanentlyWrong(error)
             throw error
         }
+    }
+
+    /// Clears the remembered library ONLY when the failure means the
+    /// remembered path itself is the problem (`.rechooseLibrary`). An
+    /// unplugged drive or a locked index is `.retry`-class: the path is
+    /// still right, it is just unavailable right now, and forgetting it
+    /// meant replugging the drive never helped -- the user had to re-pick
+    /// the library at every launch.
+    /// `nonisolated` because `runScan`'s `operationHost.run` work closure is
+    /// not main-actor isolated; everything this touches is `Sendable`.
+    private nonisolated func forgetBookmarkIfPermanentlyWrong(_ error: any Error) {
+        guard !(error is CancellationError) else { return }
+        guard LibraryAccessProblem(catching: error).recovery == .rechooseLibrary else { return }
+        bookmarkStore.clear()
     }
 
     /// Runs `openAndScan(_:)` registered with `operationHost` -- so the very
@@ -434,9 +497,11 @@ public final class OnboardingStore {
 
     /// The `operationHost`-routed counterpart to `restoreSavedLibrary()` --
     /// same "no saved bookmark, or already past `.chooseLibrary`" no-op
-    /// contract, and the same "clear the bookmark so a permanently broken
-    /// path doesn't keep silently failing at every future launch" behavior,
-    /// just surfaced through the toolbar instead of invisibly.
+    /// contract, and the same "clear the bookmark so a permanently WRONG
+    /// path doesn't keep silently failing at every future launch" behavior
+    /// (see `forgetBookmarkIfPermanentlyWrong`, which keeps the bookmark for
+    /// a merely unavailable one), just surfaced through the toolbar instead
+    /// of invisibly.
     @discardableResult
     public func restoreSavedLibrary(through operationHost: OperationHost) async -> Bool {
         guard phase == .chooseLibrary, let root = bookmarkStore.load() else { return false }
@@ -455,7 +520,9 @@ public final class OnboardingStore {
             do {
                 try await self?.openAndScan(rootURL)
             } catch {
-                if clearBookmarkOnFailure { self?.bookmarkStore.clear() }
+                if clearBookmarkOnFailure {
+                    self?.forgetBookmarkIfPermanentlyWrong(error)
+                }
                 throw error
             }
         }
@@ -592,11 +659,26 @@ public final class OnboardingStore {
         phase = .scanning(progress: progress)
     }
 
-    private static func isDirectory(_ url: URL) -> Bool {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
-            return false
+    /// Why the root cannot be opened at all, or `nil` when it is a readable
+    /// directory. This used to be a single `isDirectory` check built on
+    /// `attributesOfItem`, which fails identically for "a file was picked"
+    /// and "there is nothing at this path" -- so an external drive that was
+    /// unplugged since the last launch was reported as "individual files
+    /// cannot be scanned as a library" and the user was pushed to re-pick a
+    /// folder that was never wrong. A missing path now goes through
+    /// `AstroCore`'s own `RootErrorClassifier`, the same diagnosis the
+    /// scanner already made, so an unmounted volume becomes the `.retry`-class
+    /// `volumeNotMounted` ("reconnect the drive") instead.
+    static func rootFailure(_ url: URL, fileManager: FileManager = .default) -> (any Error)? {
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            return isDirectory.boolValue ? nil : OnboardingStoreError.notDirectory
         }
-        return attributes[.type] as? FileAttributeType == .typeDirectory
+        return RootErrorClassifier.classify(
+            rootPath: url.path,
+            subpath: nil,
+            probe: LibraryScanner.realVolumeProbe
+        )
     }
 
 }
@@ -639,6 +721,7 @@ public struct LibraryWelcomeView: View {
             case .summary(let snapshot):
                 FirstScanSummaryView(
                     snapshot: snapshot,
+                    libraryName: store.selectedRoot?.lastPathComponent ?? "Image Library",
                     continueToLibrary: {
                         store.continueWithoutPersonalizing()
                         onContinue()
@@ -646,7 +729,8 @@ public struct LibraryWelcomeView: View {
                     personalize: {
                         store.setUpPreferences()
                         onPersonalize()
-                    }
+                    },
+                    chooseAnotherFolder: chooseAnotherLibrary
                 )
             case .accessProblem(let problem):
                 accessProblem(problem)
@@ -768,7 +852,7 @@ public struct LibraryWelcomeView: View {
         } description: {
             Self.accessProblemText(for: problem)
         } actions: {
-            recoveryButtons(for: problem.recovery)
+            recoveryButtons(for: problem)
             // Task 14: the old "Back" button led to the same place as
             // "Close" for this sheet -- two buttons that dismiss to the
             // same outcome give the user two ways to guess wrong. "Back" is
@@ -782,6 +866,22 @@ public struct LibraryWelcomeView: View {
     /// The dialog's action(s), derived from the error's own `recovery`
     /// instead of being fixed regardless of what failed (Task 14). Each
     /// case's primary action is `.buttonStyle(.borderedProminent)`.
+    ///
+    /// 2026-09-02: `.storageInsideLibrary` gets its own single action --
+    /// `.rechooseLibrary`'s usual pair ("Choose Library Again…" plus
+    /// "Choose a Different Library…") both mean the same thing here, and
+    /// the honest instruction is narrower: pick a folder that only holds
+    /// photos.
+    @ViewBuilder
+    private func recoveryButtons(for problem: LibraryAccessProblem) -> some View {
+        if problem == .storageInsideLibrary {
+            Button("Choose Another Folder…") { chooseAnotherLibrary() }
+                .buttonStyle(.borderedProminent)
+        } else {
+            recoveryButtons(for: problem.recovery)
+        }
+    }
+
     @ViewBuilder
     private func recoveryButtons(for recovery: AstroErrorRecovery) -> some View {
         switch recovery {
@@ -851,6 +951,8 @@ public struct LibraryWelcomeView: View {
         switch problem {
         case .notDirectory:
             Text("Choose a folder that contains your image library. Individual files cannot be scanned as a library.")
+        case .storageInsideLibrary:
+            Text("This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures.")
         case .astro(let error):
             accessProblemText(for: error)
         case .other:
@@ -876,6 +978,54 @@ public struct LibraryWelcomeView: View {
             Text("Siril was not found at \(path).")
         case .invalidInput(let detail):
             Text(detail)
+        }
+    }
+
+    /// W-fix (item 6): a `String`-typed sibling of `accessProblemText(for:)`
+    /// above, for a caller that needs a translated plain `String` rather
+    /// than a `Text` -- `FirstSuccessOnboardingStore.errorMessage` is
+    /// deliberately a plain `String` (tested directly against an
+    /// already-localized Hungarian string), not a `Text`/`LocalizedStringKey`,
+    /// so it cannot render a `Text` and there is no supported way to pull an
+    /// already-resolved string back out of one. Uses `String(localized:)`
+    /// with the SAME string-interpolation shape `accessProblemText(for:)`
+    /// gives `Text` (so both resolve the identical `hu.lproj` keys already
+    /// covered for that sibling) -- deliberately NOT `String(format:)`,
+    /// which `V2PolishSurfaceTests.noHandRolledFormatting` forbids anywhere
+    /// under `Sources/AstroUI`. `MobileSyncStore.swift` already establishes
+    /// this exact `String(localized: "... \(value) ...")` pattern for
+    /// dynamic content in this module.
+    static func accessProblemMessage(for problem: LibraryAccessProblem) -> String {
+        switch problem {
+        case .notDirectory:
+            String(localized: "Choose a folder that contains your image library. Individual files cannot be scanned as a library.")
+        case .storageInsideLibrary:
+            String(localized: "This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures.")
+        case .astro(let error):
+            accessProblemMessage(for: error)
+        case .other:
+            String(localized: "AstroTool could not complete this action. Try again, or choose a different library.")
+        }
+    }
+
+    static func accessProblemMessage(for error: AstroError) -> String {
+        switch error {
+        case .accessDenied(let path):
+            String(localized: "AstroTool is not allowed to read \(path).")
+        case .volumeNotMounted(let path):
+            String(localized: "The volume holding \(path) is not mounted.")
+        case .pathNotFound(let path):
+            String(localized: "\(path) no longer exists.")
+        case .corruptFITS(let path, let reason):
+            String(localized: "\(path) could not be read as a FITS file: \(reason)")
+        case .databaseError(let detail):
+            String(localized: "AstroTool's own index could not be read: \(detail)")
+        case .writeForbidden(let path):
+            String(localized: "Writing to \(path) is not permitted.")
+        case .sirilNotFound(let path):
+            String(localized: "Siril was not found at \(path).")
+        case .invalidInput(let detail):
+            detail
         }
     }
 

@@ -4,15 +4,19 @@ import Foundation
 /// from `LibraryScanner.scan` so the decision can be unit-tested directly
 /// without touching a real `/Volumes` mount point or iCloud Drive — the only
 /// filesystem access it needs comes through the injected `probe`.
-enum RootErrorClassifier {
+/// `public` since 2026-09-02: the onboarding store (`AstroUI`) needs the very
+/// same missing-root diagnosis the scanner already had, so an unplugged
+/// external drive reads as "reconnect the drive" there too instead of being
+/// misreported as "that is not a folder".
+public enum RootErrorClassifier {
     /// The real filesystem/volume facts this classifier needs beyond plain
     /// path existence, injected so its decision logic can be unit-tested
     /// deterministically. `LibraryScanner.scan`'s call site backs these with
     /// `FileManager`/`URLResourceKey` reads; a test injects a fake table
     /// instead of requiring a real removable drive or iCloud container.
-    struct VolumeProbe: Sendable {
+    public struct VolumeProbe: Sendable {
         /// Same semantics as `FileManager.fileExists`.
-        var pathExists: @Sendable (String) -> Bool
+        public var pathExists: @Sendable (String) -> Bool
         /// Whether `path` (already known to exist) looks like a volume
         /// mount point rather than an ordinary directory on the same
         /// filesystem as its parent -- `URLResourceKey.volumeIsRemovableKey
@@ -20,9 +24,9 @@ enum RootErrorClassifier {
         /// boundary neither of those reliably flags, e.g. a firmlink-style
         /// mount like `/System/Volumes/Data`) its `.volumeIdentifierKey`
         /// differing from its own parent directory's.
-        var isVolumeBoundary: @Sendable (String) -> Bool
+        public var isVolumeBoundary: @Sendable (String) -> Bool
 
-        init(
+        public init(
             pathExists: @escaping @Sendable (String) -> Bool,
             isVolumeBoundary: @escaping @Sendable (String) -> Bool
         ) {
@@ -55,7 +59,7 @@ enum RootErrorClassifier {
     ///   using `subpath` when one was given (a scoped scan under an
     ///   existing root) or `rootPath` when the root itself is what's
     ///   missing.
-    static func classify(
+    public static func classify(
         rootPath: String,
         subpath: String?,
         probe: VolumeProbe
@@ -82,7 +86,7 @@ enum RootErrorClassifier {
 
     /// The volume mount point portion of an absolute path — its first two
     /// path components, e.g. `/Volumes/AstroDrive/sessions` → `/Volumes/AstroDrive`.
-    static func volumePortion(of path: String) -> String {
+    public static func volumePortion(of path: String) -> String {
         let comps = path.split(separator: "/", omittingEmptySubsequences: true)
         guard comps.count >= 2 else { return path }
         return "/" + comps[0] + "/" + comps[1]
@@ -246,7 +250,7 @@ public final class LibraryScanner {
     /// `RootErrorClassifierTests` injects a fake `VolumeProbe` instead so
     /// the boundary-detection logic doesn't need a real removable drive or
     /// iCloud container to test.
-    static let realVolumeProbe = RootErrorClassifier.VolumeProbe(
+    public static let realVolumeProbe = RootErrorClassifier.VolumeProbe(
         pathExists: { FileManager.default.fileExists(atPath: $0) },
         isVolumeBoundary: { path in
             let url = URL(fileURLWithPath: path, isDirectory: true)

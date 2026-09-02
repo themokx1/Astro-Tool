@@ -78,6 +78,11 @@ public struct V2RootView: View {
     @State private var libraryHealthStore = LibraryHealthStore()
     @State private var isOnboardingPresented: Bool
     @State private var libraryPreparationError: String?
+    /// 2026-09-02 fix B: outlives `libraryPreparationError`, which the
+    /// alert's Cancel clears. Home needs to know that preparing this
+    /// library FAILED and stopped -- otherwise dismissing the alert left it
+    /// spinning "Opening the library…" with no way out.
+    @State private var libraryPreparationDidFail = false
     @State private var didRestoreWindowState = false
     @State private var operationHost = OperationHost(center: OperationCenter())
     /// Wave 4 (post-20014) fix: owned here (once per window, same lifetime
@@ -139,6 +144,7 @@ public struct V2RootView: View {
             uiTestCaches: uiTestFixture?.caches,
             isOnboardingPresented: $isOnboardingPresented,
             libraryPreparationError: $libraryPreparationError,
+            libraryPreparationDidFail: libraryPreparationDidFail,
             retryLibraryPreparation: retryLibraryPreparation
         )
             .overlay(alignment: .topTrailing) {
@@ -233,6 +239,7 @@ public struct V2RootView: View {
         let nightsStore = self.nightsStore
         let homeStore = self.homeStore
         let uiTestFixture = self.uiTestFixture
+        libraryPreparationDidFail = false
         let id = await operationHost.run(
             kind: kind,
             title: "\(OperationHost.localized("Preparing")) \(root.lastPathComponent)",
@@ -263,9 +270,11 @@ public struct V2RootView: View {
         case .succeeded:
             appModel.libraryDidOpen(rootURL: root, metadataStore: projectsStore.metadataStore)
             libraryPreparationError = nil
+            libraryPreparationDidFail = false
         case .failed:
             libraryPreparationError = await operationHost.errorMessage(for: id)
                 ?? "AstroTool could not prepare Projects and Nights for this library."
+            libraryPreparationDidFail = true
         case .cancelled, .running:
             break
         }
@@ -349,8 +358,26 @@ private struct V2Shell: View {
     let uiTestCaches: URL?
     @Binding var isOnboardingPresented: Bool
     @Binding var libraryPreparationError: String?
+    let libraryPreparationDidFail: Bool
     let retryLibraryPreparation: () -> Void
-    @State private var pendingLibraryPicker = false
+    /// Which sheet asked for the native folder picker, so the same sheet can
+    /// be brought back once the picker has closed. `NSOpenPanel` cannot
+    /// reliably present on top of a sheet, so every request goes through the
+    /// same "close the sheet, run the panel, re-present" round trip -- and
+    /// the origin is what makes that round trip work for Help ▸ First Steps
+    /// too, not just the first-run sheet (2026-09-02 audit, fix H).
+    private enum LibraryPickerOrigin: Equatable {
+        case onboarding
+        case firstSteps
+    }
+    @State private var pendingLibraryPickerOrigin: LibraryPickerOrigin?
+    /// The two guided journeys, owned here rather than by the sheets that
+    /// render them: asking for the native folder picker closes the sheet,
+    /// and a `@State` coordinator inside it did not survive that (see
+    /// `FirstSuccessOnboardingView.coordinator`). One per mode, since the
+    /// first-run sheet and Help ▸ First Steps can each be mid-journey.
+    @State private var firstRunJourney = FirstSuccessOnboardingStore(mode: .firstRun)
+    @State private var helpJourney = FirstSuccessOnboardingStore(mode: .help)
     @State private var showsDirectLibraryWelcome = false
     @State private var didRunUITestLibraryPickerHandoff = false
     @State private var showsSearch = false
@@ -506,6 +533,8 @@ private struct V2Shell: View {
                 uiTestCaches: uiTestCaches,
                 mobileSnapshotProvider: mobileSnapshotProvider,
                 chooseLibrary: presentOnboarding,
+                hasLibraryPreparationFailure: libraryPreparationDidFail,
+                retryLibraryPreparation: retryLibraryPreparation,
                 createPlannedProject: { designation in
                     newProjectInitialQuery = designation
                     router.present(.newProject)
@@ -773,7 +802,7 @@ private struct V2Shell: View {
             }
         }
         .frame(minWidth: 820, minHeight: 600)
-        .sheet(item: $router.presentation) { presentation in
+        .sheet(item: $router.presentation, onDismiss: finishPresentationDismissal) { presentation in
             if presentation == .newProject {
                 NewProjectView(
                     store: projectsStore,
@@ -821,12 +850,28 @@ private struct V2Shell: View {
                     dismiss: router.dismissPresentation,
                     runScan: performRescan
                 )
+            } else if presentation == .newNight || presentation == .importCapture {
+                // 2026-09-02 first-run audit, fix F: both branches above
+                // need a library root, and both controls live permanently in
+                // the toolbar -- so with no library open this used to fall
+                // through to `V2PresentationPlaceholder` and claim two
+                // shipped workflows "will become available as V2 reaches
+                // feature parity". Redirect to the one action that unblocks
+                // them instead.
+                NoLibraryOpenSheet(
+                    chooseLibrary: {
+                        router.dismissPresentation()
+                        presentOnboarding()
+                    },
+                    dismiss: router.dismissPresentation
+                )
             } else if case .glossary(let anchor) = presentation {
                 GlossaryView(anchor: anchor, dismiss: router.dismissPresentation)
             } else if presentation == .folderStructure {
                 FolderStructureHelpView(dismiss: router.dismissPresentation)
             } else if presentation == .firstSteps {
                 FirstStepsView(
+                    coordinator: helpJourney,
                     libraryStore: onboardingStore,
                     currentRootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
                     indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
@@ -837,7 +882,8 @@ private struct V2Shell: View {
                         router.navigate(to: .library)
                     },
                     runScan: performRescan,
-                    dismiss: router.dismissPresentation
+                    dismiss: router.dismissPresentation,
+                    requestLibraryPicker: requestLibraryPickerFromFirstSteps
                 )
             } else {
                 V2PresentationPlaceholder(route: presentation) {
@@ -866,7 +912,7 @@ private struct V2Shell: View {
                 )
             } else {
                 FirstSuccessOnboardingView(
-                    mode: .firstRun,
+                    coordinator: firstRunJourney,
                     libraryStore: onboardingStore,
                     currentRootURL: onboardingStore.selectedRoot,
                     indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
@@ -961,33 +1007,79 @@ private struct V2Shell: View {
         // `NSOpenPanel` cannot reliably present on top of the onboarding
         // sheet. Close that sheet first; its onDismiss callback launches the
         // same native picker the original AppState workflow uses.
-        pendingLibraryPicker = true
+        pendingLibraryPickerOrigin = .onboarding
         isOnboardingPresented = false
     }
 
-    private func finishOnboardingDismissal() {
-        guard pendingLibraryPicker else { return }
-        pendingLibraryPicker = false
+    /// The same round trip for Help ▸ First Steps, which lives in the
+    /// `.sheet(item: $router.presentation)` above rather than the onboarding
+    /// sheet. Without this, `LibraryWelcomeView.chooseLibrary()` fell back to
+    /// `NSOpenPanel.begin` from inside a sheet -- the exact case
+    /// `requestLibraryPicker` exists to avoid, so First Steps' "open a
+    /// library" branch could not reliably present a picker at all.
+    private func requestLibraryPickerFromFirstSteps() {
+        pendingLibraryPickerOrigin = .firstSteps
+        router.dismissPresentation()
+    }
 
-        let root: URL?
+    /// Runs the native folder picker, or returns the deterministic UI-test
+    /// seam's directory when one was supplied.
+    private func runLibraryPickerPanel() -> URL? {
         if let uiTestRoot = Self.uiTestLibraryPickerResult() {
-            root = uiTestRoot
-        } else {
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.allowsMultipleSelection = false
-            panel.prompt = "Kiválasztás"
-            panel.message = "Válaszd ki a képkönyvtár gyökerét"
-            root = panel.runModal() == .OK ? panel.url : nil
+            return uiTestRoot
         }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = String(localized: "Choose")
+        panel.message = String(localized: "Choose the root folder of your image library")
+        return panel.runModal() == .OK ? panel.url : nil
+    }
 
-        guard let root else {
+    private func finishOnboardingDismissal() {
+        guard pendingLibraryPickerOrigin == .onboarding else {
+            // A real dismissal, not a picker round trip -- the next time the
+            // sheet opens it should start from the three choices again.
+            firstRunJourney.returnToLanding()
+            return
+        }
+        pendingLibraryPickerOrigin = nil
+
+        guard let root = runLibraryPickerPanel() else {
             presentOnboardingAfterDismissal(directLibraryWelcome: false)
             return
         }
 
-        presentOnboardingAfterDismissal(directLibraryWelcome: true, scanning: root)
+        // The deterministic UI-test route keeps landing straight on the scan
+        // receipt (`LibraryWelcomeView`); a real user stays inside the
+        // first-success journey they started, so the picked library still
+        // reaches the import offer and still enables writes.
+        presentOnboardingAfterDismissal(
+            directLibraryWelcome: Self.uiTestLibraryPickerResult() != nil,
+            scanning: root
+        )
+    }
+
+    private func finishPresentationDismissal() {
+        guard pendingLibraryPickerOrigin == .firstSteps else {
+            // Same rule as the first-run sheet: closing Help ▸ First Steps
+            // for real ends that journey. A no-op for every other
+            // presentation route's dismissal.
+            helpJourney.returnToLanding()
+            return
+        }
+        pendingLibraryPickerOrigin = nil
+        let root = runLibraryPickerPanel()
+        // First Steps comes back either way: cancelling a picker must not
+        // drop the reader out of the guide they were reading.
+        Task { @MainActor in
+            await Task.yield()
+            router.present(.firstSteps)
+            if let root {
+                try? await onboardingStore.openAndScan(root)
+            }
+        }
     }
 
     /// SwiftUI is still completing the old sheet's dismissal while
@@ -1481,14 +1573,50 @@ private struct V2Sidebar: View {
 /// bookmarks). `internal`, not `private`, so `HomeLibraryLoadingTests` can
 /// reach it through `@testable import AstroUI`.
 enum HomeLibraryLoading {
+    /// What Home must render for the currently configured library.
+    ///
+    /// 2026-09-02 first-run audit, fix B: `preparationFailed` is new. Before
+    /// it, a `prepareLibrary` failure whose alert the user dismissed with
+    /// Cancel left `selectedRoot` set and `homeLibraryName` `nil` with no
+    /// access problem -- indistinguishable from "still opening", so Home
+    /// spun "Opening the library…" forever with no way out. A finished
+    /// failure is a state of its own, with its own actions.
+    enum State: Equatable, Sendable {
+        case noLibrary
+        case loading
+        case preparationFailed
+        case ready
+    }
+
+    /// A root is selected (assigned synchronously at the very start of
+    /// `OnboardingStore.openAndScan`, before any slow disk I/O) but
+    /// `HomeStore.configure(...)` has not landed yet, and nothing has
+    /// already failed for that root -> `.loading`. An access problem falls
+    /// back to `.noLibrary`, whose "choose a library" prompt is the honest
+    /// next action once opening this one has failed outright.
+    static func state(
+        selectedRoot: URL?,
+        homeLibraryName: String?,
+        hasAccessProblem: Bool,
+        hasPreparationFailure: Bool
+    ) -> State {
+        guard selectedRoot != nil else { return .noLibrary }
+        if homeLibraryName != nil { return .ready }
+        if hasPreparationFailure { return .preparationFailed }
+        if hasAccessProblem { return .noLibrary }
+        return .loading
+    }
+
     /// `true` exactly during the window Home must show a loading state
     /// rather than either its ordinary library overview or its "no library
-    /// configured" empty state: a root is already selected (assigned
-    /// synchronously at the very start of `OnboardingStore.openAndScan`,
-    /// before any slow disk I/O) but `HomeStore.configure(...)` has not
-    /// landed yet, and nothing has already failed for that root.
+    /// configured" empty state.
     static func isLoading(selectedRoot: URL?, homeLibraryName: String?, hasAccessProblem: Bool) -> Bool {
-        selectedRoot != nil && homeLibraryName == nil && !hasAccessProblem
+        state(
+            selectedRoot: selectedRoot,
+            homeLibraryName: homeLibraryName,
+            hasAccessProblem: hasAccessProblem,
+            hasPreparationFailure: false
+        ) == .loading
     }
 }
 
@@ -1528,6 +1656,11 @@ private struct DetailHost: View {
     let uiTestCaches: URL?
     let mobileSnapshotProvider: MobileSyncStore.SnapshotProvider
     let chooseLibrary: () -> Void
+    /// 2026-09-02 fix B: `prepareLibrary` failed and the user dismissed the
+    /// alert -- Home must show that dead end with its own way out instead of
+    /// an endless "Opening the library…" spinner.
+    let hasLibraryPreparationFailure: Bool
+    let retryLibraryPreparation: () -> Void
     let createPlannedProject: (String) -> Void
     /// W3-10: opens the shared "New Session" sheet -- `nil` prefill for the
     /// Nights page's own unprefilled toolbar action, a resolved prefill for
@@ -1741,13 +1874,16 @@ private struct DetailHost: View {
     /// state (the failure itself already surfaces elsewhere, via
     /// `libraryPreparationError`/the access-problem banner) rather than
     /// showing a permanent spinner.
-    private var isLibraryLoading: Bool {
-        HomeLibraryLoading.isLoading(
+    private var homeLibraryState: HomeLibraryLoading.State {
+        HomeLibraryLoading.state(
             selectedRoot: onboardingStore.selectedRoot,
             homeLibraryName: homeStore.snapshot.libraryName,
-            hasAccessProblem: onboardingStore.phase.accessProblem != nil
+            hasAccessProblem: onboardingStore.phase.accessProblem != nil,
+            hasPreparationFailure: hasLibraryPreparationFailure
         )
     }
+
+    private var isLibraryLoading: Bool { homeLibraryState == .loading }
 
     @ViewBuilder
     private func destination(for route: ContentRoute) -> some View {
@@ -1757,6 +1893,8 @@ private struct DetailHost: View {
                 store: homeStore,
                 rootURL: onboardingStore.selectedRoot,
                 isLibraryLoading: isLibraryLoading,
+                libraryPreparationFailed: homeLibraryState == .preparationFailed,
+                retryLibraryPreparation: retryLibraryPreparation,
                 chooseLibrary: chooseLibrary,
                 // W5-2 finding 6 (owner click-through): "Open Project" on the
                 // "Continue where it matters" card used to `router.navigate(to:
@@ -2299,6 +2437,35 @@ private struct LibraryAccessProblemBanner: View {
     }
 }
 
+/// The "you need a library first" sheet for the two toolbar workflows that
+/// write into one (`New Night…`, `Import from Card…`). Deliberately the same
+/// wording and the same single action as `HomeView.emptyLibrary`, so the
+/// answer to "why is nothing happening" reads identically wherever the user
+/// meets it.
+private struct NoLibraryOpenSheet: View {
+    let chooseLibrary: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("No library open", systemImage: "sparkles.rectangle.stack")
+        } description: {
+            Text("Choose an image library first. Both importing from a card and starting a new night create folders inside a library.")
+        } actions: {
+            Button("Choose Image Library…", action: chooseLibrary)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v2.presentation.no-library.choose-library")
+            Button("Close", action: dismiss)
+                .keyboardShortcut(.cancelAction)
+        }
+        .frame(minWidth: 420, minHeight: 260)
+        .accessibilityIdentifier("v2.presentation.no-library")
+    }
+}
+
+/// Only ever reached for routes that genuinely have no V2 surface yet --
+/// `.newNight`/`.importCapture` are handled above (real sheet with a
+/// library, `NoLibraryOpenSheet` without one) and can no longer land here.
 private struct V2PresentationPlaceholder: View {
     let route: PresentationRoute
     let dismiss: () -> Void

@@ -265,7 +265,12 @@ struct V2BetaWorkspaceSurfaceTests {
         let shell = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/App/V2RootView.swift"), encoding: .utf8)
         #expect(shell.contains("enum HomeLibraryLoading {"))
         #expect(shell.contains("static func isLoading(selectedRoot: URL?, homeLibraryName: String?, hasAccessProblem: Bool) -> Bool"))
-        #expect(shell.contains("HomeLibraryLoading.isLoading("), "DetailHost.isLibraryLoading must delegate to the pure predicate")
+        // 2026-09-02 fix B: the predicate grew a `preparationFailed` case,
+        // so `DetailHost` now delegates to the richer `state(...)` (which
+        // `isLoading` above is itself expressed in terms of) rather than the
+        // boolean shortcut.
+        #expect(shell.contains("HomeLibraryLoading.state("), "DetailHost.homeLibraryState must delegate to the pure predicate")
+        #expect(shell.contains("case preparationFailed"), "a failed library preparation must be its own state, never a permanent spinner")
         #expect(shell.contains("isLibraryLoading: isLibraryLoading"), "the .home destination must pass the computed signal into HomeView")
     }
 

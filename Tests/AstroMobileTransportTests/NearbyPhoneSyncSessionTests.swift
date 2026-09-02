@@ -47,6 +47,7 @@ struct NearbyPhoneSyncSessionTests {
 
         var collected: [NearbyPhoneSyncState] = []
         var phoneCode: String?
+        var phonePairingPeerDisplayName: String?
         for await state in await phoneSession.run(handleForwardPackage: { directory, wrapping in
             try Self.assertContainsPackageFiles(directory)
             let received = try await MobilePackageService().authenticatePreview(from: directory, wrapping: wrapping)
@@ -54,8 +55,9 @@ struct NearbyPhoneSyncSessionTests {
             return try await Self.exportReturnPackage(root: returnStaging.url)
         }) {
             collected.append(state)
-            if case .pairingCode(let code) = state {
+            if case .pairingCode(let code, let peerDisplayName) = state {
                 phoneCode = code
+                phonePairingPeerDisplayName = peerDisplayName
                 await phoneSession.confirmPairing()
             }
         }
@@ -71,6 +73,9 @@ struct NearbyPhoneSyncSessionTests {
         #expect(mac.wasFirstPairing)
         let macCode = try #require(mac.shortAuthenticationCode)
         #expect(try #require(phoneCode) == macCode)
+        // Multi-Mac disambiguation (fix item 3): the phone's pairing-code
+        // event already carries the Mac's own display name.
+        #expect(phonePairingPeerDisplayName == "Zoltán Macje")
         #expect(mac.receivedReturn != nil)
 
         #expect(try phoneStore.trustedPeers().count == 1)
@@ -194,9 +199,17 @@ struct NearbyPhoneSyncSessionTests {
         }
         _ = await macOutcome
 
-        #expect(collected.last == .failed(.identityChanged))
+        #expect(collected.last == .failed(.identityChanged(deviceID: macIdentity.deviceID)))
         #expect(!collected.contains { if case .pairingCode = $0 { return true }; return false })
         #expect(try phoneStore.trustedPeers().count == 1)
+
+        // Recovery: "Forget this Mac and pair again" on the iPhone's own
+        // failed screen removes exactly the offending deviceID and reports
+        // its last known display name for that action's label.
+        #expect(await phoneSession.trustedPeerDisplayName(deviceID: macIdentity.deviceID) == "Zoltán Macje")
+        try await phoneSession.forgetPeer(deviceID: macIdentity.deviceID)
+        #expect(try phoneStore.trustedPeers().isEmpty)
+        #expect(await phoneSession.trustedPeerDisplayName(deviceID: macIdentity.deviceID) == nil)
     }
 
     @Test("a connection drop mid-transfer fails closed with no residue left in the phone's staging area")
@@ -244,6 +257,57 @@ struct NearbyPhoneSyncSessionTests {
         try await driveTask.value
 
         #expect(collected.last == .failed(.transferFailed))
+        let residue = try FileManager.default.contentsOfDirectory(atPath: phoneStaging.url.path)
+        #expect(residue.isEmpty)
+    }
+
+    @Test("a Mac that pairs and then goes silent stalls the transfer, and is reported distinctly from a hard connection drop")
+    func stalledMacAfterPairingReportsConnectionStalledDistinctFromTransferFailed() async throws {
+        let (macConnection, phoneConnection) = InMemoryDuplexConnection.makePair()
+        let macStore = InMemoryDeviceIdentityStore()
+        let phoneStore = InMemoryDeviceIdentityStore()
+        let macIdentity = try macStore.loadOrCreateOwnIdentity(displayName: "Zoltán Macje")
+        let phoneIdentity = try phoneStore.loadOrCreateOwnIdentity(displayName: "Zoltán iPhone")
+        let phoneStaging = try TemporaryDirectory()
+
+        // Short so the idle-timeout the phone's channel inherits from this
+        // `timeout` fires quickly instead of the test waiting out a real
+        // 30s stall.
+        let phoneSession = NearbyPhoneSyncSession(
+            identity: phoneIdentity,
+            trustStore: phoneStore,
+            connect: { _ in phoneConnection },
+            packageService: MobilePackageService(),
+            stagingDirectory: phoneStaging.url,
+            timeout: .milliseconds(300)
+        )
+
+        let driveTask = Task { () throws -> Void in
+            let session = NearbyPairingSession(role: .listener, identity: macIdentity, trustStore: macStore, connection: macConnection, timeout: .milliseconds(300))
+            async let outcome = session.establish()
+            _ = try await session.shortAuthenticationCode
+            await session.confirmPairing()
+            _ = try await outcome
+            // The pairing itself completes normally, but the Mac never
+            // sends the forward package's `.packageManifest` -- standing in
+            // for a stalled Wi-Fi link, or the Mac app being backgrounded
+            // right after handshake but before any package bytes cross the
+            // wire. Deliberately never touches the channel/connection again
+            // (unlike `midTransferDropFailsClosedWithoutResidue`, which
+            // cancels the connection outright).
+        }
+
+        var collected: [NearbyPhoneSyncState] = []
+        for await state in await phoneSession.run(handleForwardPackage: { _, _ in nil }) {
+            collected.append(state)
+            if case .pairingCode = state { await phoneSession.confirmPairing() }
+        }
+        try await driveTask.value
+
+        // Distinct from `.transferFailed` (the hard-drop case above): an
+        // idle stall gets its own reason so the UI can say plainly that the
+        // CONNECTION stalled, not that the data was rejected or malformed.
+        #expect(collected.last == .failed(.connectionStalled))
         let residue = try FileManager.default.contentsOfDirectory(atPath: phoneStaging.url.path)
         #expect(residue.isEmpty)
     }

@@ -4,20 +4,86 @@ import SwiftUI
 @MainActor
 public struct FirstScanSummaryView: View {
     private let snapshot: LibrarySnapshot
+    /// The scanned folder's own name -- named in the "found nothing" state,
+    /// so the reader can tell at a glance that the wrong folder was picked.
+    private let libraryName: String
     private let continueToLibrary: () -> Void
     private let personalize: () -> Void
+    /// Back to the folder picker. The primary action of the "found nothing"
+    /// state below, which without it would be a dead end: 0 / 0 / 0 under
+    /// "Your library is ready" was the single most misleading screen in the
+    /// first run (2026-09-02 audit, fix E).
+    private let chooseAnotherFolder: () -> Void
 
     public init(
         snapshot: LibrarySnapshot,
+        libraryName: String,
         continueToLibrary: @escaping () -> Void,
-        personalize: @escaping () -> Void
+        personalize: @escaping () -> Void,
+        chooseAnotherFolder: @escaping () -> Void
     ) {
         self.snapshot = snapshot
+        self.libraryName = libraryName
         self.continueToLibrary = continueToLibrary
         self.personalize = personalize
+        self.chooseAnotherFolder = chooseAnotherFolder
+    }
+
+    /// The scan completed and found no astrophotography at all -- neither a
+    /// project folder nor a single frame. `nightCount` is deliberately not
+    /// part of this: it counts session-date folder names, which cannot be
+    /// non-zero while both of these are zero.
+    private var foundNothing: Bool {
+        snapshot.frameCount == 0 && snapshot.projectCount == 0
     }
 
     public var body: some View {
+        if foundNothing {
+            foundNothingState
+        } else {
+            readyState
+        }
+    }
+
+    /// Same eyebrow identifier (`v2.onboarding.summary`) and same primary
+    /// action identifier (`v2.onboarding.continue`) as `readyState`, so
+    /// existing automation still finds both on either branch.
+    private var foundNothingState: some View {
+        VStack(alignment: .leading, spacing: AstroTokens.Spacing.spacious) {
+            Label("FIRST SCAN COMPLETE", systemImage: "magnifyingglass")
+                .font(.caption.weight(.semibold))
+                .tracking(1.3)
+                .foregroundStyle(AstroTokens.Color.accent)
+                .accessibilityIdentifier("v2.onboarding.summary")
+
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.compact) {
+                Text("No astrophotos found in \(libraryName)")
+                    .font(.largeTitle.weight(.semibold))
+                Text("AstroTool looked for sessions, stacks, and processed folders, and for image files it recognises, and found none. This is usually the wrong folder — pick the one that holds your captures.")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text("Nothing was changed in the folder that was scanned.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            HStack {
+                Button("Continue anyway", action: continueToLibrary)
+                    .accessibilityIdentifier("v2.onboarding.continue")
+                Spacer()
+                Button("Choose a Different Folder…", action: chooseAnotherFolder)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("v2.onboarding.choose-different-folder")
+            }
+        }
+        .padding(AstroTokens.Spacing.spacious)
+    }
+
+    private var readyState: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.spacious) {
             Label("FIRST SCAN COMPLETE", systemImage: "checkmark.circle.fill")
                 .font(.caption.weight(.semibold))

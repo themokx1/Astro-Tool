@@ -134,4 +134,69 @@ struct FirstSuccessJourneyTests {
         #expect(sessions.isEmpty)
         #expect(!FileManager.default.fileExists(atPath: library.appendingPathComponent("sessions/M31").path))
     }
+
+    // MARK: - v5 flow fixes, item 3: cancelling mid-import used to leave
+    // real session/capture folders on disk while the completion screen said
+    // "No project or capture was created". These two tests pin down the
+    // ENGINE-level truth the UI-layer fix (FirstSuccessOnboardingStore
+    // .createdStructure) depends on: "Create Structure" really does leave a
+    // folder tree behind when the user cancels before copying, and
+    // `SessionCreationCommand.undo` really does remove it again when asked.
+
+    @Test("Cancelling the import after Create Structure leaves the created folders on disk")
+    func cancelAfterCreateStructureLeavesFoldersOnDisk() throws {
+        let parent = try temporaryDirectory("first-success-cancel")
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let library = parent.appendingPathComponent("Cancel Library", isDirectory: true)
+        _ = try LibraryCreationCommand(root: library, accessMode: .mutationEnabled).create()
+        let database = try Database(path: parent.appendingPathComponent("cancel.sqlite").path)
+        let session = SessionCreationCommand(root: library, db: database, accessMode: .mutationEnabled, indexedFolders: [])
+        let draft = CaptureGroupDraft(slug: "first-capture", displayName: "First capture", sensorMode: .osc, signalMode: .broadband)
+
+        // "Create Structure" -- the wizard's destination step -- runs and
+        // succeeds, exactly as it would right before the user backs out of
+        // COPYING PHOTOS (never calling `CaptureImportCommand.copy` at all).
+        let receipt = try session.create(
+            catalogRaw: "M31", nameRaw: "Andromeda Galaxy", date: "2026-08-20", catalogTarget: nil, capture: draft
+        )
+
+        let captureDir = library.appendingPathComponent(
+            "sessions/\(receipt.targetFolder)/2026-08-20/captures/first-capture"
+        )
+        #expect(FileManager.default.fileExists(atPath: captureDir.path))
+        for role in ["lights", "flats", "darks", "biases"] {
+            #expect(FileManager.default.fileExists(atPath: captureDir.appendingPathComponent(role).path))
+        }
+    }
+
+    @Test("Undoing after Create Structure removes exactly what it created, nothing more")
+    func undoAfterCreateStructureRemovesTheFolders() throws {
+        let parent = try temporaryDirectory("first-success-undo")
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let library = parent.appendingPathComponent("Undo Library", isDirectory: true)
+        _ = try LibraryCreationCommand(root: library, accessMode: .mutationEnabled).create()
+        let database = try Database(path: parent.appendingPathComponent("undo.sqlite").path)
+        let session = SessionCreationCommand(root: library, db: database, accessMode: .mutationEnabled, indexedFolders: [])
+        let draft = CaptureGroupDraft(slug: "first-capture", displayName: "First capture", sensorMode: .osc, signalMode: .broadband)
+
+        let receipt = try session.create(
+            catalogRaw: "M31", nameRaw: "Andromeda Galaxy", date: "2026-08-20", catalogTarget: nil, capture: draft
+        )
+        let sessionDateDir = library.appendingPathComponent("sessions/\(receipt.targetFolder)/2026-08-20")
+        #expect(FileManager.default.fileExists(atPath: sessionDateDir.path))
+
+        try session.undo(receipt)
+
+        #expect(!FileManager.default.fileExists(atPath: sessionDateDir.path))
+        // `undo` only ever removes what THIS receipt's own `create()` call
+        // reported as `undoableURLs` -- the date directory and everything
+        // under it. The target-level folder it sat inside is not part of
+        // that receipt (a second night could still be added under the same
+        // target), so it is left behind, empty.
+        #expect(FileManager.default.fileExists(atPath: library.appendingPathComponent("sessions/\(receipt.targetFolder)").path))
+        let dateEntries = try FileManager.default.contentsOfDirectory(
+            atPath: library.appendingPathComponent("sessions/\(receipt.targetFolder)").path
+        )
+        #expect(dateEntries.isEmpty)
+    }
 }

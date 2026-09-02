@@ -899,7 +899,7 @@ struct MobileSyncStoreTests {
         let capturedSnapshot = SnapshotCapture()
         let (stream, continuation) = AsyncStream<NearbySyncEvent>.makeStream()
         continuation.yield(.waitingForPhone)
-        continuation.yield(.pairingCode("123456"))
+        continuation.yield(.pairingCode(code: "123456", peerDisplayName: "Zoltán iPhone"))
         continuation.yield(.preparing)
         continuation.yield(.transferring)
         continuation.yield(.verifying)
@@ -1021,7 +1021,7 @@ struct MobileSyncStoreTests {
         #expect(rejectCount.value == 0)
 
         store.startNearbySync()
-        continuation.yield(.pairingCode("654321"))
+        continuation.yield(.pairingCode(code: "654321", peerDisplayName: "Zoltán iPhone"))
         try await waitFor(store) { if case .pairing = $0 { return true }; return false }
 
         store.confirmNearbyPairing()

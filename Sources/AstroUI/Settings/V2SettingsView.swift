@@ -1,6 +1,7 @@
 import AppKit
 import AstroApplication
 import AstroCore
+import AstroMobileTransport
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -50,6 +51,7 @@ private struct MobileSyncSettingsView: View {
                 .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("v5.mobile-sync.open")
             }
+            NearbyPairedDevicesSection()
         }
         .formStyle(.grouped)
         .sheet(isPresented: $isPresented) {
@@ -61,6 +63,58 @@ private struct MobileSyncSettingsView: View {
             )
                 .frame(minWidth: 720, minHeight: 620)
         }
+    }
+}
+
+/// Lists the iPhones this Mac's nearby-sync trust store currently
+/// remembers, each with its own "Forget" action — the settings-side
+/// counterpart to the "Forget this iPhone and pair again" recovery button on
+/// a `.failed(.identityChanged)` nearby-sync state (`MobileSyncView
+/// .nearbyPhaseContent`). Useful on its own too: if a phone is lost, sold,
+/// or reset, forgetting it here stops it from ever being trusted again
+/// without a fresh pairing.
+private struct NearbyPairedDevicesSection: View {
+    @State private var peers: [MobilePeerIdentity] = []
+    @State private var loadFailed = false
+    private let trustStore = KeychainDeviceIdentityStore()
+
+    var body: some View {
+        Section("Forget paired devices") {
+            if loadFailed {
+                Text("The list of paired iPhones could not be read.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if peers.isEmpty {
+                Text("No iPhone has paired with this Mac yet.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(peers, id: \.deviceID) { peer in
+                    HStack {
+                        Text(peer.displayName)
+                        Spacer()
+                        Button("Forget", role: .destructive) { forget(peer) }
+                            .accessibilityIdentifier("v5.mobile-sync.forget-peer.\(peer.deviceID.uuidString)")
+                    }
+                }
+            }
+        }
+        .task { reload() }
+    }
+
+    private func reload() {
+        do {
+            peers = try trustStore.trustedPeers()
+            loadFailed = false
+        } catch {
+            peers = []
+            loadFailed = true
+        }
+    }
+
+    private func forget(_ peer: MobilePeerIdentity) {
+        try? trustStore.removeTrustedPeer(deviceID: peer.deviceID)
+        reload()
     }
 }
 

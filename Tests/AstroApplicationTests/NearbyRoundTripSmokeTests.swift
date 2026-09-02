@@ -121,7 +121,7 @@ struct NearbyRoundTripSmokeTests {
         for await event in macEvents1 {
             macCollected1.append(event)
             switch event {
-            case .pairingCode(let code):
+            case .pairingCode(let code, _):
                 macCode = code
                 await coordinator.confirmPairing()
             case .receivedReturn(let review):
@@ -136,7 +136,7 @@ struct NearbyRoundTripSmokeTests {
 
         let phoneStates1 = try await phoneCollected1
         let phoneCode = phoneStates1.compactMap { state -> String? in
-            if case .pairingCode(let code) = state { return code }
+            if case .pairingCode(let code, _) = state { return code }
             return nil
         }.first
 

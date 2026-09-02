@@ -162,7 +162,14 @@ public actor MobileLibraryStore {
     private var keyURL: URL { receiptsDirectory.appendingPathComponent("keys.json") }
 
     public init(applicationSupportURL: URL? = nil, packageService: MobilePackageService = MobilePackageService()) {
-        self.applicationSupportURL = applicationSupportURL ?? Self.defaultApplicationSupportURL()
+        // `defaultApplicationSupportURL()` silently falls back to
+        // `temporaryDirectory` when Application Support can't be created --
+        // `temporaryDirectory` can be cleared by the OS at any time, so this
+        // must not degrade silently. `usedTemporaryFallback` carries that
+        // signal to `durabilityWarning` below, through the SAME banner
+        // `MobileRootView` already shows for a durability concern (fix item 5).
+        let resolvedApplicationSupport = applicationSupportURL.map { (url: $0, usedTemporaryFallback: false) } ?? Self.defaultApplicationSupportURL()
+        self.applicationSupportURL = resolvedApplicationSupport.url
         self.packageService = packageService
         self.testingBeforeStateCommit = {}
         self.testingParentDirectorySync = { true }
@@ -184,7 +191,7 @@ public actor MobileLibraryStore {
         self.consumedPackageIDs = initial.consumedPackageIDs
         self.keyFingerprints = initial.keyFingerprints
         self.recoverableReturnExport = initial.recoverableReturnExport
-        self.durabilityWarning = initial.durabilityWarning
+        self.durabilityWarning = initial.durabilityWarning || resolvedApplicationSupport.usedTemporaryFallback
         self.durabilityAttemptWarning = initial.durabilityAttemptWarning
         self.durabilityAmbiguousWarning = initial.durabilityAmbiguousWarning
     }
@@ -1306,7 +1313,15 @@ public actor MobileLibraryStore {
         (try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])).map { $0.isDirectory == true && $0.isSymbolicLink != true } ?? false
     }
 
-    private static func defaultApplicationSupportURL() -> URL {
-        (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("AstroTool", isDirectory: true)) ?? FileManager.default.temporaryDirectory.appendingPathComponent("AstroTool", isDirectory: true)
+    /// - Returns: The default per-app data directory, and whether reaching
+    ///   it required falling back to `temporaryDirectory` (fix item 5: that
+    ///   fallback must surface through `durabilityWarning`, never degrade
+    ///   silently -- `temporaryDirectory` can be cleared by the OS at any
+    ///   time).
+    private static func defaultApplicationSupportURL() -> (url: URL, usedTemporaryFallback: Bool) {
+        if let supportURL = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) {
+            return (supportURL.appendingPathComponent("AstroTool", isDirectory: true), false)
+        }
+        return (FileManager.default.temporaryDirectory.appendingPathComponent("AstroTool", isDirectory: true), true)
     }
 }

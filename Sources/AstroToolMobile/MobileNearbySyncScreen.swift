@@ -18,6 +18,7 @@ struct MobileNearbySyncScreen: View {
     let onRejectCode: () -> Void
     let onCancel: () -> Void
     let onRetry: () -> Void
+    let onForgetAndRetry: () -> Void
     let onOpenSettings: () -> Void
     let onUseAirDropInstead: () -> Void
     let onDone: () -> Void
@@ -32,8 +33,8 @@ struct MobileNearbySyncScreen: View {
                     progressView(String(localized: "Looking for your Mac…"), identifier: "v5.mobile.nearby.searching")
                 case .connecting:
                     progressView(String(localized: "Connecting…"), identifier: "v5.mobile.nearby.connecting")
-                case .pairingCode(let code):
-                    codeView(code)
+                case .pairingCode(let code, let peerDisplayName):
+                    codeView(code, peerDisplayName: peerDisplayName)
                 case .receiving:
                     progressView(String(localized: "Receiving the plan from your Mac…"), identifier: "v5.mobile.nearby.receiving")
                 case .staged:
@@ -100,11 +101,17 @@ struct MobileNearbySyncScreen: View {
         .accessibilityIdentifier(identifier)
     }
 
-    private func codeView(_ code: String) -> some View {
+    private func codeView(_ code: String, peerDisplayName: String) -> some View {
         VStack(spacing: 20) {
             Text("Check that both screens show the same code")
                 .font(.headline)
                 .multilineTextAlignment(.center)
+            if !peerDisplayName.isEmpty {
+                Text("Pairing with: \(peerDisplayName)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("v5.mobile.nearby.peer-name")
+            }
             Text(code)
                 .font(.system(size: 40, weight: .bold, design: .monospaced))
                 .accessibilityIdentifier("v5.mobile.nearby.code")
@@ -146,9 +153,15 @@ struct MobileNearbySyncScreen: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("v5.mobile.nearby.open-settings")
             }
-            Button("Try again", action: onRetry)
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("v5.mobile.nearby.retry")
+            if case .identityChanged = failure {
+                Button("Forget this Mac and pair again", action: onForgetAndRetry)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v5.mobile.nearby.forget-and-retry")
+            } else {
+                Button("Try again", action: onRetry)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v5.mobile.nearby.retry")
+            }
             Button("Send with AirDrop instead", action: onUseAirDropInstead)
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("v5.mobile.nearby.use-airdrop")
@@ -163,15 +176,19 @@ struct MobileNearbySyncScreen: View {
         case .pairingRejected:
             return String(localized: "The code was not confirmed on both devices. Nothing was sent or received.")
         case .identityChanged:
-            return String(localized: "This Mac no longer matches what this iPhone already trusts. If you did not expect that, stop here and check your Mac. Otherwise, try connecting again.")
+            return String(localized: "This Mac no longer matches what this iPhone already trusts. This usually means the Mac was reinstalled or replaced. If you did not expect that, stop here and check your Mac. Otherwise, forget it and pair again — you'll see the six-digit code once more.")
         case .transferFailed:
             return String(localized: "The connection was lost before the sync finished. Nothing changed on either device.")
+        case .connectionStalled:
+            return String(localized: "The connection stalled and was stopped. Nothing changed on either device.")
         case .importFailed:
             return String(localized: "The plan from your Mac could not be brought in safely. Your current plan on this iPhone is unchanged.")
         case .timeout:
             return String(localized: "This took too long and was stopped. Nothing changed on either device.")
         case .cancelled:
             return String(localized: "The connection was stopped.")
+        case .backgrounded:
+            return String(localized: "Sync stopped because the app went to the background. Try again.")
         }
     }
 }

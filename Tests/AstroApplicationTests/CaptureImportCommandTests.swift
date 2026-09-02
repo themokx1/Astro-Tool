@@ -30,6 +30,18 @@ private func makeDestinationCaptureTree(root: URL, target: String, date: String,
     return try guardian.createCaptureTree(target: target, dateDir: date, slug: slug)
 }
 
+/// A lock-protected `Int` box for the `progress`/`shouldCancel` test
+/// closures above -- both are `@Sendable` (matching `CaptureImportCommand
+/// .copy`'s own parameter types), so a bare captured `var` cannot compile
+/// even though `copy(...)` only ever calls them synchronously, one at a
+/// time, from its own loop.
+private final class ProcessedCountBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _value = 0
+    var value: Int { lock.withLock { _value } }
+    func set(_ newValue: Int) { lock.withLock { _value = newValue } }
+}
+
 @Suite("CaptureImportCommand")
 struct CaptureImportCommandTests {
     @Test("preview computes the exact destination path per role and flags an existing file as a collision")
@@ -167,6 +179,113 @@ struct CaptureImportCommandTests {
         // Neither source file was touched.
         #expect(FileManager.default.fileExists(atPath: corruptSource.path))
         #expect(FileManager.default.fileExists(atPath: goodSource.path))
+    }
+
+    @Test("Cancelling after the first file keeps that copy instead of discarding the whole receipt")
+    func cancelAfterFirstFileKeepsAPartialReceipt() throws {
+        let root = try captureImportTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeDestinationCaptureTree(root: root, target: "IC1396", date: "2026-08-16", slug: "r8-osc")
+
+        let firstSource = try captureImportSourceFile(named: "IMG_0001.CR3", contents: "light one")
+        defer { try? FileManager.default.removeItem(at: firstSource.deletingLastPathComponent()) }
+        let secondSource = try captureImportSourceFile(named: "IMG_0002.CR3", contents: "light two")
+        defer { try? FileManager.default.removeItem(at: secondSource.deletingLastPathComponent()) }
+
+        let items = [
+            CaptureImportItem(sourceURL: firstSource, relativeSourcePath: "IMG_0001.CR3", fileName: "IMG_0001.CR3", role: .light, sizeBytes: 9),
+            CaptureImportItem(sourceURL: secondSource, relativeSourcePath: "IMG_0002.CR3", fileName: "IMG_0002.CR3", role: .light, sizeBytes: 9),
+        ]
+
+        // Cancels once the first item has already been processed -- the
+        // real shape a cooperative `Task.isCancelled` check produces: the
+        // in-flight item finishes, the NEXT loop iteration sees the
+        // cancellation. `copy(...)` calls both `progress`/`shouldCancel`
+        // synchronously and sequentially from within its own loop (never
+        // concurrently), but both closures are declared `@Sendable`, so the
+        // shared counter needs a lock-protected box rather than a bare `var`.
+        let processedCount = ProcessedCountBox()
+        let receipt = try CaptureImportCommand.copy(
+            items: items, root: root, accessMode: .mutationEnabled, target: "IC1396", date: "2026-08-16", slug: "r8-osc",
+            progress: { completed, _ in processedCount.set(completed) },
+            shouldCancel: { processedCount.value >= 1 }
+        )
+
+        #expect(receipt.wasCancelled)
+        #expect(receipt.copied.count == 1, "the first file's verified copy must survive the cancellation, not be discarded")
+        #expect(receipt.copied.first?.sourceURL == firstSource)
+        #expect(receipt.failed.isEmpty)
+        #expect(receipt.skippedCollisions.isEmpty)
+
+        // The first file's copy is really on disk, not just claimed in the receipt.
+        let firstDestURL = root.appendingPathComponent("sessions/IC1396/2026-08-16/captures/r8-osc/lights/IMG_0001.CR3")
+        #expect(try String(contentsOf: firstDestURL, encoding: .utf8) == "light one")
+        // The second file was never even attempted.
+        let secondDestURL = root.appendingPathComponent("sessions/IC1396/2026-08-16/captures/r8-osc/lights/IMG_0002.CR3")
+        #expect(!FileManager.default.fileExists(atPath: secondDestURL.path))
+    }
+
+    @Test("A completed (non-cancelled) copy reports wasCancelled == false")
+    func completedCopyIsNotFlaggedCancelled() throws {
+        let root = try captureImportTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeDestinationCaptureTree(root: root, target: "IC1396", date: "2026-08-16", slug: "r8-osc")
+        let source = try captureImportSourceFile(named: "IMG_0001.CR3")
+        defer { try? FileManager.default.removeItem(at: source.deletingLastPathComponent()) }
+        let items = [CaptureImportItem(sourceURL: source, relativeSourcePath: "IMG_0001.CR3", fileName: "IMG_0001.CR3", role: .light, sizeBytes: 9)]
+
+        let receipt = try CaptureImportCommand.copy(
+            items: items, root: root, accessMode: .mutationEnabled, target: "IC1396", date: "2026-08-16", slug: "r8-osc"
+        )
+
+        #expect(!receipt.wasCancelled)
+        #expect(receipt.copied.count == 1)
+    }
+
+    @Test("A failure caused by an AstroError carries it alongside a real English reason, not a raw enum dump")
+    func failureCarriesAstroErrorAlongsideReadableReason() throws {
+        let root = try captureImportTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeDestinationCaptureTree(root: root, target: "IC1396", date: "2026-08-16", slug: "r8-osc")
+
+        // A source URL that was never created -- `WriteGuard.copyCaptureFile`
+        // throws `AstroError.pathNotFound(path:)` for exactly this shape,
+        // the deterministic way to reach `copy(...)`'s generic `catch`
+        // block with a real `AstroError` without racing a real file delete.
+        let missingSource = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString).cr3")
+        let items = [
+            CaptureImportItem(sourceURL: missingSource, relativeSourcePath: "missing.cr3", fileName: "missing.cr3", role: .light, sizeBytes: 9),
+        ]
+
+        let receipt = try CaptureImportCommand.copy(
+            items: items, root: root, accessMode: .mutationEnabled, target: "IC1396", date: "2026-08-16", slug: "r8-osc"
+        )
+
+        #expect(receipt.failed.count == 1)
+        let failure = try #require(receipt.failed.first)
+        #expect(failure.astroError == .pathNotFound(path: missingSource.path))
+        #expect(failure.reason.contains(missingSource.path))
+        // W6 fix (item 6) regression: this used to be `String(describing:
+        // AstroError.pathNotFound(path: "..."))`, i.e. the raw case name
+        // reaching the receipt UI verbatim.
+        #expect(!failure.reason.contains("pathNotFound"), "reason must be a readable sentence, not a raw enum dump")
+    }
+
+    @Test("A non-copyable role's rejection message is English source text, not the hardcoded Hungarian sentence it used to be")
+    func nonCopyableRoleRejectionIsEnglish() {
+        do {
+            _ = try CaptureImportCommand.destinationRelativePath(
+                target: "IC1396", date: "2026-08-16", slug: "r8-osc", role: .master, fileName: "master_light.fits"
+            )
+            Issue.record("expected destinationRelativePath to throw for a non-copyable role")
+        } catch let AstroError.invalidInput(message) {
+            #expect(message.contains("master"))
+            #expect(message.contains("cannot be copied"))
+            #expect(!message.contains("szerep"), "the role-rejection message leaked Hungarian text into the English source string")
+        } catch {
+            Issue.record("expected AstroError.invalidInput, got \(error)")
+        }
     }
 
     @Test("CaptureImportItem.resolved drops files with neither an override nor a proposed role")

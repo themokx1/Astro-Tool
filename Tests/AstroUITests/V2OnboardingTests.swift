@@ -1,5 +1,6 @@
 @testable import AstroUI
 import AstroApplication
+import AstroCore
 import Foundation
 import Testing
 
@@ -289,6 +290,168 @@ struct V2OnboardingTests {
         #expect(store.indexDatabaseURL == nil)
     }
 
+    // MARK: - Unmounted / missing root (2026-09-02 first-run audit, fix A)
+
+    @Test("A missing root on an unmounted volume asks for a reconnect, not a folder re-pick")
+    func unmountedVolumeIsNotReportedAsANonDirectory() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let store = OnboardingStore(
+            sessionFactory: .failing(TestFailure.denied),
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+        // A path under a volume that is certainly not mounted -- the exact
+        // shape of an unplugged external drive at launch.
+        let unmounted = URL(
+            fileURLWithPath: "/Volumes/AstroToolAbsentDrive-\(UUID().uuidString)/Images",
+            isDirectory: true
+        )
+
+        await #expect(throws: AstroError.volumeNotMounted(path: unmounted.path)) {
+            try await store.openAndScan(unmounted)
+        }
+        #expect(store.phase.accessProblem != .notDirectory)
+        #expect(store.phase.accessProblem?.recovery == .retry)
+    }
+
+    @Test("A missing root on a mounted volume reports the path, not a non-directory")
+    func missingPathIsNotReportedAsANonDirectory() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let store = OnboardingStore(
+            sessionFactory: .failing(TestFailure.denied),
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+        let missing = fixture.container.appendingPathComponent("Gone", isDirectory: true)
+
+        await #expect(throws: AstroError.pathNotFound(path: missing.path)) {
+            try await store.openAndScan(missing)
+        }
+        #expect(store.phase.accessProblem != .notDirectory)
+    }
+
+    @Test("A retry-class restore failure keeps the saved bookmark so replugging works")
+    func retryClassRestoreFailureKeepsTheBookmark() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let bookmarks = InMemoryLibraryBookmarks()
+        bookmarks.client.save(fixture.root)
+        let store = OnboardingStore(
+            sessionFactory: .failing(AstroError.volumeNotMounted(path: fixture.root.path)),
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive,
+            bookmarkStore: bookmarks.client
+        )
+
+        await #expect(throws: AstroError.volumeNotMounted(path: fixture.root.path)) {
+            _ = try await store.restoreSavedLibrary()
+        }
+
+        #expect(bookmarks.savedURL == fixture.root.standardizedFileURL)
+    }
+
+    @Test("A re-choose-class restore failure forgets the saved bookmark")
+    func rechooseClassRestoreFailureClearsTheBookmark() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let bookmarks = InMemoryLibraryBookmarks()
+        bookmarks.client.save(fixture.root)
+        let store = OnboardingStore(
+            sessionFactory: .failing(AstroError.accessDenied(path: fixture.root.path)),
+            storageFactory: .temporary(
+                applicationSupport: fixture.applicationSupport,
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive,
+            bookmarkStore: bookmarks.client
+        )
+
+        await #expect(throws: AstroError.accessDenied(path: fixture.root.path)) {
+            _ = try await store.restoreSavedLibrary()
+        }
+
+        #expect(bookmarks.savedURL == nil)
+    }
+
+    // MARK: - AstroTool's own data folder inside the picked library
+    // (2026-09-02 first-run audit, fix D)
+
+    @Test("Picking a folder that contains AstroTool's own data area says so instead of a generic failure")
+    func storageInsideLibraryIsItsOwnActionableProblem() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        // Picking the home folder (or `/`) puts Application Support INSIDE
+        // the library; `AppStoragePaths` refuses, and that refusal used to
+        // collapse to `.other`'s "AstroTool could not complete this action".
+        let store = OnboardingStore(
+            sessionFactory: .constant(
+                OnboardingSessionClient(accessMode: .readOnly, scan: {
+                    throw TestFailure.denied
+                })
+            ),
+            storageFactory: .temporary(
+                applicationSupport: fixture.root.appendingPathComponent("ApplicationSupport", isDirectory: true),
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+
+        await #expect(throws: AppStoragePathsError.storageRootInsideLibrary) {
+            try await store.openAndScan(fixture.root)
+        }
+
+        #expect(store.phase.accessProblem == .storageInsideLibrary)
+        #expect(store.phase.accessProblem?.recovery == .rechooseLibrary)
+        let message = try #require(store.phase.accessProblemMessage)
+        #expect(message.contains("only holds your photos"))
+    }
+
+    @Test("Every storage-inside-library refusal maps to the same actionable problem")
+    func storageInsideLibraryCoversEveryRefusalShape() {
+        #expect(LibraryAccessProblem(catching: AppStoragePathsError.storageRootInsideLibrary) == .storageInsideLibrary)
+        #expect(LibraryAccessProblem(catching: AppStoragePathsError.storageDestinationInsideLibrary) == .storageInsideLibrary)
+        #expect(LibraryAccessProblem(catching: LibrarySessionError.indexDestinationInsideLibrary) == .storageInsideLibrary)
+        #expect(LibraryAccessProblem(catching: AppStoragePathsError.libraryIdentityMismatch) != .storageInsideLibrary)
+    }
+
+    // MARK: - v5 flow fixes, item 6: `FirstSuccessOnboardingView.makeLibrary()`
+    // used to pass `error.localizedDescription` straight into `coordinator
+    // .reportError(_:)` -- for an `AstroError`, that resolves `errorDescription`,
+    // which is DELIBERATELY plain, untranslated English (its own doc
+    // comment in `AstroCore/Model/Types.swift`), leaking English into an
+    // otherwise-Hungarian alert. `accessProblemMessage(for:)` is the
+    // `String`-typed sibling of `accessProblemText(for:)` this view now
+    // calls instead, resolving the exact same `hu.lproj` keys.
+
+    @Test("accessProblemMessage(for:) resolves the same fixed English fallback phrase accessProblemText(for:) does, substituting dynamic data via %@")
+    func accessProblemMessageMatchesAccessProblemTextPhrasing() {
+        let path = "/Volumes/SDCard/IMG_0001.CR3"
+        let message = LibraryWelcomeView.accessProblemMessage(for: AstroError.accessDenied(path: path))
+        #expect(message.contains(path))
+        #expect(message.contains("not allowed to read"))
+        // The old bug's exact shape: a raw Swift enum dump, never this.
+        #expect(!message.contains("accessDenied"))
+        #expect(!message.contains("AstroError"))
+    }
+
+    @Test("accessProblemMessage(for:) covers the LibraryAccessProblem cases, not only .astro")
+    func accessProblemMessageCoversEveryProblemCase() {
+        #expect(LibraryWelcomeView.accessProblemMessage(for: .notDirectory).contains("Individual files cannot be scanned"))
+        #expect(LibraryWelcomeView.accessProblemMessage(for: .storageInsideLibrary).contains("only holds your photos"))
+        #expect(LibraryWelcomeView.accessProblemMessage(for: .other).contains("could not complete this action"))
+    }
+
     @Test("Summary continuation and preference setup remain separate optional choices")
     func summaryChoicesAreExplicit() async throws {
         let fixture = try OnboardingFixture.make()
@@ -386,6 +549,58 @@ struct V2OnboardingTests {
         #expect(try await nextLaunch.restoreSavedLibrary())
         #expect(nextLaunch.phase.summary == snapshot)
         #expect(nextLaunch.selectedRoot == fixture.root.standardizedFileURL)
+    }
+
+    // MARK: - Bookmark persistence has a plain-path fallback
+    // (2026-09-02 first-run audit, fix G)
+
+    @Test("A saved library is remembered by plain path as well as by bookmark")
+    func savingALibraryRecordsItsPlainPathToo() throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let suiteName = "astrotool.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LibraryBookmarkStore.production(defaults: defaults)
+
+        store.save(fixture.root)
+
+        #expect(defaults.string(forKey: "v2.library.rootPath") == fixture.root.standardizedFileURL.path)
+        #expect(store.load() == fixture.root.standardizedFileURL)
+    }
+
+    @Test("With no usable bookmark the remembered plain path still opens the same library")
+    func plainPathIsUsedWhenTheBookmarkIsGone() throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let suiteName = "astrotool.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LibraryBookmarkStore.production(defaults: defaults)
+        store.save(fixture.root)
+
+        // Exactly what an unsandboxed machine where `.withSecurityScope`
+        // bookmark creation failed looks like on the next launch.
+        defaults.removeObject(forKey: "v2.library.securityScopedBookmark")
+        defaults.removeObject(forKey: "rootBookmark")
+
+        #expect(store.load() == fixture.root.standardizedFileURL)
+    }
+
+    @Test("Clearing the remembered library forgets the plain path as well")
+    func clearingForgetsThePlainPathToo() throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        let suiteName = "astrotool.tests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LibraryBookmarkStore.production(defaults: defaults)
+        store.save(fixture.root)
+
+        store.clear()
+
+        #expect(store.load() == nil)
+        #expect(defaults.string(forKey: "v2.library.rootPath") == nil)
     }
 
     @Test("Onboarding surfaces use honest actions and contain no personal defaults")

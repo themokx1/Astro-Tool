@@ -108,7 +108,10 @@ public enum MobileSyncFailure: Equatable, Sendable {
 public enum NearbySyncPhase: Equatable, Sendable {
     case idle
     case advertising
-    case pairing(code: String)
+    /// `peerDisplayName` is the connecting iPhone's own name (fix item 3:
+    /// multi-Mac/multi-iPhone disambiguation), shown alongside the code so
+    /// the user can tell which device answered before confirming.
+    case pairing(code: String, peerDisplayName: String)
     case preparing
     case transferring
     case verifying
@@ -136,6 +139,10 @@ public final class MobileSyncStore {
     package typealias NearbyRejectPairing = @Sendable () async -> Void
     package typealias NearbyStop = @Sendable () async -> Void
     package typealias NearbyReportReturnOutcome = @Sendable (NearbyReturnOutcome) async -> Void
+    /// The recovery action behind "Forget this iPhone and pair again" on a
+    /// `.failed(.identityChanged)` state — removes the offending deviceID
+    /// from the Mac's own trust store (`NearbySyncCoordinator.forgetPeer`).
+    package typealias NearbyForgetPeer = @Sendable (UUID) async throws -> Void
 
     public private(set) var phase: MobileSyncPhase = .idle
     public private(set) var preview: MobileSyncPreview?
@@ -217,6 +224,7 @@ public final class MobileSyncStore {
     private let nearbyRejectPairing: NearbyRejectPairing
     private let nearbyStop: NearbyStop
     private let nearbyReportReturnOutcome: NearbyReportReturnOutcome
+    private let nearbyForgetPeer: NearbyForgetPeer
     @ObservationIgnored private var nearbyEventTask: Task<Void, Never>?
     /// True while `incomingReview` (and the fields alongside it) came from
     /// the nearby flow's `.receivedReturn` event rather than an AirDrop
@@ -264,6 +272,7 @@ public final class MobileSyncStore {
         nearbyRejectPairing: NearbyRejectPairing? = nil,
         nearbyStop: NearbyStop? = nil,
         nearbyReportReturnOutcome: NearbyReportReturnOutcome? = nil,
+        nearbyForgetPeer: NearbyForgetPeer? = nil,
         productionMode: Bool = false,
         fixture: Void = ()
     ) {
@@ -358,6 +367,7 @@ public final class MobileSyncStore {
         self.nearbyRejectPairing = nearbyRejectPairing ?? { await productionNearbyCoordinator?.rejectPairing() }
         self.nearbyStop = nearbyStop ?? { await productionNearbyCoordinator?.stop() }
         self.nearbyReportReturnOutcome = nearbyReportReturnOutcome ?? { outcome in await productionNearbyCoordinator?.reportReturnOutcome(outcome) }
+        self.nearbyForgetPeer = nearbyForgetPeer ?? { deviceID in try await productionNearbyCoordinator?.forgetPeer(deviceID: deviceID) }
     }
 
     public var canExport: Bool {
@@ -417,6 +427,23 @@ public final class MobileSyncStore {
         startNearbySync()
     }
 
+    /// The dedicated recovery action for `.failed(.identityChanged)`:
+    /// forgets the iPhone's stale record on the Mac's own trust store, then
+    /// retries — so the next handshake goes through a fresh first pairing
+    /// (a new six-digit code) instead of repeating the exact same terminal
+    /// failure forever. A no-op for any other failure reason. The iPhone
+    /// must forget the Mac the same way on its own side (its own
+    /// `.failed(.identityChanged)` screen offers the same action) for the
+    /// retry to actually succeed rather than time out.
+    public func forgetNearbyPeerAndRetry() {
+        guard case .failed(.identityChanged(let deviceID)) = nearbyPhase else { return }
+        let forget = nearbyForgetPeer
+        Task { [weak self] in
+            try? await forget(deviceID)
+            self?.retryNearbySync()
+        }
+    }
+
     /// Cancels the nearby session in progress (or clears a finished/failed
     /// one) and returns to `.idle`.
     public func cancelNearbySync() {
@@ -431,8 +458,8 @@ public final class MobileSyncStore {
         switch event {
         case .waitingForPhone:
             nearbyPhase = .advertising
-        case .pairingCode(let code):
-            nearbyPhase = .pairing(code: code)
+        case .pairingCode(let code, let peerDisplayName):
+            nearbyPhase = .pairing(code: code, peerDisplayName: peerDisplayName)
         case .preparing:
             nearbyPhase = .preparing
         case .transferring:

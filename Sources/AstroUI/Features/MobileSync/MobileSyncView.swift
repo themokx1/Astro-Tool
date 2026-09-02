@@ -579,11 +579,17 @@ public struct MobileSyncView: View {
             nearbyProgress("Waiting for iPhone")
             Button("Cancel", role: .cancel) { store.cancelNearbySync() }
                 .accessibilityIdentifier("v5.nearby.cancel")
-        case .pairing(let code):
+        case .pairing(let code, let peerDisplayName):
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
                 Text("Confirm the pairing code")
                     .astroSectionTitle()
                     .accessibilityIdentifier("v5.nearby.state")
+                if !peerDisplayName.isEmpty {
+                    Text("Pairing with: \(peerDisplayName)")
+                        .astroBody()
+                        .foregroundStyle(AstroTokens.Color.inkDim)
+                        .accessibilityIdentifier("v5.nearby.peer-name")
+                }
                 Text(verbatim: code)
                     .font(.system(.largeTitle, design: .monospaced))
                     .textSelection(.enabled)
@@ -616,10 +622,21 @@ public struct MobileSyncView: View {
                 Label(nearbyFailureMessage(reason), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(AstroTokens.Color.critical)
                     .accessibilityIdentifier("v5.nearby.state")
+                if case .identityChanged = reason {
+                    Text("This usually means the iPhone was reinstalled or replaced. Forgetting it lets you pair again — you'll see the six-digit code once more.")
+                        .astroBody()
+                        .foregroundStyle(AstroTokens.Color.inkDim)
+                }
                 HStack {
-                    Button("Try again", systemImage: "arrow.clockwise") { store.retryNearbySync() }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("v5.nearby.retry")
+                    if case .identityChanged = reason {
+                        Button("Forget this iPhone and pair again", systemImage: "iphone.slash") { store.forgetNearbyPeerAndRetry() }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("v5.nearby.forget-and-retry")
+                    } else {
+                        Button("Try again", systemImage: "arrow.clockwise") { store.retryNearbySync() }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("v5.nearby.retry")
+                    }
                     Button("Cancel", role: .cancel) { store.cancelNearbySync() }
                         .accessibilityIdentifier("v5.nearby.cancel")
                 }
@@ -637,8 +654,9 @@ public struct MobileSyncView: View {
     private func nearbyFailureMessage(_ reason: NearbySyncFailure) -> LocalizedStringKey {
         switch reason {
         case .pairingRejected: "Pairing was declined."
-        case .identityChanged: "This iPhone's saved identity changed. Re-pair to continue."
+        case .identityChanged: "This iPhone's saved identity no longer matches."
         case .transferFailed: "The transfer could not complete."
+        case .connectionStalled: "The connection stalled. Nothing was changed."
         case .applyRefused: "The reviewed changes were not applied."
         case .timeout: "The connection timed out."
         case .cancelled: "Sync was cancelled."

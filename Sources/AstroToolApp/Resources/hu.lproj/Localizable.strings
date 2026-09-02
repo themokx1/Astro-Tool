@@ -1353,6 +1353,10 @@
 "Create a new session — pick an existing project or a custom target" = "Új session létrehozása — válassz meglévő projektet vagy adj meg egyedi célpontot";
 "The catalog number and target name resolve to an empty folder name." = "A katalógusszám és a célpont neve üres mappanevet eredményez.";
 "AstroTool could not preview this session." = "Az AstroTool nem tudta előnézetezni ezt a session-t.";
+/* v5 flow fixes, item 2: create(operationHost:)'s own fallback when OperationHost recorded a failure but somehow kept no error message text -- String(localized:), hand-added like other String(localized:) call sites in this codebase. */
+"AstroTool could not create this session." = "Az AstroTool nem tudta létrehozni ezt a session-t.";
+/* v5 flow fixes, item 2: the capture-import wizard's own inline rendering of NewSessionStore.createErrorMessage, next to previewErrorKey. */
+"AstroTool could not create the structure: %@" = "Az AstroTool nem tudta létrehozni a struktúrát: %@";
 "Requires write access. Enable write operations in Settings to create this session." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban ennek a session-nek a létrehozásához.";
 "Requires write access. Enable write operations in Settings to undo this." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban ennek a visszavonásához.";
 "The folder is no longer empty — it was not removed." = "A mappa már nem üres — nem lett eltávolítva.";
@@ -1531,6 +1535,8 @@
 "Start Copy" = "Másolás indítása";
 "Copying files — the source card is not modified." = "Fájlok másolása — a forrás kártya nem módosul.";
 "%lld files copied · %@" = "%lld fájl másolva · %@";
+/* v5 flow fixes, item 1: a copy the toolbar's Activity popover cancelled mid-way now returns an honest partial receipt instead of discarding it -- this replaces the plain success banner when receipt.wasCancelled is true. */
+"Copy stopped — %lld files already copied and verified, %lld not copied." = "A másolás leállt — %lld fájl már másolva és ellenőrizve, %lld nem lett másolva.";
 "%lld files already existed at the destination and were skipped." = "%lld fájl már létezett a célnál, ezek kimaradtak.";
 "%lld files failed to copy:" = "%lld fájl másolása sikertelen volt:";
 "Every copy was verified with a checksum against the source." = "Minden másolatot ellenőrző-összeggel igazoltunk a forráshoz képest.";
@@ -1868,6 +1874,9 @@
 "Collapse Group" = "Csoport összecsukása";
 "Expand Group" = "Csoport kibontása";
 "the copy's checksum does not match the source -- the bad copy was deleted" = "a másolat ellenőrző-összege nem egyezik a forrással -- a hibás másolat törölve";
+
+/* v5 flow fixes, item 5: the role-rejection message used to be hardcoded Hungarian directly in AstroApplication (a reverse leak into English-locale UI); now routed through NSLocalizedString like the checksum-mismatch entry above. */
+"The %@ role cannot be copied into a capture." = "A(z) %@ szerep nem másolható be egy gyűjtésbe.";
 
 /* Wave W6-D item 14 (NightNoteSheet): the per-field ⓘ info button's new .help/.accessibilityLabel, interpolating the field name. */
 "Explain %@" = "%@ magyarázata";
@@ -2632,11 +2641,17 @@
 "Choose a familiar name and a place with enough room for your photos. AstroTool only creates the missing folders." = "Válassz ismerős nevet és olyan helyet, ahol elférnek a fotóid. Az AstroTool csak a hiányzó mappákat hozza létre.";
 "Library name" = "A könyvtár neve";
 "Choose Location…" = "Hely kiválasztása…";
+/* v5 flow fixes, item 7: String(localized:) call site, not a SwiftUI construct -- the extraction script does not scan it, hand-added like the NSOpenPanel prompt/message above. */
+"Not chosen yet" = "Még nincs kiválasztva";
 "What will be created on my Mac?" = "Mi jön létre a gépemen?";
 "Projects and nights · Stacks · Processed images" = "Projektek és éjszakák · Stackek · Feldolgozott képek";
 "Calibration library: darks, flats, and biases" = "Kalibrációs könyvtár: dark, flat és bias képek";
 "AstroTool’s small private index area" = "Az AstroTool kis saját indexterülete";
-"Create Library" = "Könyvtár létrehozása";
+/* v5 flow fixes, item 4: the disclosure now lists the REAL LibraryCreationCommand.preview() result instead of three static sentences, once a name/location is chosen. */
+"Will be created:" = "Létrejön:";
+"Already there:" = "Már megvan:";
+"AstroTool will create the folders above now and allow writing to this library." = "Az AstroTool most létrehozza a fenti mappákat, és engedélyezi az írást ebbe a könyvtárba.";
+"Create Library and Allow Writing" = "Könyvtár létrehozása és írás engedélyezése";
 "Your source files stay unchanged" = "A forrásaid változatlanok maradnak";
 "AstroTool only creates verified copies in your library. It never overwrites a file and offers no standalone delete action." = "Az AstroTool csak ellenőrzött másolatokat készít a könyvtáradban. Soha nem ír felül fájlt, és nem kínál önálló törlési műveletet.";
 "Would you like to copy in your first photos now?" = "Szeretnéd most bemásolni az első fotóidat?";
@@ -2648,6 +2663,8 @@
 "You’re ready" = "Készen állsz";
 "Your first project is ready" = "Elkészült az első projekted";
 "No project or capture was created. You can return to First Steps whenever you want." = "Nem jött létre projekt vagy capture. Az Első lépésekhez bármikor visszatérhetsz.";
+/* v5 flow fixes, item 3: the honest completion state for "Create Structure succeeded, but the user skipped copying any photos" -- distinct from the no-structure-at-all case above. */
+"The project folders were created; no photos were copied. You can return to First Steps whenever you want." = "A projekt mappái létrejöttek; fotó nem lett bemásolva. Az Első lépésekhez bármikor visszatérhetsz.";
 "The import receipt shows what was copied, verified, skipped, or could not be copied." = "Az import eredménye megmutatja, mi lett bemásolva és ellenőrizve, mi maradt ki, illetve mit nem sikerült másolni.";
 "Enter AstroTool" = "Belépés az AstroToolba";
 "Open Project" = "Projekt megnyitása";
@@ -2847,13 +2864,36 @@
 "The local network permission is used only to hand data between your own AstroTool apps." = "A helyi hálózati engedélyt csak a saját AstroTool alkalmazásaid közötti adatátvitelhez használjuk.";
 "Waiting for iPhone" = "Várakozás az iPhone-ra";
 "Confirm the pairing code" = "Erősítsd meg a párosítási kódot";
+"Pairing with: %@" = "Párosítás vele: %@";
 "Confirm" = "Megerősítés";
 "Preparing data" = "Adatok előkészítése";
 "Transferring" = "Átvitel";
 "Verifying" = "Ellenőrzés";
 "Pairing was declined." = "A párosítást elutasították.";
-"This iPhone's saved identity changed. Re-pair to continue." = "Ennek az iPhone-nak a mentett azonosítója megváltozott. A folytatáshoz párosítsd újra.";
+"This iPhone's saved identity no longer matches." = "Ennek az iPhone-nak a mentett azonosítója már nem egyezik.";
+"This usually means the iPhone was reinstalled or replaced. Forgetting it lets you pair again — you'll see the six-digit code once more." = "Ez általában azt jelenti, hogy az iPhone-t újratelepítették vagy lecserélték. Ha elfelejted, újra párosíthatod — a hatjegyű kód ismét megjelenik.";
+"Forget this iPhone and pair again" = "iPhone elfelejtése és újrapárosítás";
 "The transfer could not complete." = "Az átvitel nem fejeződött be.";
+"The connection stalled. Nothing was changed." = "A kapcsolat elakadt. Semmi nem változott.";
 "The reviewed changes were not applied." = "Az ellenőrzött módosítások nem kerültek alkalmazásra.";
 "The connection timed out." = "A kapcsolat időtúllépés miatt megszakadt.";
 "Sync was cancelled." = "A szinkronizálást megszakítottuk.";
+"Forget paired devices" = "Párosított eszközök elfelejtése";
+"Forget" = "Elfelejtés";
+"No iPhone has paired with this Mac yet." = "Még egyetlen iPhone sem párosult ezzel a Mac-kel.";
+"The list of paired iPhones could not be read." = "A párosított iPhone-ok listája nem olvasható.";
+
+/* 2026-09-02 first-run flow fixes */
+"This library could not be prepared" = "Ezt a könyvtárat nem sikerült előkészíteni";
+"The scan finished, but Projects and Nights could not be built for this folder. Try again, or open a different library." = "A vizsgálat lefutott, de a projektek és éjszakák nem épültek fel ehhez a mappához. Próbáld újra, vagy nyiss meg másik könyvtárat.";
+"This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures." = "Ez a mappa az AstroTool saját adatmappáját is tartalmazza. Válassz olyan mappát, amelyben csak a fotóid vannak — például a Képek mappán belül.";
+"Choose Another Folder…" = "Másik mappa választása…";
+"No astrophotos found in %@" = "Nem találtunk asztrofotót itt: %@";
+"AstroTool looked for sessions, stacks, and processed folders, and for image files it recognises, and found none. This is usually the wrong folder — pick the one that holds your captures." = "Az AstroTool sessions, stacks és processed mappákat, valamint ismert képfájlokat keresett, de egyet sem talált. Ilyenkor általában nem ez a jó mappa — válaszd azt, amelyben a felvételeid vannak.";
+"Nothing was changed in the folder that was scanned." = "A vizsgált mappában semmi nem változott.";
+"Choose a Different Folder…" = "Másik mappa választása…";
+"Continue anyway" = "Folytatás így is";
+"Choose an image library first. Both importing from a card and starting a new night create folders inside a library." = "Először válassz képkönyvtárat. A kártyáról importálás és az új éjszaka indítása is a könyvtáron belül hoz létre mappákat.";
+/* NSOpenPanel prompt/message -- String(localized:), hand-added: the extraction script covers SwiftUI constructs only */
+"Choose" = "Kiválasztás";
+"Choose the root folder of your image library" = "Válaszd ki a képkönyvtár gyökerét";

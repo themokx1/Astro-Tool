@@ -128,4 +128,117 @@ struct MobileSyncSurfaceTests {
         // instead, so this call site would only ever appear in a comment.
         #expect(!store.contains("NearbySyncCoordinator(rootURL:"))
     }
+
+    // MARK: - Fix 1: peer-identity-changed recovery (permanent dead end)
+
+    @Test("Mac's identityChanged failure offers a dedicated forget-and-retry recovery action")
+    func macIdentityChangedOffersForgetAndRetry() throws {
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncStore.swift"), encoding: .utf8)
+        let coordinator = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/MobileSync/NearbySyncCoordinator.swift"), encoding: .utf8)
+
+        #expect(view.contains("v5.nearby.forget-and-retry"))
+        #expect(view.contains("Forget this iPhone and pair again"))
+        #expect(store.contains("func forgetNearbyPeerAndRetry()"))
+        #expect(store.contains("case .failed(.identityChanged(let deviceID))"))
+        // The failure carries the offending peer's deviceID (not just a bare
+        // "it changed" signal) so the recovery action knows exactly which
+        // trusted peer to remove.
+        #expect(coordinator.contains("case identityChanged(deviceID: UUID)"))
+        #expect(coordinator.contains("func forgetPeer(deviceID: UUID) throws"))
+        #expect(coordinator.contains("func trustedPeerDisplayName(deviceID: UUID) -> String?"))
+    }
+
+    @Test("iPhone Sync settings lists trusted peers with a per-peer forget action")
+    func settingsListsPairedDevicesWithForget() throws {
+        let settings = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
+        #expect(settings.contains("Forget paired devices"))
+        #expect(settings.contains("removeTrustedPeer(deviceID:"))
+        #expect(settings.contains("trustedPeers()"))
+    }
+
+    @Test("iPhone's own identityChanged screen offers the mirrored forget-and-retry action")
+    func iPhoneIdentityChangedOffersForgetAndRetry() throws {
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+        let rootView = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileRootView.swift"), encoding: .utf8)
+        let session = try String(contentsOf: root.appendingPathComponent("Sources/AstroMobileTransport/NearbyPhoneSyncSession.swift"), encoding: .utf8)
+
+        #expect(screen.contains("v5.mobile.nearby.forget-and-retry"))
+        #expect(screen.contains("Forget this Mac and pair again"))
+        #expect(rootView.contains("func forgetNearbySyncPeerAndRetry()"))
+        #expect(rootView.contains("case identityChanged(deviceID: UUID)"))
+        #expect(session.contains("func forgetPeer(deviceID: UUID) throws"))
+    }
+
+    // MARK: - Fix 2: backgrounding mid nearby-sync must not dangle
+
+    @Test("Backgrounding mid nearby-sync cancels the session instead of leaving it running unbounded")
+    func scenePhaseChangeCancelsNearbySync() throws {
+        let rootView = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileRootView.swift"), encoding: .utf8)
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+
+        guard let sceneHandlerRange = rootView.range(of: ".onChange(of: scenePhase)") else {
+            Issue.record("scenePhase onChange handler not found in MobileRootView.swift")
+            return
+        }
+        // Only look within the `phase != .active` branch that already
+        // cancels the scanner/import/export paths (bounded by the next
+        // `.sheet(` call site, which starts well past that branch).
+        guard let branchEnd = rootView.range(of: ".sheet(isPresented: $showingScanner", range: sceneHandlerRange.upperBound..<rootView.endIndex) else {
+            Issue.record("could not bound the scenePhase != .active branch")
+            return
+        }
+        let branch = String(rootView[sceneHandlerRange.upperBound..<branchEnd.lowerBound])
+        #expect(branch.contains("cancelReturnExport()"))
+        #expect(branch.contains("cancelNearbySyncDueToBackgrounding()"))
+
+        #expect(rootView.contains("case backgrounded"))
+        #expect(screen.contains("Sync stopped because the app went to the background"))
+    }
+
+    // MARK: - Fix 4: stall timeout in the transfer phase
+
+    @Test("A post-handshake idle stall is reported distinctly from a generic transfer failure, on both Mac and iPhone")
+    func connectionStalledIsMappedDistinctlyFromTransferFailed() throws {
+        let coordinator = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/MobileSync/NearbySyncCoordinator.swift"), encoding: .utf8)
+        let session = try String(contentsOf: root.appendingPathComponent("Sources/AstroMobileTransport/NearbyPhoneSyncSession.swift"), encoding: .utf8)
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+
+        #expect(coordinator.contains("case connectionStalled"))
+        #expect(coordinator.contains("mapTransferFailure"))
+        #expect(coordinator.contains("transportError == .transferTimeout"))
+        #expect(session.contains("case connectionStalled"))
+        #expect(session.contains("case .transferTimeout: return .connectionStalled"))
+        #expect(view.contains("case .connectionStalled: \"The connection stalled. Nothing was changed.\""))
+        #expect(screen.contains("case .connectionStalled:"))
+    }
+
+    // MARK: - Fix 3: multi-Mac/multi-iPhone disambiguation
+
+    @Test("The peer's display name is shown alongside the pairing code on both Mac and iPhone")
+    func pairingCodeShowsPeerDisplayName() throws {
+        let session = try String(contentsOf: root.appendingPathComponent("Sources/AstroMobileTransport/NearbyPairingSession.swift"), encoding: .utf8)
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncStore.swift"), encoding: .utf8)
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+        let rootView = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileRootView.swift"), encoding: .utf8)
+
+        #expect(session.contains("public var peerDisplayName: String"))
+        #expect(store.contains("case pairing(code: String, peerDisplayName: String)"))
+        #expect(view.contains("v5.nearby.peer-name"))
+        #expect(view.contains("Pairing with: \\(peerDisplayName)"))
+        #expect(screen.contains("v5.mobile.nearby.peer-name"))
+        #expect(screen.contains("Pairing with: \\(peerDisplayName)"))
+        #expect(rootView.contains("case pairingCode(code: String, peerDisplayName: String)"))
+    }
+
+    // MARK: - Fix 5: silent Application Support -> temporaryDirectory fallback
+
+    @Test("A temporaryDirectory fallback for Application Support surfaces through durabilityWarning instead of degrading silently")
+    func applicationSupportFallbackSurfacesDurabilityWarning() throws {
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileLibraryStore.swift"), encoding: .utf8)
+        #expect(store.contains("usedTemporaryFallback"))
+        #expect(store.contains("self.durabilityWarning = initial.durabilityWarning || resolvedApplicationSupport.usedTemporaryFallback"))
+    }
 }

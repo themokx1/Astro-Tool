@@ -17,7 +17,10 @@ private enum MobileTab: Hashable {
 enum MobileNearbySyncUIState: Equatable {
     case idle
     case searching
-    case pairingCode(String)
+    /// `peerDisplayName` is the connecting Mac's own name (fix item 3:
+    /// multi-Mac disambiguation), shown alongside the code so the user can
+    /// tell which device answered before confirming.
+    case pairingCode(code: String, peerDisplayName: String)
     case connecting
     case receiving
     case staged
@@ -29,7 +32,7 @@ enum MobileNearbySyncUIState: Equatable {
         switch state {
         case .idle: self = .idle
         case .searching: self = .searching
-        case .pairingCode(let code): self = .pairingCode(code)
+        case .pairingCode(let code, let peerDisplayName): self = .pairingCode(code: code, peerDisplayName: peerDisplayName)
         case .connecting: self = .connecting
         case .receiving: self = .receiving
         case .staged: self = .staged
@@ -43,18 +46,31 @@ enum MobileNearbySyncUIState: Equatable {
 enum MobileNearbySyncUIFailure: Equatable {
     case peerNotFound
     case pairingRejected
-    case identityChanged
+    /// Carries the Mac's deviceID so the "Forget this Mac and pair again"
+    /// recovery action (`MobileRootView.forgetNearbySyncPeerAndRetry`) knows
+    /// exactly which trusted peer to remove.
+    case identityChanged(deviceID: UUID)
     case transferFailed
+    /// A `send`/`receive` during the post-handshake transfer idled past its
+    /// own timeout -- a stalled Wi-Fi link, or a Mac that paired and then
+    /// went silent. Distinct from `.transferFailed` (fix item 4).
+    case connectionStalled
     case importFailed
     case timeout
     case cancelled
+    /// UI-only: the app left the foreground mid-sync. Never produced by
+    /// `NearbyPhoneSyncFailure` itself — `cancelNearbySyncDueToBackgrounding`
+    /// sets this directly so the sheet shows a calm, explanatory stopped
+    /// state instead of a spinner left spinning forever (fix item 2).
+    case backgrounded
 
     init(_ failure: NearbyPhoneSyncFailure) {
         switch failure {
         case .peerNotFound: self = .peerNotFound
         case .pairingRejected: self = .pairingRejected
-        case .identityChanged: self = .identityChanged
+        case .identityChanged(let deviceID): self = .identityChanged(deviceID: deviceID)
         case .transferFailed: self = .transferFailed
+        case .connectionStalled: self = .connectionStalled
         case .importFailed: self = .importFailed
         case .timeout: self = .timeout
         case .cancelled: self = .cancelled
@@ -380,6 +396,7 @@ struct MobileRootView: View {
                     showingScanner = false
                     cancelReturnExport()
                     showingReturnExporter = false
+                    cancelNearbySyncDueToBackgrounding()
                 } else {
                     Task { await refresh() }
                 }
@@ -424,6 +441,7 @@ struct MobileRootView: View {
                     onRejectCode: rejectNearbySyncCode,
                     onCancel: { showingNearbySync = false },
                     onRetry: startNearbySync,
+                    onForgetAndRetry: forgetNearbySyncPeerAndRetry,
                     onOpenSettings: openNearbySyncSettings,
                     onUseAirDropInstead: { showingNearbySync = false },
                     onDone: {
@@ -588,9 +606,47 @@ struct MobileRootView: View {
         nearbySyncState = .idle
     }
 
+    /// Cancels an in-flight nearby session because the app left the
+    /// foreground — the `scenePhase` handler's counterpart to
+    /// `cancelReturnExport()`, which already covers the scanner/import/
+    /// export paths but left `nearbySyncTask`/`nearbySyncSession` running
+    /// unbounded in the background (fix item 2). Unlike `cancelNearbySync()`
+    /// (used for an explicit user cancel or sheet dismissal, which returns
+    /// to `.idle`), this leaves a `.failed(.backgrounded)` state behind so a
+    /// sheet still on screen — or reopened later — shows why the sync
+    /// stopped instead of a spinner stuck mid-phase forever. A no-op if no
+    /// session was actually running.
+    private func cancelNearbySyncDueToBackgrounding() {
+        guard nearbySyncSession != nil || nearbySyncTask != nil else { return }
+        if let nearbySyncSession {
+            Task { await nearbySyncSession.cancel() }
+        }
+        nearbySyncTask?.cancel()
+        nearbySyncTask = nil
+        nearbySyncSession = nil
+        nearbySyncState = .failed(.backgrounded)
+    }
+
     private func openNearbySyncSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+
+    /// The recovery action behind "Forget this Mac and pair again" on the
+    /// `.failed(.identityChanged)` screen. `nearbySyncSession` is already
+    /// nil by the time the user can tap this (the session actor is cleared
+    /// as soon as its stream reaches a terminal state — see
+    /// `startNearbySync`'s `for await` loop), so this talks to the same
+    /// Keychain-backed trust store directly rather than through a live
+    /// session, exactly like `NearbySyncCoordinator.forgetPeer(deviceID:)`
+    /// does on the Mac side. The Mac must forget this iPhone the same way on
+    /// its own side (its own "Forget this iPhone and pair again" action) for
+    /// the retry to actually succeed rather than time out.
+    private func forgetNearbySyncPeerAndRetry() {
+        guard case .failed(.identityChanged(let deviceID)) = nearbySyncState else { return }
+        try? KeychainDeviceIdentityStore().removeTrustedPeer(deviceID: deviceID)
+        nearbySyncState = .idle
+        startNearbySync()
     }
 
     /// Builds the phone's reply from its own queued checklist/note changes,

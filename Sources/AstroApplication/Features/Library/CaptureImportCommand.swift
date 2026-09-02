@@ -124,10 +124,25 @@ public struct CaptureImportReceipt: Equatable, Sendable {
     public struct FailedFile: Equatable, Sendable {
         public let sourceURL: URL
         public let reason: String
+        /// The causing `AstroError`, when the failure was one -- `nil` for
+        /// the checksum-mismatch failure above (already a fixed, localized
+        /// `reason` sentence) and for any other error type. W-fix (item 6):
+        /// `reason` alone used to be built via `String(describing:)` for an
+        /// `AstroError` -- a raw Swift enum dump (`accessDenied(path:
+        /// "/…")`) reaching the receipt UI verbatim, in neither English nor
+        /// Hungarian. `reason` is now always a real, readable English
+        /// sentence (`error.localizedDescription`, which resolves
+        /// `AstroError.errorDescription` for an `AstroError`) as an honest
+        /// fallback; carrying the error itself alongside it lets a caller
+        /// IN `AstroUI` (this module cannot import it) render a properly
+        /// TRANSLATED sentence instead, via `LibraryWelcomeView
+        /// .accessProblemText(for:)`.
+        public let astroError: AstroError?
 
-        public init(sourceURL: URL, reason: String) {
+        public init(sourceURL: URL, reason: String, astroError: AstroError? = nil) {
             self.sourceURL = sourceURL
             self.reason = reason
+            self.astroError = astroError
         }
     }
 
@@ -139,6 +154,16 @@ public struct CaptureImportReceipt: Equatable, Sendable {
     /// untouched.
     public let skippedCollisions: [String]
     public let failed: [FailedFile]
+    /// `true` when `copy(...)` stopped early because `shouldCancel` returned
+    /// `true`, rather than running every item in `items` -- W-fix (item 1):
+    /// this used to be a plain `throw CancellationError()`, which discarded
+    /// every already-verified `copied`/`skippedCollisions`/`failed` entry
+    /// accumulated so far and left the caller with no receipt at all, even
+    /// though real files had already been copied and checksum-verified into
+    /// the library. A cancelled receipt is still an honest receipt: it
+    /// reports exactly what happened before the stop, same as a completed
+    /// one, just flagged so the UI can say "stopped", not "failed".
+    public let wasCancelled: Bool
 
     public init(
         target: String,
@@ -146,7 +171,8 @@ public struct CaptureImportReceipt: Equatable, Sendable {
         slug: String,
         copied: [CopiedFile],
         skippedCollisions: [String],
-        failed: [FailedFile]
+        failed: [FailedFile],
+        wasCancelled: Bool = false
     ) {
         self.target = target
         self.date = date
@@ -154,6 +180,7 @@ public struct CaptureImportReceipt: Equatable, Sendable {
         self.copied = copied
         self.skippedCollisions = skippedCollisions
         self.failed = failed
+        self.wasCancelled = wasCancelled
     }
 
     public var totalBytesCopied: Int64 { copied.reduce(0) { $0 + $1.sizeBytes } }
@@ -205,7 +232,25 @@ public enum CaptureImportCommand {
         case .dark: return "darks"
         case .bias: return "biases"
         default:
-            throw AstroError.invalidInput("A(z) \(role.rawValue) szerep nem másolható be egy gyűjtésbe.")
+            // W-fix (reverse leak): this used to be a hardcoded Hungarian
+            // sentence -- an English-locale user importing a non-copyable
+            // role would have seen this one line in Hungarian no matter
+            // what. Same `NSLocalizedString` pattern as the checksum-
+            // mismatch message below: `AstroApplication` cannot import
+            // `AstroUI`, but `NSLocalizedString(_:bundle: .main,comment:)`
+            // needs no such import, and `hu.lproj/Localizable.strings`
+            // still ships inside the app's main bundle regardless of which
+            // target the lookup runs from.
+            throw AstroError.invalidInput(
+                String(
+                    format: NSLocalizedString(
+                        "The %@ role cannot be copied into a capture.",
+                        bundle: .main,
+                        comment: ""
+                    ),
+                    role.rawValue
+                )
+            )
         }
     }
 
@@ -281,10 +326,22 @@ public enum CaptureImportCommand {
         var copied: [CaptureImportReceipt.CopiedFile] = []
         var skipped: [String] = []
         var failed: [CaptureImportReceipt.FailedFile] = []
+        var wasCancelled = false
         let total = items.count
 
         for (index, item) in items.enumerated() {
-            if shouldCancel() { throw CancellationError() }
+            // W-fix (item 1): stop rather than throw. A thrown
+            // `CancellationError()` here used to discard every
+            // already-verified `copied`/`skipped`/`failed` entry accumulated
+            // so far -- real files the loop had already copied and
+            // checksum-verified into the library -- leaving the caller with
+            // no receipt at all. Breaking out and returning the partial
+            // receipt (flagged `wasCancelled`) below is still an honest
+            // report of exactly what happened before the stop.
+            if shouldCancel() {
+                wasCancelled = true
+                break
+            }
             do {
                 let directory = try directoryName(for: item.role)
                 let destDirRelative = "sessions/\(target)/\(date)/captures/\(slug)/\(directory)"
@@ -336,9 +393,18 @@ public enum CaptureImportCommand {
                     sha256: destinationHash
                 ))
             } catch {
+                // W-fix (item 6): this used to render an `AstroError` via
+                // `String(describing:)` -- a raw Swift enum dump
+                // (`accessDenied(path: "/…")`) reaching the receipt UI
+                // verbatim. `error.localizedDescription` resolves
+                // `AstroError.errorDescription` for an `AstroError` (a real,
+                // readable English sentence) and is already the general
+                // fallback for anything else; `astroError` carries the
+                // typed error alongside it so `AstroUI` can translate it.
                 failed.append(CaptureImportReceipt.FailedFile(
                     sourceURL: item.sourceURL,
-                    reason: (error as? AstroError).map(String.init(describing:)) ?? error.localizedDescription
+                    reason: error.localizedDescription,
+                    astroError: error as? AstroError
                 ))
             }
             progress?(index + 1, total)
@@ -346,7 +412,8 @@ public enum CaptureImportCommand {
 
         return CaptureImportReceipt(
             target: target, date: date, slug: slug,
-            copied: copied, skippedCollisions: skipped, failed: failed
+            copied: copied, skippedCollisions: skipped, failed: failed,
+            wasCancelled: wasCancelled
         )
     }
 }
