@@ -923,6 +923,17 @@ struct V2PolishSurfaceTests {
             waiting to be shown verbatim (Task 4, 2026-08-17 owner-feedback
             wave 3).
             """,
+        "Sources/AstroUI/Features/MobileSync/MobileSyncStore.swift#message":
+            """
+            RESOLVED, not a literal: `NearbySyncPhase.forgetFailed`'s \
+            `message` carries the failing forget's own \
+            `error.localizedDescription` -- already-resolved text from the \
+            Keychain/trust-store error, never an English literal waiting to \
+            be translated. `MobileSyncView` renders it through \
+            `Text(verbatim:)` under its own translated \
+            "This iPhone could not be forgotten." heading (v5 flow review, \
+            I9).
+            """,
         "Sources/AstroUI/Settings/SettingsStore.swift#title":
             """
             DATA, of necessity: `EquipmentFilterPassband.title` is kept \
