@@ -75,6 +75,21 @@ public final class GlobalSearchStore {
     public private(set) var results: [GlobalSearchResult] = []
     public private(set) var isSearching = false
     private let librarySearch: LibrarySearch
+    /// How long a keystroke has to stand still before the index is actually
+    /// queried. The search field calls `search` on every character, and the
+    /// indexed half of a search opens the library database and runs a
+    /// full-text query -- typing "IC 1396" used to start seven of those.
+    /// Tests pass `.zero` to skip the wait.
+    private let debounce: Duration
+    /// The in-flight search, cancelled by the next call so a superseded
+    /// query stops sleeping/querying instead of racing to the finish.
+    private var searchTask: Task<Void, Never>?
+    /// Bumped on every `search` call, same guard shape as
+    /// `ProjectsStore.selectProject`: whichever call's work returns last used
+    /// to win regardless of which was typed last, and `isSearching` was
+    /// cleared by whichever finished FIRST -- so the spinner disappeared
+    /// while a newer search was still running.
+    private var searchGeneration = 0
 
     /// `librarySearch` is `Optional`/`nil` rather than defaulted directly to
     /// `productionSearch`, and must stay that way: an `async` default
@@ -84,23 +99,59 @@ public final class GlobalSearchStore {
     /// the big body with the small record corrupts the task allocator.
     /// Resolving in the body keeps the closure private to this module.
     /// `AsyncContextSizeGateTests` gates this and carries the full account.
-    public init(librarySearch: LibrarySearch? = nil) {
+    /// `debounce` gets the same shape for consistency, not necessity (a
+    /// `Duration` default emits no such record).
+    public init(librarySearch: LibrarySearch? = nil, debounce: Duration? = nil) {
         self.librarySearch = librarySearch ?? GlobalSearchStore.productionSearch
+        self.debounce = debounce ?? .milliseconds(200)
     }
 
+    /// Debounced and self-cancelling, so the caller can keep calling this
+    /// straight from the search field's `.onChange` with no coordination of
+    /// its own.
     public func search(
         _ term: String,
         rootURL: URL? = nil,
         projects: ProjectsStore,
         nights: NightsStore
     ) async {
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchTask?.cancel()
         let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            searchTask = nil
             results = []
+            isSearching = false
             return
         }
         isSearching = true
-        defer { isSearching = false }
+        let task = Task { [weak self] () -> Void in
+            await self?.runSearch(
+                trimmed, generation: generation, rootURL: rootURL, projects: projects, nights: nights
+            )
+        }
+        searchTask = task
+        await task.value
+    }
+
+    private func runSearch(
+        _ trimmed: String,
+        generation: Int,
+        rootURL: URL?,
+        projects: ProjectsStore,
+        nights: NightsStore
+    ) async {
+        do {
+            if debounce > .zero { try await Task.sleep(for: debounce) }
+            try Task.checkCancellation()
+        } catch {
+            // Superseded by a newer call (which owns `isSearching` from
+            // here on), or cancelled from outside -- in which case nothing
+            // else is coming and the spinner has to stop.
+            if generation == searchGeneration { isSearching = false }
+            return
+        }
         let projectMatches = (try? await projects.search(trimmed)) ?? []
         var found = projectMatches.map {
             GlobalSearchResult(
@@ -164,7 +215,12 @@ public final class GlobalSearchStore {
                 )
             })
         }
+        // Every published write is gated: a stale completion (this call's
+        // own queries outliving a newer call's) must not overwrite what the
+        // newer one already published, and must not stop its spinner.
+        guard !Task.isCancelled, generation == searchGeneration else { return }
         results = found
+        isSearching = false
     }
 
     public static func productionSearch(_ term: String, rootURL: URL) async throws -> SearchResults {
