@@ -427,6 +427,22 @@ private func lightFile(_ id: Int64, ext: String, target: String) -> FileRecord {
     #expect(WideFieldHeuristic.isWideField(target: "Milkyway_Wide_Field", files: files, meta: [:], rule: rule))
 }
 
+/// `WideFieldRule()`'s default `extensions` used to be just `["cr3", "tif"]`
+/// -- every other camera RAW format `LibraryScanner.rawExtensions` already
+/// indexes as a frame (NEF, ARW, DNG, ...) silently never counted toward
+/// the wide-field majority, so a Nikon/Sony wide-field rig's stats always
+/// fell through to the narrow-field bucket. Now sourced from
+/// `LibraryScanner.rawExtensions` itself.
+@Test func wideFieldDefaultExtensionsCoverEveryScannerRawFormatNotJustCR3() {
+    let rule = WideFieldRule()
+    let files = [
+        lightFile(1, ext: "nef", target: "M31"),
+        lightFile(2, ext: "nef", target: "M31"),
+        lightFile(3, ext: "fit", target: "M31"),
+    ]
+    #expect(WideFieldHeuristic.isWideField(target: "M31", files: files, meta: [:], rule: rule))
+}
+
 @Test func wideFieldExtensionMajorityTriggers() {
     let rule = WideFieldRule(extensions: ["cr3"], maxFocalLengthMM: 135, nameMarkers: ["wide"], overrides: [:])
     let files = [

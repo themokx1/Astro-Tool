@@ -3,6 +3,17 @@ import Foundation
 /// Rule for classifying frames as wide-field vs. narrow-field/deep-sky,
 /// plus per-target manual overrides.
 public struct WideFieldRule: Codable, Equatable, Sendable {
+    /// Extensions (matched case-insensitively, see `WideFieldHeuristic`)
+    /// that count as a wide-field DSLR/mirrorless frame. Before this
+    /// default only covered `cr3`/`tif` -- every other camera RAW format
+    /// `LibraryScanner.rawExtensions` already recognizes as a frame at all
+    /// (CR2, NEF, ARW, DNG, RAF, ORF, RW2, PEF, SRW) silently never
+    /// qualified as wide-field regardless of focal length, so e.g. a Nikon
+    /// or Sony wide-field rig's stats always fell through to the narrow-
+    /// field bucket. Sourced from `LibraryScanner.rawExtensions` itself
+    /// (sorted, for a deterministic default) plus `tiff` alongside the
+    /// existing `tif`, rather than a second hand-picked list that could
+    /// silently drift from what the scanner actually indexes.
     public var extensions: [String]
     public var maxFocalLengthMM: Double
     public var nameMarkers: [String]
@@ -11,7 +22,7 @@ public struct WideFieldRule: Codable, Equatable, Sendable {
     public var overrides: [String: Bool]
 
     public init(
-        extensions: [String] = ["cr3", "tif"],
+        extensions: [String] = LibraryScanner.rawExtensions.sorted() + ["tif", "tiff"],
         maxFocalLengthMM: Double = 135,
         nameMarkers: [String] = ["wide"],
         overrides: [String: Bool] = [:]

@@ -19,7 +19,7 @@ import Testing
     #expect(config.toolOutputDirNames == ["Stack", "Review", "Reject", "light_frame_rating_report_assets", "masters"])
     #expect(config.intentional == IntentionalPatterns())
 
-    #expect(config.wideField.extensions == ["cr3", "tif"])
+    #expect(config.wideField.extensions == ["arw", "cr2", "cr3", "dng", "nef", "orf", "pef", "raf", "rw2", "srw", "tif", "tiff"])
     #expect(config.wideField.maxFocalLengthMM == 135)
     #expect(config.wideField.nameMarkers == ["wide"])
     #expect(config.wideField.overrides == [:])
@@ -484,7 +484,7 @@ import Testing
 
 @Test func defaultWideFieldRuleHasExpectedValues() {
     let rule = WideFieldRule()
-    #expect(rule.extensions == ["cr3", "tif"])
+    #expect(rule.extensions == ["arw", "cr2", "cr3", "dng", "nef", "orf", "pef", "raf", "rw2", "srw", "tif", "tiff"])
     #expect(rule.maxFocalLengthMM == 135)
     #expect(rule.nameMarkers == ["wide"])
     #expect(rule.overrides == [:])
