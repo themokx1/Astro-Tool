@@ -1806,6 +1806,56 @@ private func makeFixtureWithStaleStackProductPromotion() throws -> (fixture: Sca
     }
 }
 
+/// Task 5 fix: `scan()` now batches its writes inside an explicit
+/// transaction, committed every ~2000 files and on any error -- a scan
+/// cancelled partway through must still durably persist whatever it fully
+/// wrote before the cancellation landed, not leave those rows sitting in an
+/// uncommitted (and therefore invisible-to-everyone-else) transaction
+/// forever. Reopening a FRESH `Database` connection to the same on-disk
+/// file (rather than reusing the scanner's own connection, which would see
+/// its own uncommitted writes regardless via read-your-own-writes) is what
+/// actually proves the commit happened.
+@Test func cancelledScanDurablyPersistsFilesFullyWrittenBeforeCancellation() throws {
+    // An otherwise-empty library (no messy fixture) so every checkCancellation
+    // call is accounted for by these 64 files alone -- deterministic timing
+    // for exactly when the cancellation lands mid-walk.
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    for i in 0..<64 {
+        let url = fixture.root.appendingPathComponent("stacks/PartialCommit/f\(i).fit")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: url)
+    }
+
+    final class CancelAfterN: @unchecked Sendable {
+        private let lock = NSLock()
+        private var checks = 0
+        private let cancelAfter: Int
+        init(cancelAfter: Int) { self.cancelAfter = cancelAfter }
+        func shouldCancel() -> Bool {
+            lock.withLock {
+                checks += 1
+                return checks > cancelAfter
+            }
+        }
+    }
+    let cancellation = CancelAfterN(cancelAfter: 40)
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+
+    #expect(throws: CancellationError.self) {
+        _ = try scanner.scan(shouldCancel: cancellation.shouldCancel)
+    }
+
+    let dbPath = fixture.dbDir.appendingPathComponent("test.sqlite").path
+    let reopened = try Database(path: dbPath)
+    let persistedUnderPartialCommit = try reopened.allFiles(includeMissing: false)
+        .filter { $0.path.hasPrefix("stacks/PartialCommit/") }
+        .count
+    #expect(persistedUnderPartialCommit > 0)
+    #expect(persistedUnderPartialCommit < 64)
+}
+
 @Test func detailedScanCooperativelyCancelsBeforeProcessingAllFiles() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

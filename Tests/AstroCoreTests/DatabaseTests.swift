@@ -2258,3 +2258,86 @@ private func sessionFile(
         _ = try Database(path: path)
     }
 }
+
+// MARK: - Explicit transactions (batched writes, Task 5 fix)
+
+@Test func beginThenCommitTransactionPersistsWritesMadeInBetween() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-txn-commit-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("txn.sqlite").path
+
+    let database = try Database(path: path)
+    try database.beginTransaction()
+    _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/a.fit"))
+    _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/b.fit"))
+
+    // A SECOND connection to the same file must not see the writes yet --
+    // proves these two upserts really are inside one still-open explicit
+    // transaction, not silently autocommitted one at a time as before.
+    let outsideBeforeCommit = try Database(path: path)
+    #expect(try outsideBeforeCommit.allFiles(includeMissing: true).isEmpty)
+
+    try database.commitTransaction()
+
+    let outsideAfterCommit = try Database(path: path)
+    #expect(try outsideAfterCommit.allFiles(includeMissing: true).count == 2)
+}
+
+@Test func rollbackTransactionDiscardsWritesSinceBegin() throws {
+    let database = try Database(path: ":memory:")
+    _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/pre-existing.fit"))
+
+    try database.beginTransaction()
+    _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/rolled-back.fit"))
+    database.rollbackTransaction()
+
+    let paths = try database.allFiles(includeMissing: true).map(\.path)
+    #expect(paths == ["sessions/M31/2026-01-01/lights/pre-existing.fit"])
+}
+
+@Test func commitOrRollbackTransactionWithNoneOpenIsANoOp() throws {
+    let database = try Database(path: ":memory:")
+    // Neither should throw, and neither should touch any state -- there is
+    // nothing to commit or roll back.
+    try database.commitTransaction()
+    database.rollbackTransaction()
+    _ = try database.upsertFile(sampleFile())
+    #expect(try database.allFiles(includeMissing: true).count == 1)
+}
+
+@Test func beginTransactionCalledTwiceInARowIsAbsorbedNotRejected() throws {
+    let database = try Database(path: ":memory:")
+    try database.beginTransaction()
+    try database.beginTransaction()
+    _ = try database.upsertFile(sampleFile())
+    try database.commitTransaction()
+
+    #expect(try database.allFiles(includeMissing: true).count == 1)
+}
+
+/// A `Database` method that opens its OWN transaction internally
+/// (`replaceTargetGoalTagsAtomically`, `deleteCaptureGroup`, ...) must not
+/// try to issue a nested `BEGIN` when called while a batched-write caller
+/// (the scanner, here simulated directly) already has one open -- SQLite
+/// rejects that outright. It should instead join the ambient transaction:
+/// its writes become part of whatever the OUTER caller eventually commits
+/// or rolls back, rather than committing independently.
+@Test func aMethodWithItsOwnInternalTransactionJoinsAnAlreadyOpenAmbientOne() throws {
+    let database = try Database(path: ":memory:")
+
+    try database.beginTransaction()
+    _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/a.fit"))
+    // `replaceTargetGoalTagsAtomically` normally opens/commits its own
+    // transaction -- called here while the outer one above is still open,
+    // it must not throw "cannot start a transaction within a transaction".
+    try database.replaceTargetGoalTagsAtomically(target: "M31", with: ["goal:10h"])
+    database.rollbackTransaction()
+
+    // Rolling back the OUTER transaction discarded the nested call's write
+    // too -- proof the two shared one transaction rather than the nested
+    // call quietly committing on its own.
+    #expect(try database.allFiles(includeMissing: true).isEmpty)
+    #expect(try database.tags(target: "M31", sessionDate: nil).isEmpty)
+}

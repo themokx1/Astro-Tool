@@ -579,6 +579,14 @@ public final class Database: @unchecked Sendable {
     // `@testable import`.
     let db: SQLiteDB
     private let lock = NSLock()
+    /// Whether an explicit transaction (opened by `beginTransaction()`, or
+    /// ambiently by another locked method via `inOwnOrAmbientTransaction`)
+    /// is currently open on `db`. Only ever read/written while `lock` is
+    /// held -- either inside `withLock` directly, or inside a helper called
+    /// from within an already-`withLock`ed method. SQLite rejects a nested
+    /// `BEGIN` outright, so every call site that opens its own transaction
+    /// must check this first rather than issuing one unconditionally.
+    private var inTransaction = false
 
     // Internal (not private) so migration tests can exec this exact string
     // directly against a raw `SQLiteDB` to simulate an existing v1 database,
@@ -1059,6 +1067,85 @@ public final class Database: @unchecked Sendable {
         return try body()
     }
 
+    // MARK: - Explicit transactions (batched writes)
+
+    /// Opens an explicit transaction so a caller doing many sequential
+    /// writes -- the library scanner especially, on a 100k+-file real-world
+    /// library -- pays for one fsync per BATCH instead of one per statement.
+    /// Outside an explicit transaction, SQLite commits (and fsyncs) after
+    /// every single INSERT/UPDATE, which dominates wall-clock time once the
+    /// file count reaches the tens of thousands, especially over a network
+    /// share or on a spinning disk. A no-op if a transaction is already open
+    /// (see `inTransaction`'s doc comment) -- callers pair this with
+    /// `commitTransaction()`; calling it twice in a row without an
+    /// intervening commit is simply absorbed rather than throwing.
+    public func beginTransaction() throws {
+        try withLock {
+            guard !inTransaction else { return }
+            try db.exec("BEGIN IMMEDIATE;")
+            inTransaction = true
+        }
+    }
+
+    /// Commits the transaction opened by `beginTransaction()`. A no-op if
+    /// none is open.
+    public func commitTransaction() throws {
+        try withLock {
+            guard inTransaction else { return }
+            try db.exec("COMMIT;")
+            inTransaction = false
+        }
+    }
+
+    /// Rolls back the transaction opened by `beginTransaction()`, discarding
+    /// every write since. A no-op if none is open. Never throws -- mirrors
+    /// every other cleanup-path ROLLBACK in this file (see `migrate()`):
+    /// a caller unwinding after a real error must not lose that original
+    /// error to a secondary ROLLBACK failure.
+    public func rollbackTransaction() {
+        withLock {
+            guard inTransaction else { return }
+            try? db.exec("ROLLBACK;")
+            inTransaction = false
+        }
+    }
+
+    /// Runs `body` inside a transaction, opening one only if none is already
+    /// active. A method invoked while another caller already has a
+    /// transaction open (typically the scanner's own batched-write
+    /// transaction above) joins that AMBIENT transaction instead of issuing
+    /// a nested `BEGIN`, which SQLite rejects outright -- its writes simply
+    /// become part of whatever the outer owner eventually commits or rolls
+    /// back. On error, only a transaction THIS call itself opened is rolled
+    /// back; a nested call's own failure must never discard work an outer,
+    /// still-running transaction owner has already accumulated -- that
+    /// owner alone decides whether to commit or roll back what it has.
+    ///
+    /// Callers must already hold `lock` (this does not acquire it itself) --
+    /// it directly reads/writes `inTransaction`, which is otherwise only
+    /// ever touched while `lock` is held.
+    private func inOwnOrAmbientTransaction<T>(_ body: () throws -> T) throws -> T {
+        let ownsTransaction = !inTransaction
+        if ownsTransaction {
+            try db.exec("BEGIN IMMEDIATE;")
+            inTransaction = true
+        }
+        do {
+            let result = try body()
+            if ownsTransaction {
+                try db.exec("COMMIT;")
+                inTransaction = false
+            }
+            return result
+        } catch {
+            if ownsTransaction {
+                try? db.exec("ROLLBACK;")
+                inTransaction = false
+            }
+            throw error
+        }
+    }
+
     public func libraryIndexCounts() throws -> LibraryIndexCounts {
         try withLock {
             var counts = LibraryIndexCounts(projectCount: 0, nightCount: 0, frameCount: 0)
@@ -1111,8 +1198,7 @@ public final class Database: @unchecked Sendable {
         }
 
         try withLock {
-            try db.exec("BEGIN IMMEDIATE;")
-            do {
+            try inOwnOrAmbientTransaction {
                 var keptIDs = Set<Int64>()
                 for record in prepared {
                     keptIDs.insert(try upsertFilterProfileUnlocked(record))
@@ -1125,10 +1211,6 @@ public final class Database: @unchecked Sendable {
                 for id in existingIDs where !keptIDs.contains(id) {
                     try db.run("DELETE FROM filter_profiles WHERE id = ?;", bind: [.int(id)])
                 }
-                try db.exec("COMMIT;")
-            } catch {
-                try? db.exec("ROLLBACK;")
-                throw error
             }
         }
     }
@@ -1581,15 +1663,10 @@ public final class Database: @unchecked Sendable {
     /// The indexed `files` rows and every library file remain untouched.
     public func deleteCaptureGroup(id: Int64) throws {
         try withLock {
-            try db.exec("BEGIN IMMEDIATE;")
-            do {
+            try inOwnOrAmbientTransaction {
                 try db.run("DELETE FROM file_capture_assignments WHERE capture_group_id = ?;", bind: [.int(id)])
                 try db.run("DELETE FROM capture_sources WHERE capture_group_id = ?;", bind: [.int(id)])
                 try db.run("DELETE FROM capture_groups WHERE id = ?;", bind: [.int(id)])
-                try db.exec("COMMIT;")
-            } catch {
-                try? db.exec("ROLLBACK;")
-                throw error
             }
         }
     }
@@ -1610,8 +1687,7 @@ public final class Database: @unchecked Sendable {
         now: Double
     ) throws -> ConversionMetadataBackup {
         try withLock {
-            try db.exec("BEGIN IMMEDIATE;")
-            do {
+            try inOwnOrAmbientTransaction {
                 var backup = ConversionMetadataBackup()
                 var groupIDsBySlug: [String: Int64] = [:]
 
@@ -1822,11 +1898,7 @@ public final class Database: @unchecked Sendable {
                     )
                 }
 
-                try db.exec("COMMIT;")
                 return backup
-            } catch {
-                try? db.exec("ROLLBACK;")
-                throw error
             }
         }
     }
@@ -1836,8 +1908,7 @@ public final class Database: @unchecked Sendable {
     /// removed; they are harmless and may contain later user files.
     func rollbackSessionConversionMetadata(_ backup: ConversionMetadataBackup) throws {
         try withLock {
-            try db.exec("BEGIN IMMEDIATE;")
-            do {
+            try inOwnOrAmbientTransaction {
                 for groupID in backup.createdGroupIDs {
                     try db.run(
                         "DELETE FROM file_capture_assignments WHERE capture_group_id = ?;",
@@ -1930,10 +2001,6 @@ public final class Database: @unchecked Sendable {
                         ]
                     )
                 }
-                try db.exec("COMMIT;")
-            } catch {
-                try? db.exec("ROLLBACK;")
-                throw error
             }
         }
     }
@@ -2047,6 +2114,27 @@ public final class Database: @unchecked Sendable {
                 records.append(Self.fileRecord(from: row))
             }
             return records
+        }
+    }
+
+    /// The `path`/`target` of every tracked file -- a lighter alternative to
+    /// `allFiles` for a caller (the scanner's own post-walk missing-file
+    /// pass) that only ever reads those two columns off each row. On a
+    /// 100k+-file library, materializing a full `FileRecord` (14 columns,
+    /// including `header_json`-adjacent-sized fields no caller here touches)
+    /// per row just to read two strings is wasted allocation and parsing
+    /// work repeated on every single scan.
+    public func trackedPathsAndTargets(includeMissing: Bool) throws -> [(path: String, target: String?)] {
+        try withLock {
+            var result: [(path: String, target: String?)] = []
+            let sql = includeMissing
+                ? "SELECT path, target FROM files;"
+                : "SELECT path, target FROM files WHERE missing = 0;"
+            try db.query(sql) { row in
+                guard let path = row.string(0) else { return }
+                result.append((path, row.string(1)))
+            }
+            return result
         }
     }
 
@@ -2887,8 +2975,7 @@ public final class Database: @unchecked Sendable {
         }
 
         try withLock {
-            try db.exec("BEGIN IMMEDIATE TRANSACTION;")
-            do {
+            try inOwnOrAmbientTransaction {
                 var existingGoalTags: [String] = []
                 try db.query(
                     "SELECT tag FROM tags WHERE target = ? AND session_date IS NULL;",
@@ -2917,10 +3004,6 @@ public final class Database: @unchecked Sendable {
                         )
                     }
                 }
-                try db.exec("COMMIT;")
-            } catch {
-                try? db.exec("ROLLBACK;")
-                throw error
             }
         }
     }

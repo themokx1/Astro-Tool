@@ -323,53 +323,82 @@ public final class LibraryScanner {
         )
         progressUpdate?(ScanProgress(scanned: 0, total: total))
 
-        try walk(
-            dirURL: startURL,
-            relPrefix: subpath ?? "",
-            seen: &seen,
-            processedCount: &processedCount,
-            progress: progress,
-            progressUpdate: progressUpdate,
-            total: total,
-            shouldCancel: shouldCancel,
-            summary: &summary,
-            refreshMeta: refreshMeta,
-            changedTargets: &changedTargets,
-            changedSessions: &changedSessions,
-            isTopLevel: true
-        )
-        try Self.checkCancellation(shouldCancel)
+        // Every write below (`walk`'s per-file upserts, then `markMissing`)
+        // runs inside ONE explicit transaction -- `walk` itself commits and
+        // reopens it every ~2000 files (see `Self.transactionBatchSize`) so
+        // a 100k+-file scan pays for one fsync per BATCH instead of one per
+        // statement, which used to dominate wall-clock time on a spinning
+        // disk or network share. On any error (including cancellation),
+        // everything fully written so far this run is still a valid
+        // incremental result and must survive -- committed here rather than
+        // left open (and so invisible to every other reader) forever.
+        try db.beginTransaction()
+        do {
+            try walk(
+                dirURL: startURL,
+                relPrefix: subpath ?? "",
+                seen: &seen,
+                processedCount: &processedCount,
+                progress: progress,
+                progressUpdate: progressUpdate,
+                total: total,
+                shouldCancel: shouldCancel,
+                summary: &summary,
+                refreshMeta: refreshMeta,
+                changedTargets: &changedTargets,
+                changedSessions: &changedSessions,
+                isTopLevel: true
+            )
+            try Self.checkCancellation(shouldCancel)
 
-        let tracked = try db.allFiles(includeMissing: false)
-        let scoped: [FileRecord]
-        if let subpath {
-            scoped = tracked.filter { $0.path == subpath || $0.path.hasPrefix(subpath + "/") }
-        } else {
-            scoped = tracked
-        }
-        // Byte-wise (not `Set<String>`'s Unicode-canonical) membership check
-        // against `seen` -- see `PathNormalization`'s doc comment. Without
-        // this, a STALE differently-normalized row already in the DB (from
-        // before every relative path was normalized at scan time below)
-        // would compare as "still present" here even though its bytes never
-        // matched anything actually seen this scan, undercounting `missing`
-        // relative to what `db.markMissing` below actually retires.
-        let seenBytes = PathNormalization.byteSet(seen)
-        summary.missing = scoped.reduce(into: 0) { count, record in
-            guard !PathNormalization.containsByteWise(record.path, in: seenBytes) else { return }
-            guard !Self.isUnder(record.path, anyOf: summary.inaccessiblePaths) else { return }
-            count += 1
-            if let target = record.target { changedTargets.insert(target) }
-        }
+            // `path`/`target` only -- see `trackedPathsAndTargets`'s own doc
+            // comment on why this is lighter than `allFiles` for a caller
+            // that never touches any of the other twelve columns.
+            let tracked = try db.trackedPathsAndTargets(includeMissing: false)
+            let scoped: [(path: String, target: String?)]
+            if let subpath {
+                scoped = tracked.filter { $0.path == subpath || $0.path.hasPrefix(subpath + "/") }
+            } else {
+                scoped = tracked
+            }
+            // Byte-wise (not `Set<String>`'s Unicode-canonical) membership
+            // check against `seen` -- see `PathNormalization`'s doc comment.
+            // Without this, a STALE differently-normalized row already in
+            // the DB (from before every relative path was normalized at
+            // scan time below) would compare as "still present" here even
+            // though its bytes never matched anything actually seen this
+            // scan, undercounting `missing` relative to what
+            // `db.markMissing` below actually retires.
+            let seenBytes = PathNormalization.byteSet(seen)
+            summary.missing = scoped.reduce(into: 0) { count, record in
+                guard !PathNormalization.containsByteWise(record.path, in: seenBytes) else { return }
+                guard !Self.isUnder(record.path, anyOf: summary.inaccessiblePaths) else { return }
+                count += 1
+                if let target = record.target { changedTargets.insert(target) }
+            }
 
-        try db.markMissing(pathsNotIn: seen, underSubpath: subpath, excludingPrefixes: summary.inaccessiblePaths)
-        try Self.checkCancellation(shouldCancel)
+            try db.markMissing(pathsNotIn: seen, underSubpath: subpath, excludingPrefixes: summary.inaccessiblePaths)
+            try Self.checkCancellation(shouldCancel)
+            try db.commitTransaction()
+        } catch {
+            try? db.commitTransaction()
+            throw error
+        }
 
         summary.changedTargets = changedTargets.sorted()
         summary.changedSessions = changedSessions.sorted()
         progressUpdate?(ScanProgress(scanned: processedCount, total: processedCount))
         return summary
     }
+
+    /// How many files `walk` fully records before committing the open
+    /// transaction and opening a fresh one -- bounds how much work a crash
+    /// or a killed process partway through an enormous scan could lose to
+    /// an uncommitted transaction, while still amortizing the fsync cost
+    /// over a large batch. ~2000 is arbitrary but conservative: at typical
+    /// FITS/RAW frame-file sizes this is a few seconds of scanning even on
+    /// a slow disk, not minutes.
+    static let transactionBatchSize = 2000
 
     private static func isUnder(_ path: String, anyOf prefixes: [String]) -> Bool {
         prefixes.contains { path == $0 || path.hasPrefix($0 + "/") }
@@ -492,6 +521,14 @@ public final class LibraryScanner {
                 changedTargets: &changedTargets,
                 changedSessions: &changedSessions
             )
+            // Checked only AFTER `recordFile` fully returns, never between
+            // its own writes -- a commit boundary always lands between two
+            // whole files, so the transaction `scan()` commits on an error
+            // right after this never contains a half-written file.
+            if processedCount % LibraryScanner.transactionBatchSize == 0 {
+                try db.commitTransaction()
+                try db.beginTransaction()
+            }
             if processedCount % 64 == 0 {
                 progressUpdate?(ScanProgress(scanned: processedCount, total: total))
             }
