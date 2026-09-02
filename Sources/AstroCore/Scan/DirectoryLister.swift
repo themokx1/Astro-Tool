@@ -28,7 +28,7 @@ public enum DirectoryLister {
         do {
             entries = try FileManager.default.contentsOfDirectory(
                 at: dirURL,
-                includingPropertiesForKeys: [.isDirectoryKey],
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
                 options: []
             )
         } catch {
@@ -40,7 +40,20 @@ public enum DirectoryLister {
 
         for entryURL in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             let name = entryURL.lastPathComponent
-            let values = try entryURL.resourceValues(forKeys: [.isDirectoryKey])
+            // A directory can vanish between `contentsOfDirectory` above and
+            // this `resourceValues` call (same race `LibraryScanner.walk`
+            // guards against) -- skip rather than aborting the whole listing
+            // over one entry that's no longer there.
+            guard let values = try? entryURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { continue }
+            // A symlinked directory (e.g. a Siril work-tree loop pointing
+            // back at an ancestor, or simply at itself) must be skipped
+            // BEFORE the `isDirectory` check below -- `resourceValues`
+            // follows the link, so a symlink to a directory reports
+            // `isDirectory == true` same as a real one, and recursing into
+            // it would walk forever on a cyclical link. Mirrors
+            // `LibraryScanner.walk`'s own "skip all symbolic links
+            // consistently" stance.
+            guard values.isSymbolicLink != true else { continue }
             guard values.isDirectory == true else { continue }
 
             let relativePath = relPrefix.isEmpty ? name : relPrefix + "/" + name
