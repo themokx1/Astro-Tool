@@ -2846,6 +2846,7 @@
 "The local network permission is used only to hand data between your own AstroTool apps." = "A helyi hálózati engedélyt csak a saját AstroTool alkalmazásaid közötti adatátvitelhez használjuk.";
 "Waiting for iPhone" = "Várakozás az iPhone-ra";
 "Confirm the pairing code" = "Erősítsd meg a párosítási kódot";
+"Pairing with: %@" = "Párosítás vele: %@";
 "Confirm" = "Megerősítés";
 "Preparing data" = "Adatok előkészítése";
 "Transferring" = "Átvitel";

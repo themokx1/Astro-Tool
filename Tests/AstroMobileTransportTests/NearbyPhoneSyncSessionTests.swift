@@ -47,6 +47,7 @@ struct NearbyPhoneSyncSessionTests {
 
         var collected: [NearbyPhoneSyncState] = []
         var phoneCode: String?
+        var phonePairingPeerDisplayName: String?
         for await state in await phoneSession.run(handleForwardPackage: { directory, wrapping in
             try Self.assertContainsPackageFiles(directory)
             let received = try await MobilePackageService().authenticatePreview(from: directory, wrapping: wrapping)
@@ -54,8 +55,9 @@ struct NearbyPhoneSyncSessionTests {
             return try await Self.exportReturnPackage(root: returnStaging.url)
         }) {
             collected.append(state)
-            if case .pairingCode(let code) = state {
+            if case .pairingCode(let code, let peerDisplayName) = state {
                 phoneCode = code
+                phonePairingPeerDisplayName = peerDisplayName
                 await phoneSession.confirmPairing()
             }
         }
@@ -71,6 +73,9 @@ struct NearbyPhoneSyncSessionTests {
         #expect(mac.wasFirstPairing)
         let macCode = try #require(mac.shortAuthenticationCode)
         #expect(try #require(phoneCode) == macCode)
+        // Multi-Mac disambiguation (fix item 3): the phone's pairing-code
+        // event already carries the Mac's own display name.
+        #expect(phonePairingPeerDisplayName == "Zoltán Macje")
         #expect(mac.receivedReturn != nil)
 
         #expect(try phoneStore.trustedPeers().count == 1)

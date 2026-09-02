@@ -169,6 +169,7 @@
 "Open iPhone Sync on your Mac first, then look for it here." = "Open iPhone Sync on your Mac first, then look for it here.";
 "Look for my Mac" = "Look for my Mac";
 "Check that both screens show the same code" = "Check that both screens show the same code";
+"Pairing with: %@" = "Pairing with: %@";
 "Not a match" = "Not a match";
 "Codes match" = "Codes match";
 "Your Mac is up to date" = "Your Mac is up to date";

@@ -579,11 +579,17 @@ public struct MobileSyncView: View {
             nearbyProgress("Waiting for iPhone")
             Button("Cancel", role: .cancel) { store.cancelNearbySync() }
                 .accessibilityIdentifier("v5.nearby.cancel")
-        case .pairing(let code):
+        case .pairing(let code, let peerDisplayName):
             VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
                 Text("Confirm the pairing code")
                     .astroSectionTitle()
                     .accessibilityIdentifier("v5.nearby.state")
+                if !peerDisplayName.isEmpty {
+                    Text("Pairing with: \(peerDisplayName)")
+                        .astroBody()
+                        .foregroundStyle(AstroTokens.Color.inkDim)
+                        .accessibilityIdentifier("v5.nearby.peer-name")
+                }
                 Text(verbatim: code)
                     .font(.system(.largeTitle, design: .monospaced))
                     .textSelection(.enabled)

@@ -46,7 +46,10 @@ public enum NearbySyncFailure: Equatable, Sendable {
 public enum NearbySyncEvent: Sendable {
     case waitingForPhone
     /// A first pairing only — a known peer's session never produces this.
-    case pairingCode(String)
+    /// `peerDisplayName` is the connecting iPhone's own name (fix item 3:
+    /// multi-Mac/multi-iPhone disambiguation), so the confirmation UI can
+    /// show "Pairing with: <name>" before the user compares the code.
+    case pairingCode(code: String, peerDisplayName: String)
     case preparing
     case transferring
     case verifying
@@ -345,7 +348,7 @@ public actor NearbySyncCoordinator {
         // it here runs concurrently with `establishTask` driving the same
         // handshake forward (both operate on `session`, an actor).
         if let code = try? await session.shortAuthenticationCode {
-            emit(.pairingCode(code))
+            emit(.pairingCode(code: code, peerDisplayName: await session.peerDisplayName))
         }
 
         let outcome: NearbyPairingOutcome

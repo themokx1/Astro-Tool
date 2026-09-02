@@ -213,4 +213,23 @@ struct MobileSyncSurfaceTests {
         #expect(view.contains("case .connectionStalled: \"The connection stalled. Nothing was changed.\""))
         #expect(screen.contains("case .connectionStalled:"))
     }
+
+    // MARK: - Fix 3: multi-Mac/multi-iPhone disambiguation
+
+    @Test("The peer's display name is shown alongside the pairing code on both Mac and iPhone")
+    func pairingCodeShowsPeerDisplayName() throws {
+        let session = try String(contentsOf: root.appendingPathComponent("Sources/AstroMobileTransport/NearbyPairingSession.swift"), encoding: .utf8)
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncStore.swift"), encoding: .utf8)
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+        let rootView = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileRootView.swift"), encoding: .utf8)
+
+        #expect(session.contains("public var peerDisplayName: String"))
+        #expect(store.contains("case pairing(code: String, peerDisplayName: String)"))
+        #expect(view.contains("v5.nearby.peer-name"))
+        #expect(view.contains("Pairing with: \\(peerDisplayName)"))
+        #expect(screen.contains("v5.mobile.nearby.peer-name"))
+        #expect(screen.contains("Pairing with: \\(peerDisplayName)"))
+        #expect(rootView.contains("case pairingCode(code: String, peerDisplayName: String)"))
+    }
 }

@@ -17,7 +17,10 @@ private enum MobileTab: Hashable {
 enum MobileNearbySyncUIState: Equatable {
     case idle
     case searching
-    case pairingCode(String)
+    /// `peerDisplayName` is the connecting Mac's own name (fix item 3:
+    /// multi-Mac disambiguation), shown alongside the code so the user can
+    /// tell which device answered before confirming.
+    case pairingCode(code: String, peerDisplayName: String)
     case connecting
     case receiving
     case staged
@@ -29,7 +32,7 @@ enum MobileNearbySyncUIState: Equatable {
         switch state {
         case .idle: self = .idle
         case .searching: self = .searching
-        case .pairingCode(let code): self = .pairingCode(code)
+        case .pairingCode(let code, let peerDisplayName): self = .pairingCode(code: code, peerDisplayName: peerDisplayName)
         case .connecting: self = .connecting
         case .receiving: self = .receiving
         case .staged: self = .staged

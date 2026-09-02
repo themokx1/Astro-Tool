@@ -33,8 +33,8 @@ struct MobileNearbySyncScreen: View {
                     progressView(String(localized: "Looking for your Mac…"), identifier: "v5.mobile.nearby.searching")
                 case .connecting:
                     progressView(String(localized: "Connecting…"), identifier: "v5.mobile.nearby.connecting")
-                case .pairingCode(let code):
-                    codeView(code)
+                case .pairingCode(let code, let peerDisplayName):
+                    codeView(code, peerDisplayName: peerDisplayName)
                 case .receiving:
                     progressView(String(localized: "Receiving the plan from your Mac…"), identifier: "v5.mobile.nearby.receiving")
                 case .staged:
@@ -101,11 +101,17 @@ struct MobileNearbySyncScreen: View {
         .accessibilityIdentifier(identifier)
     }
 
-    private func codeView(_ code: String) -> some View {
+    private func codeView(_ code: String, peerDisplayName: String) -> some View {
         VStack(spacing: 20) {
             Text("Check that both screens show the same code")
                 .font(.headline)
                 .multilineTextAlignment(.center)
+            if !peerDisplayName.isEmpty {
+                Text("Pairing with: \(peerDisplayName)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("v5.mobile.nearby.peer-name")
+            }
             Text(code)
                 .font(.system(size: 40, weight: .bold, design: .monospaced))
                 .accessibilityIdentifier("v5.mobile.nearby.code")

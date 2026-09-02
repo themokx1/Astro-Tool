@@ -108,7 +108,10 @@ public enum MobileSyncFailure: Equatable, Sendable {
 public enum NearbySyncPhase: Equatable, Sendable {
     case idle
     case advertising
-    case pairing(code: String)
+    /// `peerDisplayName` is the connecting iPhone's own name (fix item 3:
+    /// multi-Mac/multi-iPhone disambiguation), shown alongside the code so
+    /// the user can tell which device answered before confirming.
+    case pairing(code: String, peerDisplayName: String)
     case preparing
     case transferring
     case verifying
@@ -455,8 +458,8 @@ public final class MobileSyncStore {
         switch event {
         case .waitingForPhone:
             nearbyPhase = .advertising
-        case .pairingCode(let code):
-            nearbyPhase = .pairing(code: code)
+        case .pairingCode(let code, let peerDisplayName):
+            nearbyPhase = .pairing(code: code, peerDisplayName: peerDisplayName)
         case .preparing:
             nearbyPhase = .preparing
         case .transferring:

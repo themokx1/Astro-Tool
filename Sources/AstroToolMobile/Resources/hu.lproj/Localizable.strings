@@ -164,6 +164,7 @@
 "Open iPhone Sync on your Mac first, then look for it here." = "Először nyisd meg az iPhone szinkronizálása lehetőséget a Macen, majd keresd itt.";
 "Look for my Mac" = "Mac keresése";
 "Check that both screens show the same code" = "Ellenőrizd, hogy mindkét képernyőn ugyanaz a kód látható-e";
+"Pairing with: %@" = "Párosítás vele: %@";
 "Not a match" = "Nem egyezik";
 "Codes match" = "A kódok egyeznek";
 "Your Mac is up to date" = "A Mac naprakész";

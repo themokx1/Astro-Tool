@@ -60,6 +60,39 @@ import Testing
         #expect(try phoneStore.trustedPeers().map(\.deviceID) == [macIdentity.deviceID])
     }
 
+    /// Multi-Mac disambiguation (fix item 3): the peer's `.hello`-supplied
+    /// display name must already be readable by the time the pairing code
+    /// itself resolves, so a "Pairing with: <name>" label can be shown
+    /// alongside the code before the user confirms it -- not just after
+    /// `establish()` returns, which is too late (the confirmation UI is
+    /// exactly what needs the name).
+    @Test func peerDisplayNameIsAvailableAsSoonAsTheShortAuthenticationCodeResolves() async throws {
+        let (macConnection, phoneConnection) = InMemoryDuplexConnection.makePair()
+        let macStore = InMemoryDeviceIdentityStore()
+        let phoneStore = InMemoryDeviceIdentityStore()
+        let macIdentity = try macStore.loadOrCreateOwnIdentity(displayName: "Zoltán Macje")
+        let phoneIdentity = try phoneStore.loadOrCreateOwnIdentity(displayName: "Zoltán iPhone")
+
+        let macSession = NearbyPairingSession(role: .listener, identity: macIdentity, trustStore: macStore, connection: macConnection)
+        let phoneSession = NearbyPairingSession(role: .initiator, identity: phoneIdentity, trustStore: phoneStore, connection: phoneConnection)
+
+        async let macEstablish = macSession.establish()
+        async let phoneEstablish = phoneSession.establish()
+
+        _ = try await macSession.shortAuthenticationCode
+        _ = try await phoneSession.shortAuthenticationCode
+
+        // Each side already knows the OTHER's display name at this point --
+        // before either has confirmed, let alone before establish() returns.
+        #expect(await macSession.peerDisplayName == "Zoltán iPhone")
+        #expect(await phoneSession.peerDisplayName == "Zoltán Macje")
+
+        await macSession.confirmPairing()
+        await phoneSession.confirmPairing()
+        _ = try await macEstablish
+        _ = try await phoneEstablish
+    }
+
     // MARK: - MITM: substituted ephemeral keys fail signature verification
 
     @Test func mitmSubstitutedEphemeralKeysFailSignatureVerificationAndProduceDivergentLocalCodes() async throws {
