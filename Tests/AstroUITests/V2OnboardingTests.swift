@@ -384,6 +384,47 @@ struct V2OnboardingTests {
         #expect(bookmarks.savedURL == nil)
     }
 
+    // MARK: - AstroTool's own data folder inside the picked library
+    // (2026-09-02 first-run audit, fix D)
+
+    @Test("Picking a folder that contains AstroTool's own data area says so instead of a generic failure")
+    func storageInsideLibraryIsItsOwnActionableProblem() async throws {
+        let fixture = try OnboardingFixture.make()
+        defer { fixture.remove() }
+        // Picking the home folder (or `/`) puts Application Support INSIDE
+        // the library; `AppStoragePaths` refuses, and that refusal used to
+        // collapse to `.other`'s "AstroTool could not complete this action".
+        let store = OnboardingStore(
+            sessionFactory: .constant(
+                OnboardingSessionClient(accessMode: .readOnly, scan: {
+                    throw TestFailure.denied
+                })
+            ),
+            storageFactory: .temporary(
+                applicationSupport: fixture.root.appendingPathComponent("ApplicationSupport", isDirectory: true),
+                caches: fixture.caches
+            ),
+            securityScopedAccess: .inactive
+        )
+
+        await #expect(throws: AppStoragePathsError.storageRootInsideLibrary) {
+            try await store.openAndScan(fixture.root)
+        }
+
+        #expect(store.phase.accessProblem == .storageInsideLibrary)
+        #expect(store.phase.accessProblem?.recovery == .rechooseLibrary)
+        let message = try #require(store.phase.accessProblemMessage)
+        #expect(message.contains("only holds your photos"))
+    }
+
+    @Test("Every storage-inside-library refusal maps to the same actionable problem")
+    func storageInsideLibraryCoversEveryRefusalShape() {
+        #expect(LibraryAccessProblem(catching: AppStoragePathsError.storageRootInsideLibrary) == .storageInsideLibrary)
+        #expect(LibraryAccessProblem(catching: AppStoragePathsError.storageDestinationInsideLibrary) == .storageInsideLibrary)
+        #expect(LibraryAccessProblem(catching: LibrarySessionError.indexDestinationInsideLibrary) == .storageInsideLibrary)
+        #expect(LibraryAccessProblem(catching: AppStoragePathsError.libraryIdentityMismatch) != .storageInsideLibrary)
+    }
+
     @Test("Summary continuation and preference setup remain separate optional choices")
     func summaryChoicesAreExplicit() async throws {
         let fixture = try OnboardingFixture.make()

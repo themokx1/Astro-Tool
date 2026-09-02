@@ -254,6 +254,13 @@ public enum LibraryAccessProblem: Equatable, Sendable {
     /// dropped) -- not an `AstroError`, so it is modeled here directly
     /// instead of forcing an artificial `AstroError` case for it.
     case notDirectory
+    /// The chosen folder would contain AstroTool's own private data area
+    /// (`AppStoragePaths`/`LibrarySession` refuse to put the index inside
+    /// the library it indexes) -- what picking the home folder, `/`, or
+    /// `~/Library` produces. 2026-09-02: these used to fall through to
+    /// `.other`'s "AstroTool could not complete this action", which named
+    /// neither the cause nor a fix.
+    case storageInsideLibrary
     case astro(AstroError)
     /// A failure that is neither of the above (should be rare to never in
     /// production -- every real open/scan failure throws `AstroError` or
@@ -265,6 +272,8 @@ public enum LibraryAccessProblem: Equatable, Sendable {
     init(catching error: any Error) {
         if error as? OnboardingStoreError == .notDirectory {
             self = .notDirectory
+        } else if Self.isStorageInsideLibrary(error) {
+            self = .storageInsideLibrary
         } else if let astroError = error as? AstroError {
             self = .astro(astroError)
         } else {
@@ -272,9 +281,23 @@ public enum LibraryAccessProblem: Equatable, Sendable {
         }
     }
 
+    /// Every shape the "AstroTool's own storage would land inside the
+    /// library" refusal can arrive in -- two from `AppStoragePaths.init`
+    /// (the storage ROOTS, and the individual destinations under them) and
+    /// one from `LibrarySession`, which re-checks the same invariant when it
+    /// opens the index.
+    private static func isStorageInsideLibrary(_ error: any Error) -> Bool {
+        if let storageError = error as? AppStoragePathsError {
+            return storageError == .storageRootInsideLibrary
+                || storageError == .storageDestinationInsideLibrary
+        }
+        return error as? LibrarySessionError == .indexDestinationInsideLibrary
+    }
+
     public var recovery: AstroErrorRecovery {
         switch self {
         case .notDirectory: .rechooseLibrary
+        case .storageInsideLibrary: .rechooseLibrary
         case .astro(let error): error.recovery
         case .other: .rechooseLibrary
         }
@@ -286,6 +309,8 @@ public enum LibraryAccessProblem: Equatable, Sendable {
         switch self {
         case .notDirectory:
             "Choose a folder that contains your image library. Individual files cannot be scanned as a library."
+        case .storageInsideLibrary:
+            "This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures."
         case .astro(let error):
             error.errorDescription ?? "AstroTool could not complete this action."
         case .other:
@@ -801,7 +826,7 @@ public struct LibraryWelcomeView: View {
         } description: {
             Self.accessProblemText(for: problem)
         } actions: {
-            recoveryButtons(for: problem.recovery)
+            recoveryButtons(for: problem)
             // Task 14: the old "Back" button led to the same place as
             // "Close" for this sheet -- two buttons that dismiss to the
             // same outcome give the user two ways to guess wrong. "Back" is
@@ -815,6 +840,22 @@ public struct LibraryWelcomeView: View {
     /// The dialog's action(s), derived from the error's own `recovery`
     /// instead of being fixed regardless of what failed (Task 14). Each
     /// case's primary action is `.buttonStyle(.borderedProminent)`.
+    ///
+    /// 2026-09-02: `.storageInsideLibrary` gets its own single action --
+    /// `.rechooseLibrary`'s usual pair ("Choose Library Again…" plus
+    /// "Choose a Different Library…") both mean the same thing here, and
+    /// the honest instruction is narrower: pick a folder that only holds
+    /// photos.
+    @ViewBuilder
+    private func recoveryButtons(for problem: LibraryAccessProblem) -> some View {
+        if problem == .storageInsideLibrary {
+            Button("Choose Another Folder…") { chooseAnotherLibrary() }
+                .buttonStyle(.borderedProminent)
+        } else {
+            recoveryButtons(for: problem.recovery)
+        }
+    }
+
     @ViewBuilder
     private func recoveryButtons(for recovery: AstroErrorRecovery) -> some View {
         switch recovery {
@@ -884,6 +925,8 @@ public struct LibraryWelcomeView: View {
         switch problem {
         case .notDirectory:
             Text("Choose a folder that contains your image library. Individual files cannot be scanned as a library.")
+        case .storageInsideLibrary:
+            Text("This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures.")
         case .astro(let error):
             accessProblemText(for: error)
         case .other:
