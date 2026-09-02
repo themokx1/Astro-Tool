@@ -1089,11 +1089,24 @@ public final class Database: @unchecked Sendable {
 
     /// Commits the transaction opened by `beginTransaction()`. A no-op if
     /// none is open.
+    ///
+    /// A FAILING commit still ends the transaction here: the flag must be
+    /// cleared (and any transaction SQLite still has open rolled back)
+    /// before rethrowing. Leaving it set poisons the connection for the rest
+    /// of the process -- every later `beginTransaction()` is absorbed as a
+    /// no-op and `inOwnOrAmbientTransaction` joins a phantom ambient
+    /// transaction, so nothing is ever committed again.
     public func commitTransaction() throws {
         try withLock {
             guard inTransaction else { return }
-            try db.exec("COMMIT;")
-            inTransaction = false
+            do {
+                try db.exec("COMMIT;")
+                inTransaction = false
+            } catch {
+                try? db.exec("ROLLBACK;")
+                inTransaction = false
+                throw error
+            }
         }
     }
 
@@ -1133,12 +1146,22 @@ public final class Database: @unchecked Sendable {
         do {
             let result = try body()
             if ownsTransaction {
-                try db.exec("COMMIT;")
-                inTransaction = false
+                // Same reasoning as `commitTransaction()`: a COMMIT that
+                // throws must still end the transaction and clear the flag,
+                // or every later write on this connection silently joins a
+                // transaction that no longer exists.
+                do {
+                    try db.exec("COMMIT;")
+                    inTransaction = false
+                } catch {
+                    try? db.exec("ROLLBACK;")
+                    inTransaction = false
+                    throw error
+                }
             }
             return result
         } catch {
-            if ownsTransaction {
+            if ownsTransaction && inTransaction {
                 try? db.exec("ROLLBACK;")
                 inTransaction = false
             }

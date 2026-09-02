@@ -2307,6 +2307,40 @@ private func sessionFile(
     #expect(try database.allFiles(includeMissing: true).count == 1)
 }
 
+/// A COMMIT that FAILS must still clear the "a transaction is open" flag.
+/// Leaving it set poisons the connection for the rest of the process: every
+/// later `beginTransaction()` is absorbed as a no-op, so writes that the
+/// caller believes are transactional silently autocommit one at a time --
+/// and `inOwnOrAmbientTransaction` joins a transaction that does not exist.
+@Test func aFailedCommitClearsTheTransactionFlagSoLaterBatchesReallyOpenOne() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-txn-commit-fail-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("txn.sqlite").path
+
+    let database = try Database(path: path)
+    try database.beginTransaction()
+    // Cheapest seam for a failing COMMIT with no production-only hook: end
+    // the transaction out-of-band on the same connection, so SQLite has none
+    // left and rejects the COMMIT with "no transaction is active".
+    try database.db.exec("ROLLBACK;")
+    #expect(throws: AstroError.self) {
+        try database.commitTransaction()
+    }
+
+    // Proof the flag was cleared: this BEGIN must really reach SQLite, so a
+    // second connection sees nothing until the matching commit.
+    try database.beginTransaction()
+    _ = try database.upsertFile(sampleFile(path: "sessions/M31/2026-01-01/lights/after.fit"))
+    let outsideBeforeCommit = try Database(path: path)
+    #expect(try outsideBeforeCommit.allFiles(includeMissing: true).isEmpty)
+
+    try database.commitTransaction()
+    let outsideAfterCommit = try Database(path: path)
+    #expect(try outsideAfterCommit.allFiles(includeMissing: true).count == 1)
+}
+
 @Test func beginTransactionCalledTwiceInARowIsAbsorbedNotRejected() throws {
     let database = try Database(path: ":memory:")
     try database.beginTransaction()
