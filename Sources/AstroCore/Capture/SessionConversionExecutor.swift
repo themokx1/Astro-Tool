@@ -101,14 +101,14 @@ public enum SessionConversionExecutor {
         failureAfterMoves: Int? = nil
     ) throws -> SessionConversionReceipt {
         guard plan.canApply else {
-            throw AstroError.invalidInput("A konverziós tervben még blokkoló bizonytalanság vagy ütközés van.")
+            throw AstroError.invalidInput("The conversion plan still has a blocking ambiguity or conflict.")
         }
         let guard_ = WriteGuard(root: root)
         let currentFingerprint = try filesystemFingerprint(root: root, scope: plan.scope)
         guard currentFingerprint == plan.sourceFingerprint else {
             throw AstroError.invalidInput(
-                "A session fájljai megváltoztak az előnézet óta (külső program, új scan vagy fájlművelet). "
-                    + "Frissítsd a konverziós előnézetet, majd ellenőrizd újra a döntéseket."
+                "The session's files changed since the preview (external program, new scan, or file operation). "
+                    + "Refresh the conversion preview, then review the decisions again."
             )
         }
         for move in plan.moves {
@@ -146,7 +146,7 @@ public enum SessionConversionExecutor {
                 )
                 executedMoves.append(move)
                 if let failureAfterMoves, executedMoves.count == failureAfterMoves {
-                    throw AstroError.invalidInput("Szimulált konverziós hiba a rollback tesztjéhez.")
+                    throw AstroError.invalidInput("Simulated conversion error for the rollback test.")
                 }
             }
 
@@ -183,7 +183,7 @@ public enum SessionConversionExecutor {
             }
             if let rollbackError {
                 throw AstroError.databaseError(
-                    "A konverzió hibázott, és az automatikus visszaállítás sem volt teljes: \(rollbackError)"
+                    "The conversion failed, and the automatic rollback was also incomplete: \(rollbackError)"
                 )
             }
             throw error
@@ -198,7 +198,7 @@ public enum SessionConversionExecutor {
         now: Date = Date()
     ) throws -> SessionConversionReceipt {
         guard receipt.status == .applied else {
-            throw AstroError.invalidInput("Ez a konverzió már vissza lett állítva.")
+            throw AstroError.invalidInput("This conversion has already been rolled back.")
         }
         let guard_ = WriteGuard(root: root)
         for move in receipt.moves.reversed() {
@@ -239,7 +239,7 @@ public enum SessionConversionExecutor {
 
     public static func loadReceipt(id: String, root: URL) throws -> SessionConversionReceipt {
         guard !id.isEmpty, !id.contains("/"), id != ".", id != ".." else {
-            throw AstroError.invalidInput("Érvénytelen konverzióazonosító.")
+            throw AstroError.invalidInput("Invalid conversion ID.")
         }
         let url = root.appendingPathComponent(".astro_tool/conversions/\(id)/receipt.json")
         guard FileManager.default.fileExists(atPath: url.path) else {
