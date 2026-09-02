@@ -1864,6 +1864,9 @@
 "Expand Group" = "Csoport kibontása";
 "the copy's checksum does not match the source -- the bad copy was deleted" = "a másolat ellenőrző-összege nem egyezik a forrással -- a hibás másolat törölve";
 
+/* v5 flow fixes, item 5: the role-rejection message used to be hardcoded Hungarian directly in AstroApplication (a reverse leak into English-locale UI); now routed through NSLocalizedString like the checksum-mismatch entry above. */
+"The %@ role cannot be copied into a capture." = "A(z) %@ szerep nem másolható be egy gyűjtésbe.";
+
 /* Wave W6-D item 14 (NightNoteSheet): the per-field ⓘ info button's new .help/.accessibilityLabel, interpolating the field name. */
 "Explain %@" = "%@ magyarázata";
 

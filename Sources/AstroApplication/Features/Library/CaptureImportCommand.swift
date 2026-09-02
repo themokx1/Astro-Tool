@@ -205,7 +205,25 @@ public enum CaptureImportCommand {
         case .dark: return "darks"
         case .bias: return "biases"
         default:
-            throw AstroError.invalidInput("A(z) \(role.rawValue) szerep nem másolható be egy gyűjtésbe.")
+            // W-fix (reverse leak): this used to be a hardcoded Hungarian
+            // sentence -- an English-locale user importing a non-copyable
+            // role would have seen this one line in Hungarian no matter
+            // what. Same `NSLocalizedString` pattern as the checksum-
+            // mismatch message below: `AstroApplication` cannot import
+            // `AstroUI`, but `NSLocalizedString(_:bundle: .main,comment:)`
+            // needs no such import, and `hu.lproj/Localizable.strings`
+            // still ships inside the app's main bundle regardless of which
+            // target the lookup runs from.
+            throw AstroError.invalidInput(
+                String(
+                    format: NSLocalizedString(
+                        "The %@ role cannot be copied into a capture.",
+                        bundle: .main,
+                        comment: ""
+                    ),
+                    role.rawValue
+                )
+            )
         }
     }
 

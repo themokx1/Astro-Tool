@@ -169,6 +169,22 @@ struct CaptureImportCommandTests {
         #expect(FileManager.default.fileExists(atPath: goodSource.path))
     }
 
+    @Test("A non-copyable role's rejection message is English source text, not the hardcoded Hungarian sentence it used to be")
+    func nonCopyableRoleRejectionIsEnglish() {
+        do {
+            _ = try CaptureImportCommand.destinationRelativePath(
+                target: "IC1396", date: "2026-08-16", slug: "r8-osc", role: .master, fileName: "master_light.fits"
+            )
+            Issue.record("expected destinationRelativePath to throw for a non-copyable role")
+        } catch let AstroError.invalidInput(message) {
+            #expect(message.contains("master"))
+            #expect(message.contains("cannot be copied"))
+            #expect(!message.contains("szerep"), "the role-rejection message leaked Hungarian text into the English source string")
+        } catch {
+            Issue.record("expected AstroError.invalidInput, got \(error)")
+        }
+    }
+
     @Test("CaptureImportItem.resolved drops files with neither an override nor a proposed role")
     func resolvedItemsDropUnclassifiedFiles() {
         let classified = DiscoveredCaptureFile(
