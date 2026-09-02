@@ -4,7 +4,11 @@ import Foundation
 /// from `LibraryScanner.scan` so the decision (which never needs disk
 /// access beyond one `volumeExists` check) can be unit-tested directly
 /// without touching a real `/Volumes` mount point.
-enum RootErrorClassifier {
+/// `public` since 2026-09-02: the onboarding store (`AstroUI`) needs the very
+/// same missing-root diagnosis the scanner already had, so an unplugged
+/// external drive reads as "reconnect the drive" there too instead of being
+/// misreported as "that is not a folder".
+public enum RootErrorClassifier {
     /// - `rootPath` starts with `/Volumes/` and its volume portion (the
     ///   first two path components, e.g. `/Volumes/AstroDrive`) doesn't exist
     ///   per `volumeExists` → `.volumeNotMounted(path: rootPath)`.
@@ -12,7 +16,7 @@ enum RootErrorClassifier {
     ///   parent does) → `.pathNotFound(path:)`, using `subpath` when one was
     ///   given (a scoped scan under an existing root) or `rootPath` when the
     ///   root itself is what's missing.
-    static func classify(
+    public static func classify(
         rootPath: String,
         subpath: String?,
         volumeExists: (String) -> Bool
@@ -28,7 +32,7 @@ enum RootErrorClassifier {
 
     /// The volume mount point portion of an absolute path — its first two
     /// path components, e.g. `/Volumes/AstroDrive/sessions` → `/Volumes/AstroDrive`.
-    static func volumePortion(of path: String) -> String {
+    public static func volumePortion(of path: String) -> String {
         let comps = path.split(separator: "/", omittingEmptySubsequences: true)
         guard comps.count >= 2 else { return path }
         return "/" + comps[0] + "/" + comps[1]

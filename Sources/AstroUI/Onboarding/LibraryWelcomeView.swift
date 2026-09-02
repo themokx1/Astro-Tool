@@ -349,8 +349,8 @@ public final class OnboardingStore {
 
         do {
             try Task.checkCancellation()
-            guard Self.isDirectory(root) else {
-                throw OnboardingStoreError.notDirectory
+            if let rootFailure = Self.rootFailure(root) {
+                throw rootFailure
             }
             let storage = try storageFactory(root: root)
             guard isActive(operationID) else { return }
@@ -411,9 +411,23 @@ public final class OnboardingStore {
             try await openAndScan(root)
             return true
         } catch {
-            bookmarkStore.clear()
+            forgetBookmarkIfPermanentlyWrong(error)
             throw error
         }
+    }
+
+    /// Clears the remembered library ONLY when the failure means the
+    /// remembered path itself is the problem (`.rechooseLibrary`). An
+    /// unplugged drive or a locked index is `.retry`-class: the path is
+    /// still right, it is just unavailable right now, and forgetting it
+    /// meant replugging the drive never helped -- the user had to re-pick
+    /// the library at every launch.
+    /// `nonisolated` because `runScan`'s `operationHost.run` work closure is
+    /// not main-actor isolated; everything this touches is `Sendable`.
+    private nonisolated func forgetBookmarkIfPermanentlyWrong(_ error: any Error) {
+        guard !(error is CancellationError) else { return }
+        guard LibraryAccessProblem(catching: error).recovery == .rechooseLibrary else { return }
+        bookmarkStore.clear()
     }
 
     /// Runs `openAndScan(_:)` registered with `operationHost` -- so the very
@@ -434,9 +448,11 @@ public final class OnboardingStore {
 
     /// The `operationHost`-routed counterpart to `restoreSavedLibrary()` --
     /// same "no saved bookmark, or already past `.chooseLibrary`" no-op
-    /// contract, and the same "clear the bookmark so a permanently broken
-    /// path doesn't keep silently failing at every future launch" behavior,
-    /// just surfaced through the toolbar instead of invisibly.
+    /// contract, and the same "clear the bookmark so a permanently WRONG
+    /// path doesn't keep silently failing at every future launch" behavior
+    /// (see `forgetBookmarkIfPermanentlyWrong`, which keeps the bookmark for
+    /// a merely unavailable one), just surfaced through the toolbar instead
+    /// of invisibly.
     @discardableResult
     public func restoreSavedLibrary(through operationHost: OperationHost) async -> Bool {
         guard phase == .chooseLibrary, let root = bookmarkStore.load() else { return false }
@@ -455,7 +471,9 @@ public final class OnboardingStore {
             do {
                 try await self?.openAndScan(rootURL)
             } catch {
-                if clearBookmarkOnFailure { self?.bookmarkStore.clear() }
+                if clearBookmarkOnFailure {
+                    self?.forgetBookmarkIfPermanentlyWrong(error)
+                }
                 throw error
             }
         }
@@ -592,11 +610,26 @@ public final class OnboardingStore {
         phase = .scanning(progress: progress)
     }
 
-    private static func isDirectory(_ url: URL) -> Bool {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
-            return false
+    /// Why the root cannot be opened at all, or `nil` when it is a readable
+    /// directory. This used to be a single `isDirectory` check built on
+    /// `attributesOfItem`, which fails identically for "a file was picked"
+    /// and "there is nothing at this path" -- so an external drive that was
+    /// unplugged since the last launch was reported as "individual files
+    /// cannot be scanned as a library" and the user was pushed to re-pick a
+    /// folder that was never wrong. A missing path now goes through
+    /// `AstroCore`'s own `RootErrorClassifier`, the same diagnosis the
+    /// scanner already made, so an unmounted volume becomes the `.retry`-class
+    /// `volumeNotMounted` ("reconnect the drive") instead.
+    static func rootFailure(_ url: URL, fileManager: FileManager = .default) -> (any Error)? {
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: url.path, isDirectory: &isDirectory) {
+            return isDirectory.boolValue ? nil : OnboardingStoreError.notDirectory
         }
-        return attributes[.type] as? FileAttributeType == .typeDirectory
+        return RootErrorClassifier.classify(
+            rootPath: url.path,
+            subpath: nil,
+            volumeExists: { fileManager.fileExists(atPath: $0) }
+        )
     }
 
 }
