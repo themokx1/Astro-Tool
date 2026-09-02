@@ -2254,9 +2254,21 @@ private func sessionFile(
         )
     }
 
-    #expect(throws: AstroError.self) {
+    // Not a `.databaseError`: that case's recovery is `.retry`, and a
+    // "reopen it" button can never help here -- the index will still be from
+    // a newer build next time. The classification has to carry a non-retry
+    // recovery so the dialog offers the only real fix (update AstroTool),
+    // and the message must survive verbatim to say so.
+    var thrown: AstroError?
+    do {
         _ = try Database(path: path)
+        Issue.record("expected opening a future-schema database to throw")
+    } catch let error as AstroError {
+        thrown = error
     }
+    let error = try #require(thrown)
+    #expect(error.recovery != .retry)
+    #expect(error.errorDescription?.contains("newer AstroTool") == true)
 }
 
 // MARK: - Explicit transactions (batched writes, Task 5 fix)

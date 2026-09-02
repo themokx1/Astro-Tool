@@ -852,8 +852,14 @@ public final class Database: @unchecked Sendable {
         // last opened by a newer AstroTool -- proceeding would run the
         // migration ladder from an unrecognized starting point and silently
         // corrupt data instead of failing where the mistake is obvious.
+        // Deliberately NOT `.databaseError`, whose recovery is `.retry`: the
+        // index will still have been written by a newer build on the next
+        // attempt, so a "try again" button is a dead end. `.invalidInput`
+        // carries recovery `.none` and surfaces its message verbatim (see
+        // `AstroError.errorDescription`), which is what lets the sentence
+        // below state the only real fix.
         guard version <= Self.currentSchemaVersion else {
-            throw AstroError.databaseError(
+            throw AstroError.invalidInput(
                 "This library index was created by a newer AstroTool (schema \(version), this build supports \(Self.currentSchemaVersion)). Update AstroTool to open it."
             )
         }

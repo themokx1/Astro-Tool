@@ -55,7 +55,11 @@ public enum AstroError: Error, Equatable, Sendable {
     case sirilNotFound(path: String)
     /// A caller-supplied value (e.g. `new-session`'s catalog/name/date) fails
     /// validation before any filesystem write is attempted -- the associated
-    /// string explains what was wrong.
+    /// string explains what was wrong. Also carries the "this library index
+    /// was written by a NEWER AstroTool" refusal (`Database.migrate`): the
+    /// message itself is the only actionable recovery there ("update
+    /// AstroTool"), which is exactly this case's contract -- recovery
+    /// `.none`, message surfaced verbatim.
     case invalidInput(String)
 }
 
