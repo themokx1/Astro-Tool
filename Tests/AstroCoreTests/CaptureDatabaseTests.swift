@@ -68,7 +68,7 @@ private func captureTestGroup(
     var version: Int64 = 0
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? 0 }
 
-    #expect(version == 12)
+    #expect(version == 13)
     #expect(try database.allFiles(includeMissing: false).count == 1)
     #expect(try database.captureGroups(target: "IC_1396", date: "2026-08-08").isEmpty)
 }
@@ -108,7 +108,7 @@ private func captureTestGroup(
     var version: Int64 = 0
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? 0 }
 
-    #expect(version == 12)
+    #expect(version == 13)
     #expect(try database.allFilterProfiles().isEmpty)
     #expect(try database.captureGroups(target: "IC_1396", date: "2026-08-08").first?.filterLabel == "SV220")
 }

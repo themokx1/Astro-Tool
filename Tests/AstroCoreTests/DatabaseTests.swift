@@ -204,7 +204,7 @@ private func indexCountRecord(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 }
 
 @Test func migrateIsIdempotentAndDoesNotDuplicateVersionRow() throws {
@@ -270,7 +270,7 @@ private func indexCountRecord(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -323,7 +323,7 @@ private func indexCountRecord(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1)
@@ -392,7 +392,7 @@ private func indexCountRecord(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     let fileID1 = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let meta1 = try database.fitsMeta(fileID: fileID1)
@@ -1212,7 +1212,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     let files = try database.allFiles(includeMissing: true)
     #expect(files.count == 1, "the v4 row must survive the upgrade untouched")
@@ -1221,6 +1221,217 @@ private func sampleSensorProfile(
     // Fresh table, usable via the DAO immediately after the upgrade.
     try database.upsertSessionNotes(target: "M31", date: "2026-01-01", notes: ["Camera": "ASI2600MC"])
     #expect(try database.sessionNotes(target: "M31", date: "2026-01-01") == ["Camera": "ASI2600MC"])
+}
+
+// MARK: - v12 -> v13 (session_notes.target / tags.target NFC canonicalization)
+
+/// Creates a fresh temp path holding a real, already-deployed v12 database
+/// (every earlier schema step applied directly via a raw `SQLiteDB`,
+/// `schema_version` stamped `12`), mirroring every other
+/// `migrateUpgradesExisting...` fixture in this file. The connection used to
+/// build it is closed before returning (out of scope), so the caller can
+/// safely open its own connection at the same path -- either to insert its
+/// own pre-migration rows, or straight through `Database(path:)`, the
+/// production upgrade path.
+private func makeV12FixturePath(named name: String) throws -> String {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-v12-\(name)-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let path = dir.appendingPathComponent("v12.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec(Database.schemaSQLv2)
+        try raw.exec(Database.schemaSQLv3)
+        try raw.exec(Database.schemaSQLv4)
+        try raw.exec(Database.schemaSQLv5)
+        try raw.exec(Database.schemaSQLv6)
+        try raw.exec(Database.schemaSQLv7)
+        try raw.exec(Database.schemaSQLv8)
+        try raw.exec(Database.schemaSQLv9)
+        try raw.exec(Database.schemaSQLv10)
+        try raw.exec(Database.schemaSQLv11)
+        try raw.exec(Database.schemaSQLv12)
+        try raw.run("INSERT INTO schema_version(version) VALUES (12);")
+    }
+    return path
+}
+
+/// A pre-normalization scan of an HFS+/NFD library could leave a
+/// `session_notes`/`tags` row keyed on the DECOMPOSED spelling of a target.
+/// Unlike `files.path`/`capture_sources.relative_path`, neither table is
+/// ever revisited by a scan, so nothing would heal that row on its own --
+/// the v12->v13 migration must rewrite it in place, and the DAO's own
+/// accessors must reach it by its canonical (precomposed) spelling
+/// afterward.
+@Test func migrateV12ToV13MakesNFDKeyedSessionNoteAndTagReachableByNFCTarget() throws {
+    let nfd = "Csillagköd".decomposedStringWithCanonicalMapping
+    let nfc = "Csillagköd".precomposedStringWithCanonicalMapping
+    #expect(Array(nfd.utf8) != Array(nfc.utf8), "fixture precondition: NFD and NFC byte forms must actually differ")
+
+    let path = try makeV12FixturePath(named: "note-and-tag")
+    defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.run(
+            "INSERT INTO session_notes(target, session_date, key, value) VALUES (?, ?, ?, ?);",
+            bind: [.text(nfd), .text("2026-01-01"), .text("Camera"), .text("ASI2600MC")]
+        )
+        try raw.run(
+            "INSERT INTO tags(kind, target, session_date, tag) VALUES ('target', ?, NULL, 'favorite');",
+            bind: [.text(nfd)]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? -1 }
+    #expect(version == 13)
+
+    // Reachable under the canonical (NFC) key, exactly what a caller with a
+    // normally-typed target string would pass in.
+    #expect(try database.sessionNotes(target: nfc, date: "2026-01-01") == ["Camera": "ASI2600MC"])
+    #expect(try database.tags(target: nfc, sessionDate: nil) == ["favorite"])
+
+    // The row itself was rewritten, not just tolerated at read time -- the
+    // stored bytes are the canonical spelling.
+    var storedTarget: String?
+    try database.db.query("SELECT target FROM session_notes LIMIT 1;") { storedTarget = $0.string(0) }
+    #expect(Array((storedTarget ?? "").utf8) == Array(nfc.utf8))
+}
+
+/// Two rows that canonicalize onto the SAME `(target, date, key)` --
+/// `session_notes`'s own primary key -- must not silently discard one: the
+/// user wrote both texts (once under an NFD spelling, once under NFC,
+/// likely from re-capturing a `README.txt` note on a differently-mounted
+/// copy of the library), and both survive, joined by the merge separator.
+@Test func migrateV12ToV13MergesSessionNotesCollidingOnCanonicalTarget() throws {
+    let nfd = "Csillagköd".decomposedStringWithCanonicalMapping
+    let nfc = "Csillagköd".precomposedStringWithCanonicalMapping
+
+    let path = try makeV12FixturePath(named: "note-collision")
+    defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    do {
+        let raw = try SQLiteDB(path: path)
+        // Written in this order -- the NFD row first -- so the merge order
+        // is deterministic and verifiable below.
+        try raw.run(
+            "INSERT INTO session_notes(target, session_date, key, value) VALUES (?, ?, 'Bortle', 'régi mérés: 4');",
+            bind: [.text(nfd), .text("2026-01-01")]
+        )
+        try raw.run(
+            "INSERT INTO session_notes(target, session_date, key, value) VALUES (?, ?, 'Bortle', 'új mérés: 5');",
+            bind: [.text(nfc), .text("2026-01-01")]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    let notes = try database.sessionNotes(target: nfc, date: "2026-01-01")
+    #expect(notes["Bortle"] == "régi mérés: 4" + Database.noteMergeSeparator + "új mérés: 5")
+
+    var rowCount = 0
+    try database.db.query("SELECT rowid FROM session_notes;") { _ in rowCount += 1 }
+    #expect(rowCount == 1, "the collision must resolve to exactly one row, not two")
+}
+
+/// A tag carries no free-form content, so the same collision (an identical
+/// tag applied under both an NFD and NFC spelling of one target) is a plain
+/// union -- exactly `addTag`'s own steady-state invariant of at most one row
+/// per `(kind, target, sessionDate, tag)` -- rather than a merge.
+@Test func migrateV12ToV13UnionsTagsCollidingOnCanonicalTarget() throws {
+    let nfd = "Csillagköd".decomposedStringWithCanonicalMapping
+    let nfc = "Csillagköd".precomposedStringWithCanonicalMapping
+
+    let path = try makeV12FixturePath(named: "tag-collision")
+    defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.run(
+            "INSERT INTO tags(kind, target, session_date, tag) VALUES ('target', ?, NULL, 'favorite');",
+            bind: [.text(nfd)]
+        )
+        try raw.run(
+            "INSERT INTO tags(kind, target, session_date, tag) VALUES ('target', ?, NULL, 'favorite');",
+            bind: [.text(nfc)]
+        )
+        // A DIFFERENT tag under the NFD spelling must survive the union
+        // too, not just get dropped alongside the duplicate.
+        try raw.run(
+            "INSERT INTO tags(kind, target, session_date, tag) VALUES ('target', ?, NULL, 'wide');",
+            bind: [.text(nfd)]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    #expect(try database.tags(target: nfc, sessionDate: nil) == ["favorite", "wide"])
+
+    var rowCount = 0
+    try database.db.query("SELECT rowid FROM tags;") { _ in rowCount += 1 }
+    #expect(rowCount == 2, "the duplicate 'favorite' tag must collapse to one row")
+}
+
+/// Mirrors the "failed migration rolls back DDL and leaves the old version
+/// stamp" family other stores in this codebase use (see
+/// `AstroApplicationTests/MetadataStoreTests.swift`), applied to this
+/// migration: if a step inside the v12->v13 transaction fails, NOTHING it
+/// already did -- including a step that ran and succeeded earlier in the
+/// same transaction -- may survive, and `schema_version` must stay at 12 so
+/// the next open retries the whole step rather than resuming from a
+/// half-applied state.
+@Test func migrateV12ToV13RollsBackEverythingAndLeavesOldVersionStampWhenATagsStepFails() throws {
+    let path = try makeV12FixturePath(named: "rollback")
+    defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.run(
+            "INSERT INTO session_notes(target, session_date, key, value) VALUES ('M31', '2026-01-01', 'Camera', 'ASI2600MC');"
+        )
+        // Simulates a corrupted/partially-upgraded database: `tags` is
+        // missing, so `canonicalizeTagsTargets` (which runs after the
+        // session_notes step inside the same transaction) fails.
+        try raw.exec("DROP TABLE tags;")
+    }
+
+    #expect(throws: AstroError.self) {
+        _ = try Database(path: path)
+    }
+
+    let raw = try SQLiteDB(path: path)
+    var version: Int64 = -1
+    try raw.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? -1 }
+    #expect(version == 12)
+
+    // The session_notes step ran first and would have rewritten this row --
+    // its `DELETE`+re-`INSERT` must have been rolled back along with the
+    // failed tags step, not left half-applied.
+    var noteValue: String?
+    try raw.query(
+        "SELECT value FROM session_notes WHERE target = 'M31' AND session_date = '2026-01-01' AND key = 'Camera';"
+    ) { noteValue = $0.string(0) }
+    #expect(noteValue == "ASI2600MC")
+}
+
+/// The write paths themselves canonicalize `target`, independent of the
+/// migration: a caller on a fresh (already-v13) database that still hands
+/// in an NFD-spelled target must land on the very same row a canonical
+/// caller would, both for `addTag`/`tags` and `upsertSessionNotes`/
+/// `sessionNotes`.
+@Test func addTagAndUpsertSessionNotesCanonicalizeAnNFDTargetArgument() throws {
+    let nfd = "Csillagköd".decomposedStringWithCanonicalMapping
+    let nfc = "Csillagköd".precomposedStringWithCanonicalMapping
+    let database = try Database(path: ":memory:")
+
+    try database.addTag(TagRecord(kind: "target", target: nfd, sessionDate: nil, tag: "favorite"))
+    #expect(try database.tags(target: nfc, sessionDate: nil) == ["favorite"])
+    // The reverse direction too: writing under NFC, reading back with NFD.
+    #expect(try database.tags(target: nfd, sessionDate: nil) == ["favorite"])
+
+    try database.upsertSessionNotes(target: nfd, date: "2026-01-01", notes: ["Camera": "ASI2600MC"])
+    #expect(try database.sessionNotes(target: nfc, date: "2026-01-01") == ["Camera": "ASI2600MC"])
 }
 
 // MARK: - solved_* columns (schema v6, R7-1)
@@ -1266,7 +1477,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     let fileID = try #require(try database.fileID(path: "sessions/M45_Pleiades/2026-01-01/lights/f1.cr3"))
     let metaBeforeSolve = try database.fitsMeta(fileID: fileID)
@@ -1321,7 +1532,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -1381,7 +1592,7 @@ private func sampleSensorProfile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     let fileID = try #require(try database.fileID(path: "sessions/M31/2026-01-01/lights/f1.fits"))
     let rating = try database.rating(fileID: fileID)
@@ -1817,7 +2028,7 @@ private func sessionFile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     // finding_acks table exists and is usable after the same migration.
     #expect(try database.ackedKeys().isEmpty)
@@ -1855,7 +2066,7 @@ private func sessionFile(
     try database.db.query("SELECT version FROM schema_version LIMIT 1;") { row in
         version = row.int64(0) ?? -1
     }
-    #expect(version == 12)
+    #expect(version == 13)
 
     // sensor_profile_history exists and is usable after the same migration.
     #expect(try database.sensorProfileHistory(camera: "ASI2600MC", gain: 100, offset: 50).isEmpty)
@@ -1957,7 +2168,7 @@ private func sessionFile(
     let reopened = try Database(path: path)
     var version: Int64 = 0
     try reopened.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? 0 }
-    #expect(version == 12)
+    #expect(version == 13)
 }
 
 @Test func insertSensorProfileHistoryThenQueryReturnsAscendingByMeasuredAt() throws {

@@ -572,7 +572,7 @@ public struct LibraryIndexCounts: Equatable, Sendable {
 public final class Database: @unchecked Sendable {
     /// Exposed only as release/support metadata. It never identifies a
     /// user's library and lets diagnostics avoid duplicating a magic number.
-    public static let currentSchemaVersion = 12
+    public static let currentSchemaVersion = 13
 
     // Internal (not private) so tests in this module can verify migration
     // and DAO behavior directly against the underlying connection via
@@ -808,6 +808,19 @@ public final class Database: @unchecked Sendable {
       ON filter_profiles(manufacturer COLLATE NOCASE, model COLLATE NOCASE, name COLLATE NOCASE);
     """
 
+    /// `session_notes`/`tags` rows written before this version's canonical-
+    /// path fix (`PathNormalization`, see `Scan/PathNormalization.swift`)
+    /// can still key on an NFD `target` string inherited from an HFS+
+    /// source library. Unlike `files.path`/`files.target` and
+    /// `capture_sources.relative_path` -- which self-heal the next time the
+    /// scanner revisits them (`adoptNormalizationVariant`, `upsertCapture
+    /// Source`'s `anySpellingOf` lookup) -- neither table has a `files.id`
+    /// to hang that healing off, and neither is ever revisited by a scan.
+    /// Two different-normalized texts that collide onto the SAME `(target,
+    /// date, key)` after canonicalizing keep BOTH texts (joined by
+    /// `Self.noteMergeSeparator`) rather than silently discarding one.
+    static let noteMergeSeparator = "\n--- (merged duplicate note) ---\n"
+
     public init(path: String) throws {
         self.db = try SQLiteDB(path: path)
         try migrate()
@@ -974,6 +987,20 @@ public final class Database: @unchecked Sendable {
             }
             version = 12
         }
+
+        if version < 13 {
+            try db.exec("BEGIN IMMEDIATE;")
+            do {
+                try canonicalizeSessionNotesTargets()
+                try canonicalizeTagsTargets()
+                try db.run("UPDATE schema_version SET version = ?;", bind: [.int(13)])
+                try db.exec("COMMIT;")
+            } catch {
+                try? db.exec("ROLLBACK;")
+                throw error
+            }
+            version = 13
+        }
     }
 
     private func tableExists(_ name: String) throws -> Bool {
@@ -991,6 +1018,90 @@ public final class Database: @unchecked Sendable {
             if row.string(1) == column { exists = true }
         }
         return exists
+    }
+
+    /// One-time v12->v13 upgrade step: rewrites `session_notes.target` to
+    /// its canonical NFC form (see `Self.noteMergeSeparator`'s doc comment
+    /// for why this table needs its own migration rather than healing on
+    /// the next scan). Read-all/delete-all/reinsert rather than a per-row
+    /// `UPDATE`, because two rows can canonicalize onto the SAME `(target,
+    /// date, key)` -- the table's own primary key -- and that collision has
+    /// to be resolved (merged) before either row can be written back under
+    /// its new key. Rows are read in `rowid` order (their original write
+    /// order) so a merge always keeps that same order, and a target that
+    /// was already NFC round-trips byte-for-byte.
+    private func canonicalizeSessionNotesTargets() throws {
+        struct Row { let target: String; let date: String; let key: String; let value: String }
+        struct MergeKey: Hashable { let target: String; let date: String; let key: String }
+
+        var rows: [Row] = []
+        try db.query("SELECT target, session_date, key, value FROM session_notes ORDER BY rowid;") { row in
+            guard let target = row.string(0), let date = row.string(1),
+                  let key = row.string(2), let value = row.string(3)
+            else { return }
+            rows.append(Row(target: target, date: date, key: key, value: value))
+        }
+        guard !rows.isEmpty else { return }
+
+        var order: [MergeKey] = []
+        var valuesByKey: [MergeKey: [String]] = [:]
+        for r in rows {
+            let mergeKey = MergeKey(target: PathNormalization.canonical(r.target), date: r.date, key: r.key)
+            if valuesByKey[mergeKey] == nil { order.append(mergeKey) }
+            valuesByKey[mergeKey, default: []].append(r.value)
+        }
+
+        try db.exec("DELETE FROM session_notes;")
+        for mergeKey in order {
+            var seenValues: [String] = []
+            for value in valuesByKey[mergeKey] ?? [] where !seenValues.contains(value) {
+                seenValues.append(value)
+            }
+            try db.run(
+                "INSERT INTO session_notes(target, session_date, key, value) VALUES (?, ?, ?, ?);",
+                bind: [
+                    .text(mergeKey.target), .text(mergeKey.date), .text(mergeKey.key),
+                    .text(seenValues.joined(separator: Self.noteMergeSeparator)),
+                ]
+            )
+        }
+    }
+
+    /// One-time v12->v13 upgrade step: rewrites `tags.target` to its
+    /// canonical NFC form, same motivation as `canonicalizeSessionNotes
+    /// Targets`. A tag carries no free-form content worth preserving twice,
+    /// so a collision (the same `(kind, target, sessionDate, tag)` reached
+    /// via two normalization spellings of `target`) is a plain union: the
+    /// row survives once, matching `addTag`'s own steady-state invariant.
+    /// Deduplication is done by hand in Swift rather than `INSERT OR
+    /// IGNORE` against the table's own `UNIQUE` index, for the same reason
+    /// `addTag` avoids it -- SQL `NULL` is never equal to `NULL`, so two
+    /// target-level (`session_date IS NULL`) rows would not collide there.
+    private func canonicalizeTagsTargets() throws {
+        struct Row { let kind: String; let target: String; let date: String?; let tag: String }
+        struct UnionKey: Hashable { let kind: String; let target: String; let date: String?; let tag: String }
+
+        var rows: [Row] = []
+        try db.query("SELECT kind, target, session_date, tag FROM tags ORDER BY rowid;") { row in
+            guard let kind = row.string(0), let target = row.string(1), let tag = row.string(3) else { return }
+            rows.append(Row(kind: kind, target: target, date: row.string(2), tag: tag))
+        }
+        guard !rows.isEmpty else { return }
+
+        var order: [UnionKey] = []
+        var seenKeys: Set<UnionKey> = []
+        for r in rows {
+            let key = UnionKey(kind: r.kind, target: PathNormalization.canonical(r.target), date: r.date, tag: r.tag)
+            if seenKeys.insert(key).inserted { order.append(key) }
+        }
+
+        try db.exec("DELETE FROM tags;")
+        for key in order {
+            try db.run(
+                "INSERT INTO tags(kind, target, session_date, tag) VALUES (?, ?, ?, ?);",
+                bind: [.text(key.kind), .text(key.target), key.date.map(SQLiteValue.text) ?? .null, .text(key.tag)]
+            )
+        }
     }
 
     /// One-time v9->v10 upgrade step: seeds `sensor_profile_history` with
@@ -3096,20 +3207,24 @@ public final class Database: @unchecked Sendable {
     /// `INSERT OR IGNORE`, because SQL `NULL` is never equal to `NULL` in a
     /// `UNIQUE` index -- two target-level tags (`session_date IS NULL`)
     /// would NOT collide there and `INSERT OR IGNORE` would happily insert a
-    /// duplicate row.
+    /// duplicate row. `t.target` is canonicalized to NFC before it ever
+    /// touches SQL, so a caller still holding an NFD spelling (e.g. from an
+    /// HFS+-sourced string elsewhere in the app) lands on the same row a
+    /// canonical caller would.
     public func addTag(_ t: TagRecord) throws {
         let tag = try Self.validatedTag(t.tag)
         let kind = Self.kind(forSessionDate: t.sessionDate)
+        let target = PathNormalization.canonical(t.target)
 
         try withLock {
             var exists = false
-            try Self.queryTagRows(db, target: t.target, sessionDate: t.sessionDate, tag: tag) { _ in
+            try Self.queryTagRows(db, target: target, sessionDate: t.sessionDate, tag: tag) { _ in
                 exists = true
             }
             guard !exists else { return }
             try db.run(
                 "INSERT INTO tags(kind, target, session_date, tag) VALUES (?, ?, ?, ?);",
-                bind: [.text(kind), .text(t.target), t.sessionDate.map(SQLiteValue.text) ?? .null, .text(tag)]
+                bind: [.text(kind), .text(target), t.sessionDate.map(SQLiteValue.text) ?? .null, .text(tag)]
             )
         }
     }
@@ -3117,17 +3232,18 @@ public final class Database: @unchecked Sendable {
     /// Removes a tag; a no-op if it wasn't present.
     public func removeTag(_ t: TagRecord) throws {
         let tag = try Self.validatedTag(t.tag)
+        let target = PathNormalization.canonical(t.target)
 
         try withLock {
             if let sessionDate = t.sessionDate {
                 try db.run(
                     "DELETE FROM tags WHERE target = ? AND session_date = ? AND tag = ?;",
-                    bind: [.text(t.target), .text(sessionDate), .text(tag)]
+                    bind: [.text(target), .text(sessionDate), .text(tag)]
                 )
             } else {
                 try db.run(
                     "DELETE FROM tags WHERE target = ? AND session_date IS NULL AND tag = ?;",
-                    bind: [.text(t.target), .text(tag)]
+                    bind: [.text(target), .text(tag)]
                 )
             }
         }
@@ -3137,8 +3253,10 @@ public final class Database: @unchecked Sendable {
     /// target as a single locked SQLite transaction. Both discovery of the
     /// old goal tags and their replacement happen after `BEGIN`, so two
     /// overlapping saves cannot each act on a stale pre-transaction snapshot
-    /// and accidentally merge their independently desired sets.
-    public func replaceTargetGoalTagsAtomically(target: String, with newGoalTags: [String]) throws {
+    /// and accidentally merge their independently desired sets. `target` is
+    /// canonicalized to NFC up front, same as `addTag`/`removeTag`.
+    public func replaceTargetGoalTagsAtomically(target rawTarget: String, with newGoalTags: [String]) throws {
+        let target = PathNormalization.canonical(rawTarget)
         let additions = try Set(newGoalTags.map(Self.validatedTag)).sorted()
         for tag in additions where !GoalTag.isOverallGoalTag(tag) && GoalTag.parseFilterGoals(tags: [tag]).isEmpty {
             throw AstroError.invalidInput("not a goal tag: \(tag)")
@@ -3179,9 +3297,11 @@ public final class Database: @unchecked Sendable {
     }
 
     /// The tags on one target (`sessionDate == nil`) or one of its sessions,
-    /// sorted alphabetically.
-    public func tags(target: String, sessionDate: String?) throws -> [String] {
-        try withLock {
+    /// sorted alphabetically. `target` is canonicalized to NFC up front, same
+    /// as `addTag`/`removeTag`, so an NFD caller still finds the row.
+    public func tags(target rawTarget: String, sessionDate: String?) throws -> [String] {
+        let target = PathNormalization.canonical(rawTarget)
+        return try withLock {
             var result: [String] = []
             if let sessionDate {
                 try db.query(
@@ -3282,8 +3402,11 @@ public final class Database: @unchecked Sendable {
     /// file. Called by the scanner every time a session's `README.txt` is
     /// scanned as NEW or CHANGED (see `LibraryScanner.captureReadmeNotes`),
     /// so a line the user deleted from the file doesn't linger in the
-    /// database forever.
-    public func upsertSessionNotes(target: String, date: String, notes: [String: String]) throws {
+    /// database forever. `target` is canonicalized to NFC up front, same as
+    /// `addTag`/`removeTag`, so a caller still holding an NFD spelling
+    /// replaces the same row a canonical caller would.
+    public func upsertSessionNotes(target rawTarget: String, date: String, notes: [String: String]) throws {
+        let target = PathNormalization.canonical(rawTarget)
         try withLock {
             try db.run(
                 "DELETE FROM session_notes WHERE target = ? AND session_date = ?;",
@@ -3298,9 +3421,11 @@ public final class Database: @unchecked Sendable {
         }
     }
 
-    /// Every note on record for one session, `[:]` when none exist.
-    public func sessionNotes(target: String, date: String) throws -> [String: String] {
-        try withLock {
+    /// Every note on record for one session, `[:]` when none exist. `target`
+    /// is canonicalized to NFC up front, same as `upsertSessionNotes`.
+    public func sessionNotes(target rawTarget: String, date: String) throws -> [String: String] {
+        let target = PathNormalization.canonical(rawTarget)
+        return try withLock {
             var result: [String: String] = [:]
             try db.query(
                 "SELECT key, value FROM session_notes WHERE target = ? AND session_date = ?;",
