@@ -127,7 +127,10 @@ public enum FrameSet {
             duplicateCount += group.count - 1
         }
 
-        let (merged, crossExtDuplicates) = mergeCrossExtension(representatives, meta: meta)
+        let (stemMerged, sameStemDuplicates) = mergeSameStemConvertibles(representatives)
+        duplicateCount += sameStemDuplicates
+
+        let (merged, crossExtDuplicates) = mergeCrossExtension(stemMerged, meta: meta)
         duplicateCount += crossExtDuplicates
 
         var usable: [FileRecord] = []
@@ -192,6 +195,75 @@ public enum FrameSet {
         let comps = file.path.split(separator: "/")
         guard comps.count >= 2 else { return false }
         return comps[comps.count - 2].lowercased() == "lights"
+    }
+
+    // MARK: - Same-stem convertible-format merge
+
+    /// Extensions that can hold the SAME exposure as one another: every
+    /// camera RAW plus the two TIFF spellings. A DSLR/mirrorless workflow
+    /// routinely leaves two of these side by side for one shutter actuation
+    /// -- the camera writing RAW+DNG or CR2+CR3 at once, Lightroom/Adobe DNG
+    /// Converter dropping a `.dng` next to the original, a Siril/Photoshop
+    /// export leaving `.tif` and `.tiff` of the same name.
+    private static let convertibleExtensions: Set<String> = LibraryScanner.rawExtensions
+        .union(["tif", "tiff"])
+
+    /// Camera-native RAW: what the body itself wrote. Everything else in
+    /// `convertibleExtensions` is a conversion of it (DNG is Adobe/generic,
+    /// TIFF is a developed export), so a native RAW is the copy worth
+    /// keeping when both are present.
+    private static let cameraNativeRawExtensions: Set<String> = LibraryScanner.rawExtensions
+        .subtracting(["dng"])
+
+    /// Collapses copies of one exposure kept in two `convertibleExtensions`
+    /// spellings -- RAW+DNG, CR2+CR3, tif+tiff -- down to one frame,
+    /// preferring the camera-native RAW.
+    ///
+    /// Scoped to the same (target, session date, DIRECTORY) as well as the
+    /// same filename stem: sequential capture folders under one night reuse
+    /// filenames (`set_a/IMG_0001`, `set_b/IMG_0001`), and those are two
+    /// different exposures. Crossing directories on a bare stem match stays
+    /// the business of `mergeCrossExtension` below, which requires a
+    /// matching DATE-OBS for the raw <-> TIFF case it handles.
+    private static func mergeSameStemConvertibles(
+        _ files: [FileRecord]
+    ) -> (merged: [FileRecord], duplicates: Int) {
+        var groupKeys: [String] = []
+        var groups: [String: [FileRecord]] = [:]
+        var untouched: [FileRecord] = []
+
+        for file in files {
+            guard convertibleExtensions.contains(file.ext.lowercased()) else {
+                untouched.append(file)
+                continue
+            }
+            let directory = (file.path as NSString).deletingLastPathComponent
+            let key = "\(file.target ?? "")|\(file.sessionDate ?? "")|\(directory)|\(stem(of: file.path))"
+            if groups[key] == nil { groupKeys.append(key) }
+            groups[key, default: []].append(file)
+        }
+
+        var kept: [FileRecord] = []
+        var duplicates = 0
+        for key in groupKeys {
+            let group = groups[key] ?? []
+            duplicates += group.count - 1
+            kept.append(pickPreferredFormat(group))
+        }
+
+        return (untouched + kept, duplicates)
+    }
+
+    /// The copy to keep out of one same-stem group: camera-native RAW first,
+    /// then any other RAW (DNG), then TIFF; within a tier, `pickCanonical`'s
+    /// own stable rule (a direct `lights/` child, else the shortest path).
+    private static func pickPreferredFormat(_ group: [FileRecord]) -> FileRecord {
+        guard group.count > 1 else { return group[0] }
+        for tier in [cameraNativeRawExtensions, LibraryScanner.rawExtensions, convertibleExtensions] {
+            let candidates = group.filter { tier.contains($0.ext.lowercased()) }
+            if !candidates.isEmpty { return pickCanonical(candidates) }
+        }
+        return pickCanonical(group)
     }
 
     // MARK: - Cross-extension (RAW + TIF/TIFF) merge

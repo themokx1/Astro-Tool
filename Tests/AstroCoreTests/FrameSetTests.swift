@@ -118,6 +118,49 @@ private func lightFile(
     #expect(buckets.duplicateLinkCount == 1)
 }
 
+/// Cross-extension dedup used to collapse only raw <-> tif pairs, so a
+/// library that keeps BOTH the camera RAW and a DNG (or a CR2 and a CR3) of
+/// the same exposure side by side under `lights/` double-counted every frame:
+/// twice the frame count and twice the integration time. Any two members of
+/// `rawExtensions ∪ {tif, tiff}` sharing a stem in the same directory of the
+/// same night are one exposure, and the camera-native RAW is the copy kept.
+@Test func rawAndDNGCopiesOfTheSameExposureCountAsOneFramePreferringTheCameraRAW() {
+    let files = [
+        lightFile("sessions/M31/2026-01-01/lights/IMG_0001.dng", id: 1, ext: "dng", inode: 1),
+        lightFile("sessions/M31/2026-01-01/lights/IMG_0001.cr3", id: 2, ext: "cr3", inode: 2),
+        lightFile("sessions/M31/2026-01-01/lights/IMG_0002.cr2", id: 3, ext: "cr2", inode: 3),
+        lightFile("sessions/M31/2026-01-01/lights/IMG_0002.cr3", id: 4, ext: "cr3", inode: 4),
+        lightFile("sessions/M31/2026-01-01/lights/IMG_0003.tif", id: 5, ext: "tif", inode: 5),
+        lightFile("sessions/M31/2026-01-01/lights/IMG_0003.tiff", id: 6, ext: "tiff", inode: 6),
+    ]
+
+    let buckets = FrameSet.lightBuckets(files: files, meta: [:], config: AstroConfig())
+
+    #expect(buckets.usable.count == 3)
+    // The camera-native RAW wins over the generic DNG; between two
+    // camera-native RAWs (CR2/CR3) and between the two TIFF spellings the
+    // pick is stable, not arbitrary.
+    #expect(buckets.usable.contains { $0.id == 2 })
+    #expect(!buckets.usable.contains { $0.id == 1 })
+    #expect(buckets.duplicateLinkCount == 3)
+}
+
+/// A same-stem pair in DIFFERENT directories of the same night is not
+/// automatically the same exposure -- sequential capture folders reuse
+/// filenames -- so only the existing raw<->tif rule (which also accepts a
+/// matching DATE-OBS) may merge across directories.
+@Test func sameStemRAWCopiesInDifferentDirectoriesAreNotMerged() {
+    let files = [
+        lightFile("sessions/M31/2026-01-01/lights/set_a/IMG_0001.cr3", id: 1, ext: "cr3", inode: 1),
+        lightFile("sessions/M31/2026-01-01/lights/set_b/IMG_0001.cr3", id: 2, ext: "cr3", inode: 2),
+    ]
+
+    let buckets = FrameSet.lightBuckets(files: files, meta: [:], config: AstroConfig())
+
+    #expect(Set(buckets.usable.map(\.id)) == Set([1, 2]))
+    #expect(buckets.duplicateLinkCount == 0)
+}
+
 @Test func ordinaryFilenameStartingWithStackedWordButNoNumberIsNotMistakenForASIAirPrefix() {
     let files = [
         lightFile("sessions/M31/2026-01-01/lights/StackedField_001.fit", id: 1, ext: "fit", inode: 1),
