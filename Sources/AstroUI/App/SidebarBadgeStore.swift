@@ -28,6 +28,14 @@ public final class SidebarBadgeStore {
     public private(set) var libraryAttentionCount = 0
 
     private let taskSummaryFactory: TaskSummaryFactory
+    /// v5 library-switch fixes (item 5): `refresh` is fired from five
+    /// separate `Task`s in `V2RootView` (on appear, on `nightsStore.nights`,
+    /// after an operation outcome, and from two `onLibraryFindingsChanged`
+    /// callbacks), so several can be in flight at once -- across a library
+    /// switch, even for DIFFERENT roots. Without this token the counts
+    /// settled in completion order, letting a slow earlier query publish
+    /// its numbers over a newer one's.
+    private var refreshGeneration = 0
 
     public init(
         taskSummaryFactory: @escaping TaskSummaryFactory = { rootURL in
@@ -41,11 +49,15 @@ public final class SidebarBadgeStore {
     /// `NightsStore.visibleNights`, which respects a transient month
     /// picker) -- the sidebar badge always reflects the whole library.
     public func refresh(rootURL: URL, nights: [NightRow]) async {
+        refreshGeneration += 1
+        let generation = refreshGeneration
         nightsNeedingAttention = nights.filter { $0.triageState != .ready }.count
         do {
             let summary = try await taskSummaryFactory(rootURL)
+            guard generation == refreshGeneration else { return }
             libraryAttentionCount = summary.tasks.reduce(0) { $0 + $1.affectedFileCount }
         } catch {
+            guard generation == refreshGeneration else { return }
             libraryAttentionCount = 0
         }
     }

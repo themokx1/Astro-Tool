@@ -74,6 +74,48 @@ struct SidebarBadgeStoreTests {
         #expect(badges.libraryAttentionCount == 0)
     }
 
+    // MARK: - v5 library-switch fixes, item 5: `refresh` is fired from
+    // five separate `Task`s in `V2RootView` (on appear, on
+    // `nightsStore.nights`, after an operation outcome, and from two
+    // `onLibraryFindingsChanged` callbacks). With no generation guard the
+    // counts settled in COMPLETION order, so a slow refresh for the
+    // previous library could publish its numbers over a newer one's.
+
+    @Test("A slower earlier refresh does not publish its counts over a newer one's")
+    func staleRefreshDoesNotOverwriteTheNewestCounts() async throws {
+        let staleRoot = URL(fileURLWithPath: "/tmp/astro-badge-stale")
+        let freshRoot = URL(fileURLWithPath: "/tmp/astro-badge-fresh")
+        let gate = SidebarBadgeRefreshGate()
+        let badges = SidebarBadgeStore(taskSummaryFactory: { url in
+            // Only the STALE library's query blocks -- the fresh one
+            // returns straight away, so the fresh refresh provably
+            // finishes first and the stale one resumes afterwards.
+            if url == staleRoot { await gate.wait() }
+            return Self.summary(affectedFileCount: url == staleRoot ? 999 : 7)
+        })
+
+        let stale = Task { await badges.refresh(rootURL: staleRoot, nights: []) }
+        await gate.waitForArrival() // the stale refresh is now parked on its query
+        await badges.refresh(rootURL: freshRoot, nights: [])
+        await gate.open()
+        await stale.value
+
+        #expect(badges.libraryAttentionCount == 7)
+    }
+
+    nonisolated private static func summary(affectedFileCount: Int) -> ArchiveTaskSummary {
+        ArchiveTaskSummary(
+            tasks: [
+                ArchiveTask(
+                    kind: .osMetadata, severity: .attention,
+                    affectedFileCount: affectedFileCount, bytes: 0,
+                    evidencePaths: [], action: .runAudit
+                ),
+            ],
+            uncovered: .none
+        )
+    }
+
     private struct Fixture {
         let root: URL
         let indexDatabase: URL
@@ -206,4 +248,35 @@ struct SidebarBadgeStoreTests {
 
 private enum SidebarBadgeStoreTestFailure: Error, Equatable {
     case queryFailed
+}
+
+/// Lets a test park one `SidebarBadgeStore.refresh` inside its own task-summary
+/// query and release it only after a newer refresh has already published --
+/// deterministic ordering, no sleeps.
+private actor SidebarBadgeRefreshGate {
+    private var isOpen = false
+    private var hasArrived = false
+    private var releaseWaiters: [CheckedContinuation<Void, Never>] = []
+    private var arrivalWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        hasArrived = true
+        let arrivals = arrivalWaiters
+        arrivalWaiters = []
+        for waiter in arrivals { waiter.resume() }
+        guard !isOpen else { return }
+        await withCheckedContinuation { releaseWaiters.append($0) }
+    }
+
+    func waitForArrival() async {
+        guard !hasArrived else { return }
+        await withCheckedContinuation { arrivalWaiters.append($0) }
+    }
+
+    func open() {
+        isOpen = true
+        let waiters = releaseWaiters
+        releaseWaiters = []
+        for waiter in waiters { waiter.resume() }
+    }
 }
