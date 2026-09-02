@@ -273,7 +273,10 @@ struct V2WorkspaceParitySurfaceTests {
         #expect(workspace.contains("v2.conversion.apply"))
         #expect(workspace.contains("v2.conversion.undo"))
         #expect(workspace.contains("Requires write access"))
-        #expect(workspace.contains(".disabled(store.accessMode != .mutationEnabled || !plan.canApply)"))
+        // `|| store.isApplying` joined this gate when apply/undo became
+        // guarded against a double registration -- see
+        // `ConversionWorkspaceTests.applyAndUndoAreDisabledWhileInFlight`.
+        #expect(workspace.contains(".disabled(store.accessMode != .mutationEnabled || !plan.canApply || store.isApplying)"))
         #expect(workspace.contains("confirmationDialog("))
         #expect(workspace.contains("summary.fileAssignmentCount"))
         #expect(workspace.contains("summary.moveCount"))
