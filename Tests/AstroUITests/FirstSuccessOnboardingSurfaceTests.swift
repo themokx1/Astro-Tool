@@ -87,14 +87,35 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(welcome.contains("chooseAnotherFolder: chooseAnotherLibrary"))
     }
 
-    @Test("The native folder picker starts only after the onboarding sheet has closed")
+    @Test("The native folder picker starts only after the presenting sheet has closed")
     func folderPickerDoesNotNestModalPresentation() throws {
         let root = try source("Sources/AstroUI/App/V2RootView.swift")
         let welcome = try source("Sources/AstroUI/Onboarding/LibraryWelcomeView.swift")
 
         #expect(root.contains("onDismiss: finishOnboardingDismissal"))
-        #expect(root.contains("pendingLibraryPicker = true"))
+        #expect(root.contains("pendingLibraryPickerOrigin = .onboarding"))
         #expect(root.contains("panel.runModal()"))
         #expect(welcome.contains("requestLibraryPicker()"))
+
+        // 2026-09-02 audit, fix H: Help ▸ First Steps lives in the
+        // `.sheet(item: $router.presentation)` sheet, not the onboarding
+        // one, so it needs the same close-run-reopen round trip -- otherwise
+        // its "open a library" branch fell back to `NSOpenPanel.begin` from
+        // inside a sheet.
+        #expect(root.contains("onDismiss: finishPresentationDismissal"))
+        #expect(root.contains("pendingLibraryPickerOrigin = .firstSteps"))
+        #expect(root.contains("requestLibraryPicker: requestLibraryPickerFromFirstSteps"))
+        let firstSteps = try source("Sources/AstroUI/Help/FirstStepsView.swift")
+        #expect(firstSteps.contains("let requestLibraryPicker: (() -> Void)?"))
+        #expect(firstSteps.contains("requestLibraryPicker: requestLibraryPicker"))
+    }
+
+    @Test("The folder picker's own prompt and message are localizable, not hardcoded Hungarian")
+    func folderPickerPromptIsLocalizable() throws {
+        let root = try source("Sources/AstroUI/App/V2RootView.swift")
+        #expect(!root.contains("Kiválasztás"))
+        #expect(!root.contains("Válaszd ki a képkönyvtár gyökerét"))
+        #expect(root.contains("panel.prompt = String(localized:"))
+        #expect(root.contains("panel.message = String(localized:"))
     }
 }

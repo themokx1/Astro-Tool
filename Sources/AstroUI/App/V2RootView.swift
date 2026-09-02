@@ -360,7 +360,17 @@ private struct V2Shell: View {
     @Binding var libraryPreparationError: String?
     let libraryPreparationDidFail: Bool
     let retryLibraryPreparation: () -> Void
-    @State private var pendingLibraryPicker = false
+    /// Which sheet asked for the native folder picker, so the same sheet can
+    /// be brought back once the picker has closed. `NSOpenPanel` cannot
+    /// reliably present on top of a sheet, so every request goes through the
+    /// same "close the sheet, run the panel, re-present" round trip -- and
+    /// the origin is what makes that round trip work for Help ▸ First Steps
+    /// too, not just the first-run sheet (2026-09-02 audit, fix H).
+    private enum LibraryPickerOrigin: Equatable {
+        case onboarding
+        case firstSteps
+    }
+    @State private var pendingLibraryPickerOrigin: LibraryPickerOrigin?
     @State private var showsDirectLibraryWelcome = false
     @State private var didRunUITestLibraryPickerHandoff = false
     @State private var showsSearch = false
@@ -785,7 +795,7 @@ private struct V2Shell: View {
             }
         }
         .frame(minWidth: 820, minHeight: 600)
-        .sheet(item: $router.presentation) { presentation in
+        .sheet(item: $router.presentation, onDismiss: finishPresentationDismissal) { presentation in
             if presentation == .newProject {
                 NewProjectView(
                     store: projectsStore,
@@ -864,7 +874,8 @@ private struct V2Shell: View {
                         router.navigate(to: .library)
                     },
                     runScan: performRescan,
-                    dismiss: router.dismissPresentation
+                    dismiss: router.dismissPresentation,
+                    requestLibraryPicker: requestLibraryPickerFromFirstSteps
                 )
             } else {
                 V2PresentationPlaceholder(route: presentation) {
@@ -988,33 +999,68 @@ private struct V2Shell: View {
         // `NSOpenPanel` cannot reliably present on top of the onboarding
         // sheet. Close that sheet first; its onDismiss callback launches the
         // same native picker the original AppState workflow uses.
-        pendingLibraryPicker = true
+        pendingLibraryPickerOrigin = .onboarding
         isOnboardingPresented = false
     }
 
-    private func finishOnboardingDismissal() {
-        guard pendingLibraryPicker else { return }
-        pendingLibraryPicker = false
+    /// The same round trip for Help ▸ First Steps, which lives in the
+    /// `.sheet(item: $router.presentation)` above rather than the onboarding
+    /// sheet. Without this, `LibraryWelcomeView.chooseLibrary()` fell back to
+    /// `NSOpenPanel.begin` from inside a sheet -- the exact case
+    /// `requestLibraryPicker` exists to avoid, so First Steps' "open a
+    /// library" branch could not reliably present a picker at all.
+    private func requestLibraryPickerFromFirstSteps() {
+        pendingLibraryPickerOrigin = .firstSteps
+        router.dismissPresentation()
+    }
 
-        let root: URL?
+    /// Runs the native folder picker, or returns the deterministic UI-test
+    /// seam's directory when one was supplied.
+    private func runLibraryPickerPanel() -> URL? {
         if let uiTestRoot = Self.uiTestLibraryPickerResult() {
-            root = uiTestRoot
-        } else {
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.allowsMultipleSelection = false
-            panel.prompt = "Kiválasztás"
-            panel.message = "Válaszd ki a képkönyvtár gyökerét"
-            root = panel.runModal() == .OK ? panel.url : nil
+            return uiTestRoot
         }
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.prompt = String(localized: "Choose")
+        panel.message = String(localized: "Choose the root folder of your image library")
+        return panel.runModal() == .OK ? panel.url : nil
+    }
 
-        guard let root else {
+    private func finishOnboardingDismissal() {
+        guard pendingLibraryPickerOrigin == .onboarding else { return }
+        pendingLibraryPickerOrigin = nil
+
+        guard let root = runLibraryPickerPanel() else {
             presentOnboardingAfterDismissal(directLibraryWelcome: false)
             return
         }
 
-        presentOnboardingAfterDismissal(directLibraryWelcome: true, scanning: root)
+        // The deterministic UI-test route keeps landing straight on the scan
+        // receipt (`LibraryWelcomeView`); a real user stays inside the
+        // first-success journey they started, so the picked library still
+        // reaches the import offer and still enables writes.
+        presentOnboardingAfterDismissal(
+            directLibraryWelcome: Self.uiTestLibraryPickerResult() != nil,
+            scanning: root
+        )
+    }
+
+    private func finishPresentationDismissal() {
+        guard pendingLibraryPickerOrigin == .firstSteps else { return }
+        pendingLibraryPickerOrigin = nil
+        let root = runLibraryPickerPanel()
+        // First Steps comes back either way: cancelling a picker must not
+        // drop the reader out of the guide they were reading.
+        Task { @MainActor in
+            await Task.yield()
+            router.present(.firstSteps)
+            if let root {
+                try? await onboardingStore.openAndScan(root)
+            }
+        }
     }
 
     /// SwiftUI is still completing the old sheet's dismissal while

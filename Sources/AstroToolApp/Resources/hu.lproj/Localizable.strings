@@ -2851,3 +2851,6 @@
 "Choose a Different Folder…" = "Másik mappa választása…";
 "Continue anyway" = "Folytatás így is";
 "Choose an image library first. Both importing from a card and starting a new night create folders inside a library." = "Először válassz képkönyvtárat. A kártyáról importálás és az új éjszaka indítása is a könyvtáron belül hoz létre mappákat.";
+/* NSOpenPanel prompt/message -- String(localized:), hand-added: the extraction script covers SwiftUI constructs only */
+"Choose" = "Kiválasztás";
+"Choose the root folder of your image library" = "Válaszd ki a képkönyvtár gyökerét";
