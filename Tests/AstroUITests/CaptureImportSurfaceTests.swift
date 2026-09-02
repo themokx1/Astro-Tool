@@ -43,6 +43,32 @@ struct CaptureImportSurfaceTests {
         #expect(view.contains("AstroTool could not copy the files. The source card was not modified."))
     }
 
+    // MARK: - v5 flow review, I8: the partial receipt made the operation
+    // itself settle as `.succeeded`, so an "Import … finished." toast landed
+    // next to the receipt's own "Copy stopped" banner.
+
+    @Test("A cancelled copy ends the operation as cancelled, so no success toast contradicts the banner")
+    func cancelledCopyEndsTheOperationAsCancelled() throws {
+        let view = try source("Sources/AstroUI/Features/Library/CaptureImportView.swift")
+        let command = try source("Sources/AstroApplication/Features/Library/CaptureImportCommand.swift")
+
+        // The receipt is stored FIRST (nothing already copied is lost), and
+        // only then does the closure rethrow so `OperationHost.run` takes
+        // its `catch is CancellationError` path.
+        let recordIndex = try #require(view.range(of: "await self?.recordReceipt(result)"))
+        let rethrowIndex = try #require(view.range(of: "if result.wasCancelled { throw CancellationError() }"))
+        #expect(recordIndex.lowerBound < rethrowIndex.lowerBound)
+
+        // A cancellation raised inside a nested helper must reach the same
+        // stop, not the per-file failure catch.
+        #expect(command.contains("} catch is CancellationError {"))
+        let cancelCatch = try #require(
+            command.components(separatedBy: "} catch is CancellationError {").dropFirst().first
+        )
+        #expect(cancelCatch.contains("wasCancelled = true"))
+        #expect(cancelCatch.contains("break"))
+    }
+
     // MARK: - v5 flow fixes, item 2: "Create Structure" used to be able to
     // fail with zero visible feedback -- the failure toast is mounted on a
     // layer behind this modal wizard's sheet.

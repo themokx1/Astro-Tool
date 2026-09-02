@@ -408,6 +408,14 @@ public final class CaptureImportStore {
                 shouldCancel: { Task.isCancelled }
             )
             await self?.recordReceipt(result)
+            // The command stops and returns a PARTIAL receipt on cancel
+            // rather than throwing (so nothing already copied is lost), but
+            // that made this closure return normally -- so the operation
+            // settled as `.succeeded` and announced "… finished." next to
+            // the receipt's own "Copy stopped" banner. Rethrowing here after
+            // the receipt is stored is what makes the operation end as
+            // cancelled, which `OperationHost.run` announces not at all.
+            if result.wasCancelled { throw CancellationError() }
         }
         operationHost.relayProgress(id: id) {
             let progress = box.current

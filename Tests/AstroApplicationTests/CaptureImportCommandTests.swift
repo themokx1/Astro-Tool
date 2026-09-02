@@ -225,6 +225,40 @@ struct CaptureImportCommandTests {
         #expect(!FileManager.default.fileExists(atPath: secondDestURL.path))
     }
 
+    /// v5 flow review, I8: a `CancellationError` raised from INSIDE the loop
+    /// (a hasher or a `WriteGuard` step that checks `Task.isCancelled`) used
+    /// to land in the per-file catch and be recorded as a FAILED file with a
+    /// Foundation "cancelled" string -- reporting the stop the user asked
+    /// for as if a file had been lost.
+    @Test("A CancellationError thrown by a nested step is a cancellation, not a failed file")
+    func nestedCancellationErrorIsTreatedAsCancellation() throws {
+        let root = try captureImportTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeDestinationCaptureTree(root: root, target: "IC1396", date: "2026-08-16", slug: "r8-osc")
+
+        let firstSource = try captureImportSourceFile(named: "IMG_0001.CR3", contents: "light one")
+        defer { try? FileManager.default.removeItem(at: firstSource.deletingLastPathComponent()) }
+        let secondSource = try captureImportSourceFile(named: "IMG_0002.CR3", contents: "light two")
+        defer { try? FileManager.default.removeItem(at: secondSource.deletingLastPathComponent()) }
+
+        let items = [
+            CaptureImportItem(sourceURL: firstSource, relativeSourcePath: "IMG_0001.CR3", fileName: "IMG_0001.CR3", role: .light, sizeBytes: 9),
+            CaptureImportItem(sourceURL: secondSource, relativeSourcePath: "IMG_0002.CR3", fileName: "IMG_0002.CR3", role: .light, sizeBytes: 9),
+        ]
+
+        let receipt = try CaptureImportCommand.copy(
+            items: items, root: root, accessMode: .mutationEnabled, target: "IC1396", date: "2026-08-16", slug: "r8-osc",
+            hash: { url in
+                guard url.lastPathComponent != "IMG_0002.CR3" else { throw CancellationError() }
+                return try DuplicateFinder.sha256Hash(of: url)
+            }
+        )
+
+        #expect(receipt.wasCancelled)
+        #expect(receipt.copied.count == 1, "everything verified before the stop still counts")
+        #expect(receipt.failed.isEmpty, "a cancellation is not a failed file")
+    }
+
     @Test("A completed (non-cancelled) copy reports wasCancelled == false")
     func completedCopyIsNotFlaggedCancelled() throws {
         let root = try captureImportTempRoot()

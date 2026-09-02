@@ -392,6 +392,15 @@ public enum CaptureImportCommand {
                     sizeBytes: item.sizeBytes,
                     sha256: destinationHash
                 ))
+            } catch is CancellationError {
+                // Same stop as the `shouldCancel()` check above, for a
+                // cancellation raised from INSIDE a helper (a hasher or a
+                // `WriteGuard` step that observes `Task.isCancelled`). It
+                // used to fall into the generic catch below and be recorded
+                // as a failed file with a Foundation "cancelled" string --
+                // reporting a stop the user asked for as data loss.
+                wasCancelled = true
+                break
             } catch {
                 // W-fix (item 6): this used to render an `AstroError` via
                 // `String(describing:)` -- a raw Swift enum dump
