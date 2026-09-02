@@ -1348,6 +1348,10 @@
 "Create a new session — pick an existing project or a custom target" = "Új session létrehozása — válassz meglévő projektet vagy adj meg egyedi célpontot";
 "The catalog number and target name resolve to an empty folder name." = "A katalógusszám és a célpont neve üres mappanevet eredményez.";
 "AstroTool could not preview this session." = "Az AstroTool nem tudta előnézetezni ezt a session-t.";
+/* v5 flow fixes, item 2: create(operationHost:)'s own fallback when OperationHost recorded a failure but somehow kept no error message text -- String(localized:), hand-added like other String(localized:) call sites in this codebase. */
+"AstroTool could not create this session." = "Az AstroTool nem tudta létrehozni ezt a session-t.";
+/* v5 flow fixes, item 2: the capture-import wizard's own inline rendering of NewSessionStore.createErrorMessage, next to previewErrorKey. */
+"AstroTool could not create the structure: %@" = "Az AstroTool nem tudta létrehozni a struktúrát: %@";
 "Requires write access. Enable write operations in Settings to create this session." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban ennek a session-nek a létrehozásához.";
 "Requires write access. Enable write operations in Settings to undo this." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban ennek a visszavonásához.";
 "The folder is no longer empty — it was not removed." = "A mappa már nem üres — nem lett eltávolítva.";

@@ -89,6 +89,16 @@ public final class NewSessionStore {
     public private(set) var isUndoing = false
     public private(set) var isUndone = false
     public private(set) var undoErrorKey: LocalizedStringKey?
+    /// W-fix (item 2): `create(operationHost:)`'s own `command.create(...)`
+    /// call runs INSIDE `operationHost.run`'s detached task, so a failure
+    /// there is caught by `OperationHost`'s own do/catch -- a toast on a
+    /// layer mounted behind whatever sheet is presenting this store (the
+    /// capture-import wizard's modal, in particular), never reaching this
+    /// store at all before this fix. `create(...)` now awaits the
+    /// operation's outcome and, when it did not produce a `receipt`, reads
+    /// the same failure `OperationHost` already recorded back out via
+    /// `errorMessage(for:)` so a caller can render it inline.
+    public private(set) var createErrorMessage: String?
 
     public let rootURL: URL
     public let accessMode: LibraryAccessMode
@@ -199,6 +209,11 @@ public final class NewSessionStore {
     /// performs.
     public func refreshPreview() {
         guard receipt == nil else { return }
+        // A field edit after a failed Create Structure means the user is
+        // trying again with different input -- the stale failure banner
+        // from the previous attempt should not linger next to a freshly
+        // recomputed (and possibly now-valid) preview.
+        createErrorMessage = nil
         do {
             let command = try makeCommand()
             targetFolderPreview = command.resolvedTargetFolder(
@@ -254,6 +269,7 @@ public final class NewSessionStore {
     public func create(operationHost: OperationHost) async {
         guard canCreate, let preview else { return }
         isCreating = true
+        createErrorMessage = nil
         defer { isCreating = false }
         do {
             let command = try makeCommand()
@@ -264,12 +280,22 @@ public final class NewSessionStore {
             let capture = captureDraft
             let kind = OperationKind.createSession(target: "\(preview.targetFolder)/\(preview.date)")
             let title = "\(OperationHost.localized("Creating session")) \(preview.targetFolder)/\(preview.date)"
-            _ = await operationHost.run(kind: kind, title: title, cancellation: .unavailable) { [weak self] in
+            let id = await operationHost.run(kind: kind, title: title, cancellation: .unavailable) { [weak self] in
                 let result = try command.create(
                     catalogRaw: catalogRaw, nameRaw: nameRaw, date: dateText,
                     catalogTarget: catalogTarget, capture: capture
                 )
                 await self?.recordReceipt(result)
+            }
+            // `run(...)` itself only waits for registration, not for `work`
+            // to finish (see its own doc comment) -- `outcome(of:)` is what
+            // actually waits for `command.create(...)` to either call
+            // `recordReceipt` or throw, same as `CaptureImportStore.runCopy`'s
+            // identical `run` + `outcome(of:)` pairing.
+            _ = await operationHost.outcome(of: id)
+            if receipt == nil {
+                createErrorMessage = await operationHost.errorMessage(for: id)
+                    ?? String(localized: "AstroTool could not create this session.")
             }
         } catch {
             previewErrorKey = "AstroTool could not preview this session."

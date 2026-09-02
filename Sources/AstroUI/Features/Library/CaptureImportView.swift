@@ -907,6 +907,17 @@ public struct CaptureImportView: View {
                 Label(previewErrorKey, systemImage: "exclamationmark.triangle")
                     .font(.caption).foregroundStyle(AstroTokens.Color.attention)
             }
+            // W-fix (item 2): "Create Structure" used to be able to fail
+            // with zero visible feedback -- `command.create(...)`'s failure
+            // was only ever announced by a toast on `OperationHost`'s
+            // overlay, which is mounted on the window BEHIND this modal
+            // wizard's sheet. `NewSessionStore.create` now surfaces the same
+            // failure inline via `createErrorMessage`.
+            if let createErrorMessage = destination.createErrorMessage {
+                Label("AstroTool could not create the structure: \(createErrorMessage)", systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(AstroTokens.Color.critical)
+                    .accessibilityIdentifier("v2.capture-import.create-structure-error")
+            }
 
             HStack {
                 Button("Back") { store.step = .classify }

@@ -42,4 +42,23 @@ struct CaptureImportSurfaceTests {
         // failure), not for a cancellation that already has a receipt.
         #expect(view.contains("AstroTool could not copy the files. The source card was not modified."))
     }
+
+    // MARK: - v5 flow fixes, item 2: "Create Structure" used to be able to
+    // fail with zero visible feedback -- the failure toast is mounted on a
+    // layer behind this modal wizard's sheet.
+
+    @Test("NewSessionStore.create awaits the operation's outcome and surfaces a failure via createErrorMessage")
+    func createAwaitsOutcomeAndExposesFailure() throws {
+        let store = try source("Sources/AstroUI/Features/Library/NewSessionView.swift")
+        #expect(store.contains("public private(set) var createErrorMessage: String?"))
+        #expect(store.contains("_ = await operationHost.outcome(of: id)"))
+        #expect(store.contains("createErrorMessage = await operationHost.errorMessage(for: id)"))
+    }
+
+    @Test("The wizard's destination step renders createErrorMessage next to previewErrorKey")
+    func destinationStepRendersCreateErrorMessage() throws {
+        let view = try source("Sources/AstroUI/Features/Library/CaptureImportView.swift")
+        #expect(view.contains("if let createErrorMessage = destination.createErrorMessage"))
+        #expect(view.contains("v2.capture-import.create-structure-error"))
+    }
 }
