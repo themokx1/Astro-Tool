@@ -179,7 +179,7 @@ struct ConversionWorkspaceTests {
         let store = fixture.makeStore()
         await store.load(rootURL: fixture.root, accessMode: .mutationEnabled)
         store.mode = .physical
-        try await store.refreshPlan()
+        await store.refreshPlan()
         let move = try #require(store.plan?.moves.first)
         let source = fixture.root.appendingPathComponent(move.sourceRelative)
         let destination = fixture.root.appendingPathComponent(move.destinationRelative)
@@ -202,7 +202,7 @@ struct ConversionWorkspaceTests {
         let store = fixture.makeStore()
         await store.load(rootURL: fixture.root, accessMode: .mutationEnabled)
         store.mode = .physical
-        try await store.refreshPlan()
+        await store.refreshPlan()
         let move = try #require(store.plan?.moves.first)
         let source = fixture.root.appendingPathComponent(move.sourceRelative)
         let host = OperationHost(center: OperationCenter())
@@ -214,5 +214,153 @@ struct ConversionWorkspaceTests {
 
         #expect(store.lastReceipt?.status == .rolledBack)
         #expect(FileManager.default.fileExists(atPath: source.path))
+    }
+
+    // MARK: - A failed re-plan, and double-apply of physical moves
+
+    @Test("A failed re-plan clears the stale plan and says why, instead of leaving the previous mode's preview up")
+    func failedRefreshPlanClearsTheStalePlan() async throws {
+        let fixture = try ConversionStoreFixture.make()
+        defer { fixture.cleanup() }
+        // `refreshPlan` used to throw, and both of its call sites are
+        // `Task { try? await store.refreshPlan() }` from an `.onChange` --
+        // so a throw vanished and the previous mode's plan stayed on screen
+        // as if it described the newly selected mode.
+        let breaker = CommandFactoryBreaker()
+        let (db, config, root) = (fixture.db, fixture.config, fixture.root)
+        let store = ConversionStore(
+            useCase: fixture.useCase,
+            commandFactory: { _, accessMode in
+                if breaker.isBroken { throw ConversionTestFailure.commandUnavailable }
+                return SessionConversionCommand(db: db, config: config, root: root, accessMode: accessMode)
+            }
+        )
+        await store.load(rootURL: fixture.root)
+        #expect(store.plan?.mode == .logicalOnly)
+
+        breaker.isBroken = true
+        store.mode = .physical
+        await store.refreshPlan()
+
+        #expect(store.plan == nil, "a stale preview must never be presented as the new mode's plan")
+        #expect(store.planErrorMessage != nil)
+        #expect(!store.isPlanning)
+    }
+
+    @Test("Re-planning after a physical apply keeps the receipt, so Undo stays reachable")
+    func refreshPlanKeepsAnAppliedReceipt() async throws {
+        let fixture = try ConversionStoreFixture.make()
+        defer { fixture.cleanup() }
+        let store = fixture.makeStore()
+        await store.load(rootURL: fixture.root, accessMode: .mutationEnabled)
+        store.mode = .physical
+        await store.refreshPlan()
+        let host = OperationHost(center: OperationCenter())
+        await store.applyPlan(operationHost: host)
+        await host.settle()
+        #expect(store.lastReceipt?.status == .applied)
+
+        store.mode = .logicalOnly
+        await store.refreshPlan()
+
+        #expect(
+            store.lastReceipt?.status == .applied,
+            "clearing the receipt would take Undo away from files this workspace already moved"
+        )
+    }
+
+    @Test("Apply refuses to register a second conversion of the same session")
+    func applyRefusesAConcurrentConversionOfTheSameSession() async throws {
+        let fixture = try ConversionStoreFixture.make()
+        defer { fixture.cleanup() }
+        let store = fixture.makeStore()
+        await store.load(rootURL: fixture.root, accessMode: .mutationEnabled)
+        store.mode = .physical
+        await store.refreshPlan()
+        let move = try #require(store.plan?.moves.first)
+        let source = fixture.root.appendingPathComponent(move.sourceRelative)
+        let host = OperationHost(center: OperationCenter())
+        // Stands in for the user's first Apply still running: `applyPlan`'s
+        // own operation is registered under exactly this kind.
+        let kind = OperationKind.convert(session: "M31/2026-01-01")
+        let busy = await host.run(kind: kind, title: "Applying conversion", cancellation: .cooperative) {
+            try await Task.sleep(nanoseconds: 30_000_000_000)
+        }
+
+        await store.applyPlan(operationHost: host)
+
+        #expect(host.activeOperations.filter { $0.kind == kind }.count == 1, "no second physical move may be registered")
+        #expect(store.lastReceipt == nil)
+        #expect(host.toasts.contains { $0.level == .info })
+        #expect(FileManager.default.fileExists(atPath: source.path), "the file must not have moved")
+        _ = await host.cancel(id: busy)
+    }
+
+    @Test("Undo refuses to register a second rollback of the same receipt")
+    func undoRefusesAConcurrentRollbackOfTheSameReceipt() async throws {
+        let fixture = try ConversionStoreFixture.make()
+        defer { fixture.cleanup() }
+        let store = fixture.makeStore()
+        await store.load(rootURL: fixture.root, accessMode: .mutationEnabled)
+        store.mode = .physical
+        await store.refreshPlan()
+        let host = OperationHost(center: OperationCenter())
+        await store.applyPlan(operationHost: host)
+        await host.settle()
+        #expect(!store.isApplying, "the in-flight flag must clear once the apply finishes")
+        let kind = OperationKind.convert(session: "M31/2026-01-01")
+        let busy = await host.run(kind: kind, title: "Undoing conversion", cancellation: .cooperative) {
+            try await Task.sleep(nanoseconds: 30_000_000_000)
+        }
+
+        await store.undoReceipt(operationHost: host)
+
+        #expect(host.activeOperations.filter { $0.kind == kind }.count == 1)
+        #expect(store.lastReceipt?.status == .applied, "the receipt is untouched -- no second rollback ran")
+        #expect(host.toasts.contains { $0.level == .info })
+        _ = await host.cancel(id: busy)
+    }
+
+    /// The Apply/Undo buttons themselves are view code, so their disabled
+    /// state is pinned by source text -- this repo's "surface test"
+    /// convention.
+    @Test("Apply and Undo are disabled while an apply or undo is in flight")
+    func applyAndUndoAreDisabledWhileInFlight() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Sources/AstroUI/Features/Library/ConversionWorkspace.swift"),
+            encoding: .utf8
+        )
+        let apply = try #require(
+            source.components(separatedBy: "Button(\"Apply Conversion…\")").dropFirst().first?
+                .components(separatedBy: ".accessibilityIdentifier").first
+        )
+        #expect(apply.contains("store.isApplying"))
+        let undo = try #require(
+            source.components(separatedBy: "Button(\"Undo Conversion…\"").dropFirst().first?
+                .components(separatedBy: ".accessibilityIdentifier").first
+        )
+        #expect(undo.contains("store.isApplying"))
+    }
+}
+
+private enum ConversionTestFailure: Error {
+    case commandUnavailable
+}
+
+/// Lets a test flip `ConversionStore`'s injected command factory from
+/// working to throwing mid-test. Lock-protected because the factory closure
+/// is `@Sendable`; same shape as `LiveNightWatcherTests`' own
+/// `FakeFolderLister`.
+private final class CommandFactoryBreaker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var broken = false
+
+    var isBroken: Bool {
+        get { lock.withLock { broken } }
+        set { lock.withLock { broken = newValue } }
     }
 }

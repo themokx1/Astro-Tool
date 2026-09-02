@@ -28,6 +28,13 @@ public final class ConversionStore {
     /// (which also clears `plan`, since the applied plan is now stale) and
     /// updated in place by `undoReceipt`.
     public private(set) var lastReceipt: SessionConversionReceipt?
+    /// `true` from the moment an apply/undo is registered until its work
+    /// finishes. `OperationHost.run` returns as soon as the operation is
+    /// REGISTERED, not when it completes, so the Apply/Undo controls need
+    /// their own in-flight flag -- without one, a second click registered a
+    /// second PHYSICAL move of the same session while the first was still
+    /// running.
+    public private(set) var isApplying = false
 
     public var selection: ConversionSessionID?
     public var mode: SessionConversionMode = .logicalOnly
@@ -63,23 +70,39 @@ public final class ConversionStore {
         do {
             sessions = try await useCase.availableSessions()
             selection = selection ?? sessions.first
-            try await refreshPlan()
         } catch {
             errorMessage = error.localizedDescription
+            return
         }
+        await refreshPlan()
     }
 
     /// Builds a fresh preview for the current `selection`/`mode` -- always
     /// available, even in read-only mode; nothing is written by this call.
-    public func refreshPlan() async throws {
+    ///
+    /// Never throws: every call site is a fire-and-forget `Task` from an
+    /// `.onChange` (mode/selection changed), and when this DID throw, those
+    /// sites swallowed it with `try?` -- leaving the PREVIOUS mode's plan on
+    /// screen as if it described the newly chosen one. A failure now clears
+    /// the stale plan and says why.
+    public func refreshPlan() async {
         guard let rootURL, let selection else { plan = nil; return }
         isPlanning = true
         planErrorMessage = nil
         defer { isPlanning = false }
-        let command = try commandFactory(rootURL, accessMode)
-        plan = try command.plan(target: selection.target, date: selection.date, mode: mode)
-        ambiguityChoices = [:]
-        lastReceipt = nil
+        do {
+            let command = try commandFactory(rootURL, accessMode)
+            plan = try command.plan(target: selection.target, date: selection.date, mode: mode)
+            ambiguityChoices = [:]
+            // An APPLIED receipt is the user's only handle on files this
+            // workspace already moved -- clearing it behind a fresh preview
+            // would take the Undo button away from a completed physical
+            // conversion. A rolled-back one has nothing left to offer.
+            if lastReceipt?.status != .applied { lastReceipt = nil }
+        } catch {
+            plan = nil
+            planErrorMessage = error.localizedDescription
+        }
     }
 
     /// Commits the currently chosen candidate (or the ambiguity's own first
@@ -142,15 +165,34 @@ public final class ConversionStore {
             planErrorMessage = "Requires write access. Enable write operations in Settings to apply this conversion."
             return
         }
+        let kind = OperationKind.convert(session: "\(plan.scope.target)/\(plan.scope.date)")
+        // The same "one operation per kind" guard every other V2 write path
+        // uses (`ArchiveStore.acknowledge`, `ProjectRatingRunner`). This one
+        // moves real files, and `OperationHost.run` returns at registration
+        // time, so without it a second Apply click registered a second
+        // physical move of the same session on top of the first.
+        guard !isApplying, !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
+            operationHost.notify(.info, message: OperationHost.localized("This session is already being converted."))
+            return
+        }
+        isApplying = true
         do {
             let command = try commandFactory(rootURL, accessMode)
-            let kind = OperationKind.convert(session: "\(plan.scope.target)/\(plan.scope.date)")
             let title = OperationHost.localized(plan.mode == .physical ? "Applying conversion" : "Saving capture organization")
             _ = await operationHost.run(kind: kind, title: title, cancellation: .unavailable) { [weak self] in
-                let receipt = try command.apply(plan)
-                await self?.recordReceipt(receipt)
+                do {
+                    let receipt = try command.apply(plan)
+                    await self?.finishApply(receipt: receipt)
+                } catch {
+                    // Clear the in-flight flag before rethrowing so
+                    // `OperationHost` still produces its own failure toast
+                    // and the button comes back.
+                    await self?.finishApply(receipt: nil)
+                    throw error
+                }
             }
         } catch {
+            isApplying = false
             planErrorMessage = error.localizedDescription
         }
     }
@@ -163,24 +205,41 @@ public final class ConversionStore {
             planErrorMessage = "Requires write access. Enable write operations in Settings to undo this conversion."
             return
         }
+        let kind = OperationKind.convert(session: "\(receipt.scope.target)/\(receipt.scope.date)")
+        // Same guard, same reason as `applyPlan`: rolling the same receipt
+        // back twice would move files a second time.
+        guard !isApplying, !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
+            operationHost.notify(.info, message: OperationHost.localized("This session is already being converted."))
+            return
+        }
+        isApplying = true
         do {
             let command = try commandFactory(rootURL, accessMode)
-            let kind = OperationKind.convert(session: "\(receipt.scope.target)/\(receipt.scope.date)")
             _ = await operationHost.run(kind: kind, title: OperationHost.localized("Undoing conversion"), cancellation: .unavailable) { [weak self] in
-                let rolledBack = try command.rollback(receipt)
-                await self?.recordRolledBack(rolledBack)
+                do {
+                    let rolledBack = try command.rollback(receipt)
+                    await self?.finishUndo(receipt: rolledBack)
+                } catch {
+                    await self?.finishUndo(receipt: nil)
+                    throw error
+                }
             }
         } catch {
+            isApplying = false
             planErrorMessage = error.localizedDescription
         }
     }
 
-    private func recordReceipt(_ receipt: SessionConversionReceipt) {
+    private func finishApply(receipt: SessionConversionReceipt?) {
+        isApplying = false
+        guard let receipt else { return }
         lastReceipt = receipt
         plan = nil
     }
 
-    private func recordRolledBack(_ receipt: SessionConversionReceipt) {
+    private func finishUndo(receipt: SessionConversionReceipt?) {
+        isApplying = false
+        guard let receipt else { return }
         lastReceipt = receipt
     }
 }
@@ -347,8 +406,8 @@ public struct ConversionWorkspace: View {
             }
             .pickerStyle(.segmented)
             .frame(maxWidth: 460)
-            .onChange(of: store.mode) { _, _ in Task { try? await store.refreshPlan() } }
-            .onChange(of: store.selection) { _, _ in Task { try? await store.refreshPlan() } }
+            .onChange(of: store.mode) { _, _ in Task { await store.refreshPlan() } }
+            .onChange(of: store.selection) { _, _ in Task { await store.refreshPlan() } }
             Label("Exactly 1 session", systemImage: "scope").foregroundStyle(AstroTokens.Color.ok)
             Spacer()
         }
@@ -574,7 +633,10 @@ public struct ConversionWorkspace: View {
             Spacer()
             Button("Apply Conversion…") { confirmingApply = true }
                 .buttonStyle(.borderedProminent)
-                .disabled(store.accessMode != .mutationEnabled || !plan.canApply)
+                // `store.isApplying`: the button used to stay live for the
+                // whole apply, so a second click could register a second
+                // physical move of the same session.
+                .disabled(store.accessMode != .mutationEnabled || !plan.canApply || store.isApplying)
                 // W6-D fix: a ternary of two string literals infers as
                 // plain `String`, not `LocalizedStringKey` -- `.help(_:)`
                 // then renders it verbatim no matter what `hu.lproj` says,
@@ -612,6 +674,7 @@ public struct ConversionWorkspace: View {
                 .disabled(receiptURL(receipt) == nil)
             if receipt.status == .applied {
                 Button("Undo Conversion…", role: .destructive) { confirmingUndo = true }
+                    .disabled(store.isApplying)
                     .accessibilityIdentifier("v2.conversion.undo")
             }
         }

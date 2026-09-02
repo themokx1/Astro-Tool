@@ -2489,6 +2489,11 @@
    literal, never into the key. */
 "Could not save the frame verdict:" = "Nem sikerült menteni a képkocka döntését:";
 
+/* `ConversionStore.applyPlan`/`undoReceipt`'s "one conversion per session"
+   guard -- also an `OperationHost.localized(_:)` argument, hand-added for
+   the same reason as the entry just above. */
+"This session is already being converted." = "Ennek a sessionnek az átszervezése már folyamatban van.";
+
 /* V3 pre-stack program section 5.5: `ClearSkyNotificationContent.build`
    (AstroApplication) -- the actual macOS notification's title/body. Hand-
    added for the same reason as the two save-result messages just above:
