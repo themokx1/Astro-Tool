@@ -126,4 +126,54 @@ struct FirstSuccessOnboardingStoreTests {
         store.clearError()
         #expect(store.errorMessage == nil)
     }
+
+    // MARK: - 2026-09-02 v5 flow fixes, item 3: cancelling mid-import used
+    // to leave real session/capture folders on disk while the completion
+    // screen said "No project or capture was created" -- `CaptureImportStore`
+    // is `@State` inside `CaptureImportView`, so it dies the moment the
+    // user backs out to `.importOffer`; the coordinator has to remember the
+    // fact itself.
+
+    @Test("Cancelling after Create Structure remembers what was created, even after the wizard's own store dies")
+    func cancelAfterCreateStructureRemembersWhatWasCreated() {
+        let store = FirstSuccessOnboardingStore(mode: .firstRun)
+        store.chooseEntry(.createLibrary)
+        store.libraryBecameReady()
+        store.startImport()
+
+        store.recordCreatedStructure(targetFolder: "M31_Andromeda", date: "2026-08-20", captureSlug: "first-capture")
+        store.cancelImport()
+        #expect(store.step == .importOffer)
+        #expect(store.createdStructure?.targetFolder == "M31_Andromeda")
+
+        store.skipImport()
+        #expect(store.step == .completion)
+        #expect(store.didSkipImport)
+        #expect(store.createdStructure != nil, "the structure fact must survive skipping the rest of the journey")
+    }
+
+    @Test("Undoing the structure clears the completion-facing fact")
+    func undoingStructureClearsTheFact() {
+        let store = FirstSuccessOnboardingStore(mode: .firstRun)
+        store.chooseEntry(.createLibrary)
+        store.libraryBecameReady()
+        store.startImport()
+        store.recordCreatedStructure(targetFolder: "M31_Andromeda", date: "2026-08-20", captureSlug: "first-capture")
+
+        store.clearCreatedStructure()
+
+        #expect(store.createdStructure == nil)
+    }
+
+    @Test("A fresh entry choice resets any structure fact left over from a previous attempt")
+    func freshEntryChoiceResetsCreatedStructure() {
+        let store = FirstSuccessOnboardingStore(mode: .firstRun)
+        store.chooseEntry(.createLibrary)
+        store.recordCreatedStructure(targetFolder: "M31_Andromeda", date: "2026-08-20", captureSlug: "first-capture")
+        #expect(store.createdStructure != nil)
+
+        store.chooseEntry(.openLibrary)
+
+        #expect(store.createdStructure == nil)
+    }
 }

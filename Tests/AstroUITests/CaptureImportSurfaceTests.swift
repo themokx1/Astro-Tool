@@ -61,4 +61,35 @@ struct CaptureImportSurfaceTests {
         #expect(view.contains("if let createErrorMessage = destination.createErrorMessage"))
         #expect(view.contains("v2.capture-import.create-structure-error"))
     }
+
+    // MARK: - v5 flow fixes, item 3: cancelling mid-import used to leave
+    // real session/capture folders on disk while the completion screen said
+    // "No project or capture was created" -- `CaptureImportStore` is
+    // `@State` inside `CaptureImportView`, so it dies the moment the
+    // journey backs out to `.importOffer`.
+
+    @Test("The wizard reports a successfully created structure to a caller that outlives its own store")
+    func wizardReportsStructureCreationUpward() throws {
+        let view = try source("Sources/AstroUI/Features/Library/CaptureImportView.swift")
+        #expect(view.contains("var structureCreated: (_ targetFolder: String, _ date: String, _ captureSlug: String?) -> Void = { _, _, _ in }"))
+        #expect(view.contains("structureCreated(receipt.targetFolder, receipt.date, slug)"))
+    }
+
+    @Test("The preview step offers Undo for a structure the wizard already created, before the user can back out")
+    func previewStepOffersUndoBeforeLeaving() throws {
+        let view = try source("Sources/AstroUI/Features/Library/CaptureImportView.swift")
+        #expect(view.contains("v2.capture-import.undo-structure"))
+        #expect(view.contains("await store.destinationStore.undo(operationHost: operationHost)"))
+        #expect(view.contains("if store.destinationStore.isUndone { structureUndone() }"))
+    }
+
+    @Test("The onboarding journey wires structureCreated/structureUndone to the coordinator's own honest-completion facts")
+    func onboardingWiresStructureCallbacksToTheCoordinator() throws {
+        let onboarding = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")
+        #expect(onboarding.contains("coordinator.recordCreatedStructure(targetFolder: targetFolder, date: date, captureSlug: captureSlug)"))
+        #expect(onboarding.contains("structureUndone: { coordinator.clearCreatedStructure() }"))
+        // The old unconditional "no project or capture was created" text
+        // must no longer be the only message a skipped import can show.
+        #expect(onboarding.contains("The project folders were created; no photos were copied."))
+    }
 }

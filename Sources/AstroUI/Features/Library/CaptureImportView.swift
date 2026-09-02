@@ -437,6 +437,18 @@ public struct CaptureImportView: View {
     let dismiss: () -> Void
     let runScan: () -> Void
     let importCompleted: () -> Void
+    /// W-fix (item 3): `store` is `@State`, so it dies the moment this view
+    /// is unmounted (e.g. the guided first-success journey backing out to
+    /// its own `.importOffer` step) -- a caller that needs to remember past
+    /// this view's lifetime whether "Create Structure" actually wrote a
+    /// session/capture tree has nowhere else to learn that. Defaults to a
+    /// no-op for the other two call sites (`V2RootView`, `IngestHomeCard`),
+    /// which have no such outer journey to keep honest.
+    var structureCreated: (_ targetFolder: String, _ date: String, _ captureSlug: String?) -> Void = { _, _, _ in }
+    /// Mirrors `structureCreated` for the wizard's own Undo, so a caller
+    /// that recorded the structure's creation can also un-record it once
+    /// the user removes it again before leaving.
+    var structureUndone: () -> Void = {}
     @Environment(OperationHost.self) private var operationHost
 
     public init(
@@ -446,7 +458,9 @@ public struct CaptureImportView: View {
         existingProjects: [ProjectRecord],
         dismiss: @escaping () -> Void,
         runScan: @escaping () -> Void,
-        importCompleted: @escaping () -> Void = {}
+        importCompleted: @escaping () -> Void = {},
+        structureCreated: @escaping (_ targetFolder: String, _ date: String, _ captureSlug: String?) -> Void = { _, _, _ in },
+        structureUndone: @escaping () -> Void = {}
     ) {
         _store = State(initialValue: CaptureImportStore(
             rootURL: rootURL, accessMode: accessMode,
@@ -455,6 +469,8 @@ public struct CaptureImportView: View {
         self.dismiss = dismiss
         self.runScan = runScan
         self.importCompleted = importCompleted
+        self.structureCreated = structureCreated
+        self.structureUndone = structureUndone
     }
 
     /// V3 pre-stack program, section 5.1 (Ingest-figyelő): the Home banner's
@@ -924,7 +940,16 @@ public struct CaptureImportView: View {
                 Spacer()
                 if destination.isCreating { ProgressView().controlSize(.small) }
                 Button("Create Structure") {
-                    Task { await store.createDestinationStructure(operationHost: operationHost) }
+                    Task {
+                        await store.createDestinationStructure(operationHost: operationHost)
+                        // W-fix (item 3): tell a caller that outlives this
+                        // view (the guided first-success journey's own
+                        // coordinator) that real folders now exist, before
+                        // this view's `@State` store has any chance to die.
+                        if let receipt = destination.receipt, let slug = receipt.captureSlug {
+                            structureCreated(receipt.targetFolder, receipt.date, slug)
+                        }
+                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!destination.canCreate)
@@ -979,6 +1004,32 @@ public struct CaptureImportView: View {
                 Label(copyErrorKey, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(AstroTokens.Color.attention)
             }
+            // W-fix (item 3): "Create Structure" already wrote a real
+            // session/capture folder tree by the time this step shows --
+            // this is the user's one chance to remove it again, from
+            // INSIDE this view, before backing out destroys `store` (its
+            // `@State`) and the receipt this undo needs along with it.
+            // Reuses `NewSessionStore.undo` verbatim, the same call
+            // `NewSessionView`'s own Undo button makes.
+            if store.destinationStore.isUndone {
+                Label("Undone — the empty folders were removed.", systemImage: "arrow.uturn.backward.circle")
+                    .font(.caption).foregroundStyle(AstroTokens.Color.attention)
+            } else if store.destinationStore.receipt != nil {
+                HStack {
+                    if store.destinationStore.isUndoing { ProgressView().controlSize(.small) }
+                    Button("Undo") {
+                        Task {
+                            await store.destinationStore.undo(operationHost: operationHost)
+                            if store.destinationStore.isUndone { structureUndone() }
+                        }
+                    }
+                    .disabled(store.destinationStore.isUndoing)
+                    .accessibilityIdentifier("v2.capture-import.undo-structure")
+                }
+            }
+            if let undoErrorKey = store.destinationStore.undoErrorKey {
+                Text(undoErrorKey).font(.caption).foregroundStyle(AstroTokens.Color.attention)
+            }
             HStack {
                 Button("Back") { store.step = .destination }
                 Spacer()
@@ -986,7 +1037,7 @@ public struct CaptureImportView: View {
                     Task { await store.runCopy(operationHost: operationHost, runScan: runScan) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(store.preview == nil)
+                .disabled(store.preview == nil || store.destinationStore.isUndone)
                 .accessibilityIdentifier("v2.capture-import.start-copy")
             }
         }

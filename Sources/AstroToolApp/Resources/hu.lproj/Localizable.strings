@@ -2641,6 +2641,8 @@
 "You’re ready" = "Készen állsz";
 "Your first project is ready" = "Elkészült az első projekted";
 "No project or capture was created. You can return to First Steps whenever you want." = "Nem jött létre projekt vagy capture. Az Első lépésekhez bármikor visszatérhetsz.";
+/* v5 flow fixes, item 3: the honest completion state for "Create Structure succeeded, but the user skipped copying any photos" -- distinct from the no-structure-at-all case above. */
+"The project folders were created; no photos were copied. You can return to First Steps whenever you want." = "A projekt mappái létrejöttek; fotó nem lett bemásolva. Az Első lépésekhez bármikor visszatérhetsz.";
 "The import receipt shows what was copied, verified, skipped, or could not be copied." = "Az import eredménye megmutatja, mi lett bemásolva és ellenőrizve, mi maradt ki, illetve mit nem sikerült másolni.";
 "Enter AstroTool" = "Belépés az AstroToolba";
 "Open Project" = "Projekt megnyitása";

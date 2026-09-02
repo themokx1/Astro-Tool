@@ -263,7 +263,18 @@ public struct FirstSuccessOnboardingView: View {
                     existingProjects: existingProjects,
                     dismiss: { coordinator.cancelImport() },
                     runScan: runScan,
-                    importCompleted: { coordinator.importCompleted(createdFirstProject: true) }
+                    importCompleted: { coordinator.importCompleted(createdFirstProject: true) },
+                    // W-fix (item 3): `CaptureImportView`'s own store is
+                    // `@State` and dies the instant `cancelImport()` above
+                    // unmounts this view -- these two calls are the
+                    // coordinator's only chance to learn (and later revise)
+                    // whether "Create Structure" actually wrote a real
+                    // session/capture tree, so the completion screen can
+                    // stay honest about it.
+                    structureCreated: { targetFolder, date, captureSlug in
+                        coordinator.recordCreatedStructure(targetFolder: targetFolder, date: date, captureSlug: captureSlug)
+                    },
+                    structureUndone: { coordinator.clearCreatedStructure() }
                 )
             }
         } else {
@@ -280,9 +291,7 @@ public struct FirstSuccessOnboardingView: View {
             topBar(title: coordinator.didSkipImport ? "You’re ready" : "Your first project is ready")
             Image(systemName: "checkmark.seal.fill")
                 .font(.system(size: 56)).foregroundStyle(AstroTokens.Color.ok)
-            Text(coordinator.didSkipImport
-                 ? "No project or capture was created. You can return to First Steps whenever you want."
-                 : "The import receipt shows what was copied, verified, skipped, or could not be copied.")
+            Text(completionDetail)
                 .font(.title3).foregroundStyle(.secondary)
             safetyStrip
             HStack {
@@ -293,6 +302,23 @@ public struct FirstSuccessOnboardingView: View {
             }
         }
         .padding(AstroTokens.Spacing.spacious)
+    }
+
+    /// W-fix (item 3): honest completion copy. Skipping the import used to
+    /// always say "No project or capture was created" even when "Create
+    /// Structure" had already written a real session/capture folder tree
+    /// moments earlier and the user only backed out of COPYING PHOTOS into
+    /// it -- `coordinator.createdStructure` (recorded by the wizard itself,
+    /// since it survives the wizard's own store dying) is what tells these
+    /// two true-but-different outcomes apart.
+    private var completionDetail: LocalizedStringKey {
+        guard coordinator.didSkipImport else {
+            return "The import receipt shows what was copied, verified, skipped, or could not be copied."
+        }
+        guard coordinator.createdStructure != nil else {
+            return "No project or capture was created. You can return to First Steps whenever you want."
+        }
+        return "The project folders were created; no photos were copied. You can return to First Steps whenever you want."
     }
 
     private var safetyStrip: some View {
