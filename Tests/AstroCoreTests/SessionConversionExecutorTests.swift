@@ -254,3 +254,42 @@ private struct ExecutorFixture {
     #expect(FileManager.default.fileExists(atPath: destination.path))
     #expect(try fixture.db.captureGroups(target: "M31", date: "2026-01-01").count == 1)
 }
+
+/// The conversion's metadata mutations belong to a file-MOVING workflow and
+/// must stay atomic on their own. When the library scanner already holds its
+/// batched-write transaction on the same `Database`, joining it would hand
+/// the conversion's half-applied writes to an owner that commits even on
+/// error (`LibraryScanner.scan` deliberately commits what it has), so a
+/// failed apply would leave orphan capture groups and mappings behind.
+@Test func aFailedMetadataApplyInsideAScanTransactionRollsBackOnlyItsOwnWrites() throws {
+    let fixture = try ExecutorFixture.make(exposures: [120, 300])
+    defer { fixture.cleanup() }
+    var plan = try fixture.plan(mode: .logicalOnly)
+    let slug = try #require(plan.proposedGroups.first?.draft.slug)
+    // An assignment for a file that is not indexed -- rejected in the LAST
+    // loop of the apply, after the capture groups have already been written.
+    plan.assignments.append(
+        ConversionAssignment(
+            fileID: nil,
+            path: "sessions/M31/2026-01-01/lights/ghost.fit",
+            role: .light,
+            groupSlug: slug,
+            reason: "test"
+        )
+    )
+
+    // Stand in for the scanner's own batched-write transaction.
+    try fixture.db.beginTransaction()
+    #expect(throws: AstroError.self) {
+        _ = try fixture.db.applySessionConversionMetadata(plan: plan, now: 1_000)
+    }
+    // The transaction owner commits what it has even after an error, exactly
+    // as `LibraryScanner.scan` does.
+    try fixture.db.commitTransaction()
+
+    #expect(
+        try fixture.db.captureGroups(target: "M31", date: "2026-01-01").isEmpty,
+        "a half-applied conversion must not be carried into the scan transaction's commit"
+    )
+    #expect(try fixture.db.allCaptureSources().isEmpty)
+}

@@ -1169,6 +1169,44 @@ public final class Database: @unchecked Sendable {
         }
     }
 
+    /// Runs `body` atomically EVEN WHEN an ambient transaction is already
+    /// open, for a caller whose writes must stand or fall together on their
+    /// own -- the session-conversion metadata apply/rollback, which pairs
+    /// with real filesystem moves.
+    ///
+    /// With no ambient transaction this is exactly `inOwnOrAmbientTransaction`.
+    /// With one (typically the scanner's batched-write transaction on the
+    /// same `Database`), plain joining would be wrong: that owner commits
+    /// whatever it has even after an error -- see `LibraryScanner.scan` --
+    /// so a failure here would leave half-applied capture groups and
+    /// mappings permanently behind. A SQLite SAVEPOINT nests inside the
+    /// ambient transaction and rolls back ONLY this body's own writes,
+    /// leaving the outer owner's accumulated work untouched.
+    ///
+    /// `name` must be a compile-time-constant identifier (it cannot be a
+    /// bound parameter); never pass user- or path-derived text.
+    ///
+    /// Callers must already hold `lock`, same as `inOwnOrAmbientTransaction`.
+    private func inOwnTransactionOrSavepoint<T>(
+        _ name: StaticString,
+        _ body: () throws -> T
+    ) throws -> T {
+        guard inTransaction else { return try inOwnOrAmbientTransaction(body) }
+        try db.exec("SAVEPOINT \(name);")
+        do {
+            let result = try body()
+            try db.exec("RELEASE \(name);")
+            return result
+        } catch {
+            // ROLLBACK TO leaves the savepoint itself on the stack, so it
+            // still has to be released -- otherwise the ambient
+            // transaction's savepoint stack grows with every failure.
+            try? db.exec("ROLLBACK TO \(name);")
+            try? db.exec("RELEASE \(name);")
+            throw error
+        }
+    }
+
     public func libraryIndexCounts() throws -> LibraryIndexCounts {
         try withLock {
             var counts = LibraryIndexCounts(projectCount: 0, nightCount: 0, frameCount: 0)
@@ -1746,7 +1784,7 @@ public final class Database: @unchecked Sendable {
         now: Double
     ) throws -> ConversionMetadataBackup {
         try withLock {
-            try inOwnOrAmbientTransaction {
+            try inOwnTransactionOrSavepoint("astro_conversion_apply") {
                 var backup = ConversionMetadataBackup()
                 var groupIDsBySlug: [String: Int64] = [:]
 
@@ -1966,7 +2004,7 @@ public final class Database: @unchecked Sendable {
     /// removed; they are harmless and may contain later user files.
     func rollbackSessionConversionMetadata(_ backup: ConversionMetadataBackup) throws {
         try withLock {
-            try inOwnOrAmbientTransaction {
+            try inOwnTransactionOrSavepoint("astro_conversion_rollback") {
                 for groupID in backup.createdGroupIDs {
                     try db.run(
                         "DELETE FROM file_capture_assignments WHERE capture_group_id = ?;",
