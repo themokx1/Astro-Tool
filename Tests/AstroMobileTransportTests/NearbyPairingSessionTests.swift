@@ -93,6 +93,57 @@ import Testing
         _ = try await phoneEstablish
     }
 
+    // MARK: - M7: the hello-supplied display name is untrusted text
+
+    /// The name arrives before any trust decision, the signed transcript
+    /// deliberately does not cover it, and the wire message puts no limit on
+    /// it -- so a hostile peer could send megabytes, newlines, or terminal
+    /// control codes straight into the confirmation UI next to the code.
+    @Test func aHostilePeerDisplayNameIsClampedBeforeItIsShownOrStored() async throws {
+        let (macConnection, phoneConnection) = InMemoryDuplexConnection.makePair()
+        let macStore = InMemoryDeviceIdentityStore()
+        let phoneStore = InMemoryDeviceIdentityStore()
+        let macIdentity = try macStore.loadOrCreateOwnIdentity(displayName: "Zoltán Macje")
+        let hostileName = "Zoltán iPhone\n\rConfirm the code: 000000\u{7}" + String(repeating: "A", count: 500)
+        let phoneIdentity = try phoneStore.loadOrCreateOwnIdentity(displayName: hostileName)
+
+        let macSession = NearbyPairingSession(role: .listener, identity: macIdentity, trustStore: macStore, connection: macConnection)
+        let phoneSession = NearbyPairingSession(role: .initiator, identity: phoneIdentity, trustStore: phoneStore, connection: phoneConnection)
+
+        async let macEstablish = macSession.establish()
+        async let phoneEstablish = phoneSession.establish()
+
+        _ = try await macSession.shortAuthenticationCode
+        _ = try await phoneSession.shortAuthenticationCode
+
+        let shown = await macSession.peerDisplayName
+        #expect(shown.count <= NearbyPairingSession.maximumPeerDisplayNameLength)
+        #expect(!shown.contains("\n"))
+        #expect(!shown.contains("\r"))
+        #expect(!shown.contains("\u{7}"))
+        #expect(shown.hasPrefix("Zoltán iPhone"))
+
+        await macSession.confirmPairing()
+        await phoneSession.confirmPairing()
+        let mac = try await macEstablish
+        _ = try await phoneEstablish
+
+        // The clamped form is what gets persisted too, so a later
+        // "paired with" list cannot be poisoned by the same text.
+        #expect(mac.peer.displayName == shown)
+        #expect(try macStore.trustedPeers().first?.displayName == shown)
+    }
+
+    @Test func sanitizingADisplayNameKeepsAnOrdinaryOneUntouched() {
+        #expect(NearbyPairingSession.sanitizedDisplayName("Zoltán MacBook Pro") == "Zoltán MacBook Pro")
+        #expect(NearbyPairingSession.sanitizedDisplayName("  Zoltán iPhone \n") == "Zoltán iPhone")
+        #expect(NearbyPairingSession.sanitizedDisplayName("") == "")
+        let long = String(repeating: "é", count: 200)
+        let clamped = NearbyPairingSession.sanitizedDisplayName(long)
+        #expect(clamped.count == NearbyPairingSession.maximumPeerDisplayNameLength)
+        #expect(clamped.hasSuffix("…"))
+    }
+
     // MARK: - MITM: substituted ephemeral keys fail signature verification
 
     @Test func mitmSubstitutedEphemeralKeysFailSignatureVerificationAndProduceDivergentLocalCodes() async throws {

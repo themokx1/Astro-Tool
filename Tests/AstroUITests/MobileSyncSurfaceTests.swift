@@ -227,10 +227,36 @@ struct MobileSyncSurfaceTests {
         #expect(session.contains("public var peerDisplayName: String"))
         #expect(store.contains("case pairing(code: String, peerDisplayName: String)"))
         #expect(view.contains("v5.nearby.peer-name"))
-        #expect(view.contains("Pairing with: \\(peerDisplayName)"))
+        #expect(view.contains("calling itself “\\(peerDisplayName)”"))
         #expect(screen.contains("v5.mobile.nearby.peer-name"))
-        #expect(screen.contains("Pairing with: \\(peerDisplayName)"))
+        #expect(screen.contains("calling itself “\\(peerDisplayName)”"))
         #expect(rootView.contains("case pairingCode(code: String, peerDisplayName: String)"))
+    }
+
+    // MARK: - v5 flow review, M7: the peer name arrives in `.hello`, before
+    // any trust decision and outside the signed transcript, yet both UIs
+    // presented it as plain fact ("Pairing with: X").
+
+    @Test("Both pairing screens label the peer name as the peer's own unverified claim")
+    func peerDisplayNameIsPresentedAsUnverified() throws {
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+        let expected = "Pairing with a device calling itself “\\(peerDisplayName)” — confirm the code matches"
+        #expect(view.contains(expected))
+        #expect(screen.contains(expected))
+        #expect(!view.contains("Pairing with: "))
+        #expect(!screen.contains("Pairing with: "))
+
+        let key = #""Pairing with a device calling itself “%@” — confirm the code matches" = "#
+        for table in [
+            "Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings",
+            "Sources/AstroToolMobile/Resources/hu.lproj/Localizable.strings",
+            "Sources/AstroToolMobile/Resources/en.lproj/Localizable.strings",
+        ] {
+            let strings = try String(contentsOf: root.appendingPathComponent(table), encoding: .utf8)
+            #expect(strings.contains(key), "\(table) has no entry for the unverified-peer label")
+            #expect(!strings.contains(#""Pairing with: %@" = "#), "\(table) still carries the superseded key")
+        }
     }
 
     // MARK: - Fix 5: silent Application Support -> temporaryDirectory fallback

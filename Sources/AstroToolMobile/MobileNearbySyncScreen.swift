@@ -107,8 +107,12 @@ struct MobileNearbySyncScreen: View {
                 .font(.headline)
                 .multilineTextAlignment(.center)
             if !peerDisplayName.isEmpty {
-                Text("Pairing with: \(peerDisplayName)")
+                // Unverified by construction: the name rides in the peer's
+                // hello, before the trust decision and outside the signed
+                // transcript. Only the code below proves which device this is.
+                Text("Pairing with a device calling itself “\(peerDisplayName)” — confirm the code matches")
                     .font(.subheadline)
+                    .multilineTextAlignment(.center)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("v5.mobile.nearby.peer-name")
             }

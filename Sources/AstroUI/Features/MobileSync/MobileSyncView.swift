@@ -585,7 +585,10 @@ public struct MobileSyncView: View {
                     .astroSectionTitle()
                     .accessibilityIdentifier("v5.nearby.state")
                 if !peerDisplayName.isEmpty {
-                    Text("Pairing with: \(peerDisplayName)")
+                    // The name comes from the peer's own hello, before any
+                    // trust decision and outside the signed transcript, so
+                    // it is a claim -- the code is what verifies the device.
+                    Text("Pairing with a device calling itself “\(peerDisplayName)” — confirm the code matches")
                         .astroBody()
                         .foregroundStyle(AstroTokens.Color.inkDim)
                         .accessibilityIdentifier("v5.nearby.peer-name")
