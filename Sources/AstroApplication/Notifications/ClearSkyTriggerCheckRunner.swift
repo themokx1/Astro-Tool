@@ -48,13 +48,32 @@ public enum ClearSkyTriggerCheckRunner {
     /// `AppStoragePaths`.
     public typealias StoragePathsResolver = @Sendable (LibraryIdentity, URL) throws -> AppStoragePaths
 
+    /// Every injection point is `Optional`/`nil` rather than defaulted
+    /// directly, and MUST stay that way. This is `public` and `async`, and
+    /// its production caller lives in another module
+    /// (`AstroUI.ClearSkyTriggerLoop`), so a default argument here is
+    /// re-emitted as a `linkonce_odr` copy into that client translation unit
+    /// too -- and Swift 6.3.3 gives the declaring module's copy a larger
+    /// async context than the client's. The linker coalesces body and size
+    /// record independently, so it can hand the caller too small a context
+    /// and the callee then writes past it, aborting the process with
+    /// `freed pointer was not the last allocation`. Resolving the defaults in
+    /// the body keeps them private to this module. See
+    /// `AsyncContextSizeGateTests` (the binary gate) and
+    /// `NightsStore.init(metadataFactory:calendarProvider:)` for the same
+    /// shape and the full account.
     public static func check(
         rootURL: URL,
-        scheduler: UserNotificationScheduler = .shared,
-        storagePaths: @escaping StoragePathsResolver = { try AppStoragePaths.production(libraryID: $0, libraryRoot: $1) },
-        now: Date = Date(),
-        calendar: Calendar = .current
+        scheduler: UserNotificationScheduler? = nil,
+        storagePaths: StoragePathsResolver? = nil,
+        now: Date? = nil,
+        calendar: Calendar? = nil
     ) async -> Outcome {
+        let scheduler = scheduler ?? .shared
+        let storagePaths = storagePaths ?? { try AppStoragePaths.production(libraryID: $0, libraryRoot: $1) }
+        let now = now ?? Date()
+        let calendar = calendar ?? .current
+
         let configURL = rootURL.appendingPathComponent(".astro_tool/config.json")
         var config = (try? AstroConfig.load(from: configURL)) ?? AstroConfig()
         config.rootPath = rootURL.path

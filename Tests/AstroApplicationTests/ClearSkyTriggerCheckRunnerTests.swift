@@ -108,4 +108,41 @@ struct ClearSkyTriggerCheckRunnerTests {
         let stateFile = library.root.appendingPathComponent(".astro_tool/clear_sky_trigger_state.json")
         #expect(!FileManager.default.fileExists(atPath: stateFile.path))
     }
+
+    /// `check` is `async` and `public`, and its only caller lives in another
+    /// module (`AstroUI.ClearSkyTriggerLoop`) -- exactly the cross-module
+    /// shape `AsyncContextSizeGateTests` exists to catch. A default argument
+    /// on such a function is emitted into every client translation unit as a
+    /// `linkonce_odr` copy, and Swift 6.3.3 sizes those copies differently
+    /// from the declaring module's, which corrupts the task allocator once
+    /// the linker pairs a large body with a small size record. This is a
+    /// source-text check (this repo's "surface test" convention) that the
+    /// declaration keeps the `Optional`-parameter/resolve-in-body shape the
+    /// rest of the codebase now uses, since the binary gate only notices
+    /// after an unrelated edit re-rolls the linker's dice.
+    @Test("check() takes no defaulted arguments -- every injection point is Optional and resolved in the body")
+    func checkDeclaresNoDefaultArguments() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Sources/AstroApplication/Notifications/ClearSkyTriggerCheckRunner.swift"),
+            encoding: .utf8
+        )
+        let signature = try #require(
+            source.components(separatedBy: "public static func check(").dropFirst().first?
+                .components(separatedBy: ") async").first
+        )
+        for parameter in ["scheduler", "storagePaths", "now", "calendar"] {
+            #expect(
+                signature.contains("\(parameter): ") && signature.contains("? = nil"),
+                "\(parameter) must be an Optional parameter resolved inside check()'s body"
+            )
+        }
+        #expect(!signature.contains("= {"), "no closure default argument may cross the module boundary")
+        #expect(!signature.contains("= .shared"))
+        #expect(!signature.contains("= Date()"))
+        #expect(!signature.contains("= .current"))
+    }
 }
