@@ -25,13 +25,25 @@ public enum RootErrorClassifier {
         /// mount like `/System/Volumes/Data`) its `.volumeIdentifierKey`
         /// differing from its own parent directory's.
         public var isVolumeBoundary: @Sendable (String) -> Bool
+        /// Whether `path` is EXPLICITLY a removable or non-internal
+        /// (external/network) volume -- `volumeIsRemovableKey == true` or
+        /// `volumeIsInternalKey == false`. Deliberately separate from
+        /// `isVolumeBoundary`, which also fires on the much weaker
+        /// "identifier differs from the parent's" signal: macOS gives every
+        /// fixed firmlink root (`/Users`, `/System/Volumes/Data`,
+        /// `/private`, ...) a different volume identifier than `/`, so only
+        /// this stronger flag can justify calling one of THOSE an unmounted
+        /// drive.
+        public var volumeIsExplicitlyExternal: @Sendable (String) -> Bool
 
         public init(
             pathExists: @escaping @Sendable (String) -> Bool,
-            isVolumeBoundary: @escaping @Sendable (String) -> Bool
+            isVolumeBoundary: @escaping @Sendable (String) -> Bool,
+            volumeIsExplicitlyExternal: @escaping @Sendable (String) -> Bool = { _ in false }
         ) {
             self.pathExists = pathExists
             self.isVolumeBoundary = isVolumeBoundary
+            self.volumeIsExplicitlyExternal = volumeIsExplicitlyExternal
         }
     }
 
@@ -48,12 +60,24 @@ public enum RootErrorClassifier {
     ///   downloaded locally yet reads as "missing" exactly like an unmounted
     ///   network share, and "wait/retry" is the right recovery, not
     ///   "re-pick the folder".
+    /// - `rootPath` itself exists (so only `subpath` is missing) →
+    ///   `.pathNotFound` straight away. Decided BEFORE the ancestor walk
+    ///   below, which would otherwise return `rootPath` as its own nearest
+    ///   existing ancestor and then flag it as a volume boundary for every
+    ///   library that legitimately sits on one (an SMB share mounted outside
+    ///   `/Volumes`, `~/Library/CloudStorage`, a `/System/Volumes/Data`
+    ///   -relative path) -- handing the user a "reconnect the drive" retry
+    ///   for a subfolder they simply deleted.
     /// - Otherwise, walk up from `rootPath` to its nearest existing
     ///   ancestor (per `probe.pathExists`); if that ancestor looks like a
     ///   volume boundary per `probe.isVolumeBoundary` → `.volumeNotMounted`
     ///   -- covers a root that sits on a since-detached external/network
-    ///   volume mounted somewhere other than `/Volumes/` (e.g. a
-    ///   `/System/Volumes/Data`-relative path).
+    ///   volume mounted somewhere other than `/Volumes/`. A FIXED system
+    ///   firmlink root (see `fixedSystemRoots`) needs the stronger
+    ///   `probe.volumeIsExplicitlyExternal` to qualify: macOS gives all of
+    ///   them a volume identifier differing from their parent's, so the
+    ///   generic boundary check alone calls `/Users` "a volume" and
+    ///   mis-reports a deleted `/Users/<gone>/lib` as an unmount.
     /// - Otherwise the missing root/subpath itself doesn't exist (but its
     ///   parent does, on the SAME ordinary volume) → `.pathNotFound(path:)`,
     ///   using `subpath` when one was given (a scoped scan under an
@@ -75,14 +99,29 @@ public enum RootErrorClassifier {
             return .volumeNotMounted(path: rootPath)
         }
 
+        if probe.pathExists(rootPath) {
+            return .pathNotFound(path: subpath ?? rootPath)
+        }
+
         if let ancestor = nearestExistingAncestor(of: rootPath, pathExists: probe.pathExists),
-           ancestor != "/", probe.isVolumeBoundary(ancestor)
+           ancestor != "/", probe.isVolumeBoundary(ancestor),
+           !fixedSystemRoots.contains(ancestor) || probe.volumeIsExplicitlyExternal(ancestor)
         {
             return .volumeNotMounted(path: rootPath)
         }
 
         return .pathNotFound(path: subpath ?? rootPath)
     }
+
+    /// Fixed macOS system directories that are firmlink/volume boundaries on
+    /// every modern install and can never be "unmounted" on their own. An
+    /// ancestor from this set only counts as a detached volume when
+    /// `VolumeProbe.volumeIsExplicitlyExternal` says so outright.
+    static let fixedSystemRoots: Set<String> = [
+        "/", "/Users", "/System", "/System/Volumes", "/System/Volumes/Data",
+        "/private", "/private/var", "/private/tmp", "/Library", "/Applications",
+        "/usr", "/var", "/tmp", "/opt", "/etc", "/dev", "/cores", "/Volumes",
+    ]
 
     /// The volume mount point portion of an absolute path — its first two
     /// path components, e.g. `/Volumes/AstroDrive/sessions` → `/Volumes/AstroDrive`.
@@ -272,6 +311,13 @@ public final class LibraryScanner {
                   let parentIdentifier = parentValues.volumeIdentifier as? NSObject
             else { return false }
             return !ownIdentifier.isEqual(parentIdentifier)
+        },
+        volumeIsExplicitlyExternal: { path in
+            let url = URL(fileURLWithPath: path, isDirectory: true)
+            guard let values = try? url.resourceValues(forKeys: [
+                .volumeIsRemovableKey, .volumeIsInternalKey,
+            ]) else { return false }
+            return values.volumeIsRemovable == true || values.volumeIsInternal == false
         }
     )
 

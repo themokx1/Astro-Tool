@@ -489,11 +489,13 @@ private struct ScanFixture {
 /// removable drive or iCloud container.
 private func fakeVolumeProbe(
     existingPrefixes: Set<String>,
-    boundaries: Set<String> = []
+    boundaries: Set<String> = [],
+    externalVolumes: Set<String> = []
 ) -> RootErrorClassifier.VolumeProbe {
     RootErrorClassifier.VolumeProbe(
         pathExists: { existingPrefixes.contains($0) },
-        isVolumeBoundary: { boundaries.contains($0) }
+        isVolumeBoundary: { boundaries.contains($0) || externalVolumes.contains($0) },
+        volumeIsExplicitlyExternal: { externalVolumes.contains($0) }
     )
 }
 
@@ -546,19 +548,76 @@ private func fakeVolumeProbe(
 }
 
 /// A root that isn't under `/Volumes/` can still sit on a since-detached
-/// volume mounted somewhere unusual (e.g. a firmlink-style boundary like
-/// `/System/Volumes/Data`) -- when the nearest surviving ancestor looks
-/// like a volume boundary, that's `.volumeNotMounted`, not `.pathNotFound`.
+/// volume mounted somewhere unusual -- when the nearest surviving ancestor
+/// is a real mount point, that's `.volumeNotMounted`, not `.pathNotFound`.
 @Test func rootErrorClassifierTreatsANonVolumesRootOnADetachedBoundaryAsVolumeNotMounted() throws {
-    let root = "/System/Volumes/Data/mnt/astro/sessions"
+    let root = "/Users/x/mnt/astro/sessions"
     #expect(
         RootErrorClassifier.classify(
             rootPath: root, subpath: nil,
             probe: fakeVolumeProbe(
+                existingPrefixes: ["/Users/x/mnt"],
+                boundaries: ["/Users/x/mnt"]
+            )
+        ) == .volumeNotMounted(path: root)
+    )
+}
+
+/// macOS gives every firmlink root (`/Users`, `/System/Volumes/Data`,
+/// `/private`, ...) a volume identifier that differs from its parent's, so
+/// the generic boundary check calls all of them "a volume". A library folder
+/// that was simply deleted under one must NOT be reported as an unmounted
+/// drive with a "reconnect and retry" recovery -- only an explicitly
+/// removable/non-internal volume flag is strong enough to say that about a
+/// fixed system root.
+@Test func rootErrorClassifierDoesNotTreatAFixedSystemFirmlinkRootAsADetachedVolume() throws {
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: "/Users/gone/AstroLibrary", subpath: nil,
+            probe: fakeVolumeProbe(existingPrefixes: ["/Users"], boundaries: ["/Users"])
+        ) == .pathNotFound(path: "/Users/gone/AstroLibrary")
+    )
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: "/System/Volumes/Data/astro", subpath: nil,
+            probe: fakeVolumeProbe(
                 existingPrefixes: ["/System/Volumes/Data"],
                 boundaries: ["/System/Volumes/Data"]
             )
-        ) == .volumeNotMounted(path: root)
+        ) == .pathNotFound(path: "/System/Volumes/Data/astro")
+    )
+    // ... unless the probe says outright that it is removable/external.
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: "/Users/astro/sessions", subpath: nil,
+            probe: fakeVolumeProbe(existingPrefixes: ["/Users"], externalVolumes: ["/Users"])
+        ) == .volumeNotMounted(path: "/Users/astro/sessions")
+    )
+}
+
+/// When the root itself is there and only `subpath` is missing, that is a
+/// plainly missing subfolder -- never an unmount. The ancestor walk would
+/// otherwise return `rootPath` as its own "nearest existing ancestor" and
+/// then flag it as a boundary for every library that legitimately sits on
+/// one (an SMB share mounted outside `/Volumes`, `~/Library/CloudStorage`),
+/// handing the user a "reconnect the drive" retry for a folder they deleted.
+@Test func rootErrorClassifierReportsAMissingSubpathUnderAnExistingRootAsPathNotFound() throws {
+    let root = "/Users/x/Library/CloudStorage/OneDrive/Astro"
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: root, subpath: "sessions/M31",
+            probe: fakeVolumeProbe(
+                existingPrefixes: [root],
+                boundaries: [root],
+                externalVolumes: [root]
+            )
+        ) == .pathNotFound(path: "sessions/M31")
+    )
+    #expect(
+        RootErrorClassifier.classify(
+            rootPath: root, subpath: nil,
+            probe: fakeVolumeProbe(existingPrefixes: [root], externalVolumes: [root])
+        ) == .pathNotFound(path: root)
     )
 }
 
