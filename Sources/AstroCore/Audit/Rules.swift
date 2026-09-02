@@ -1213,6 +1213,12 @@ public struct StrayAreaFilesRule: AuditRule {
 /// no other rule flags them because their directory placement is fine. This
 /// tells the user those files exist on disk but aren't indexed, rather than
 /// letting them silently vanish from every count.
+///
+/// Reported one finding per CONTAINING DIRECTORY, like its layout siblings
+/// (`StrayAreaFilesRule` above): a planetary library keeps thousands of
+/// `.ser` captures in one folder, and one finding each would bury every
+/// other audit result under identical rows saying the same thing about the
+/// same directory.
 public struct UnindexedCompoundExtensionRule: AuditRule {
     public let id = "unindexed-compound-extension"
     private static let frameRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
@@ -1220,15 +1226,28 @@ public struct UnindexedCompoundExtensionRule: AuditRule {
     public init() {}
 
     public func evaluate(_ ctx: AuditContext) -> [Finding] {
-        ctx.files.compactMap { file -> Finding? in
-            guard file.kind == "other", Self.frameRoles.contains(file.role) else { return nil }
-            guard Self.hasUnindexedCompoundExtension(file.path) else { return nil }
+        var directoryOrder: [String] = []
+        var namesByDirectory: [String: [String]] = [:]
 
+        for file in ctx.files {
+            guard file.kind == "other", Self.frameRoles.contains(file.role) else { continue }
+            guard Self.hasUnindexedCompoundExtension(file.path) else { continue }
+            let directory = (file.path as NSString).deletingLastPathComponent
+            if namesByDirectory[directory] == nil { directoryOrder.append(directory) }
+            namesByDirectory[directory, default: []].append((file.path as NSString).lastPathComponent)
+        }
+
+        return directoryOrder.sorted().map { directory in
+            let names = (namesByDirectory[directory] ?? []).sorted()
+            // A couple of real filenames make the finding actionable
+            // without printing thousands of them.
+            let examples = names.prefix(3).joined(separator: ", ")
+            let suffix = names.count > 3 ? ", …" : ""
             return Finding(
                 severity: .suspicious,
                 category: id,
-                path: file.path,
-                message: "a(z) \"\((file.path as NSString).lastPathComponent)\" kiterjesztését az indexelő nem ismeri fel frame-ként (csak az utolsó kiterjesztést nézi) — a fájl a lemezen megvan, de nem számít bele egyetlen light/flat/dark/bias összesítésbe sem.",
+                path: directory,
+                message: "\"\(directory)\" alatt \(names.count) fájl kiterjesztését az indexelő nem ismeri fel frame-ként (csak az utolsó kiterjesztést nézi): \(examples)\(suffix) — a fájlok a lemezen megvannak, de nem számítanak bele egyetlen light/flat/dark/bias összesítésbe sem.",
                 suggestion: nil
             )
         }

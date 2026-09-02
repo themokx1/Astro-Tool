@@ -971,13 +971,37 @@ private func layoutTestContext(_ files: [FileRecord], config: AstroConfig = Astr
     let ctx = layoutTestContext(files)
 
     let hits = UnindexedCompoundExtensionRule().evaluate(ctx)
-    let flaggedPaths = Set(hits.map(\.path))
-    #expect(flaggedPaths == [
-        "sessions/M31/2026-01-10/lights/l1.fits.gz",
-        "sessions/M31/2026-01-10/lights/l2.fit.gz",
-        "sessions/M31/2026-01-10/lights/planet.ser",
+    // One finding for the containing DIRECTORY, not one per file -- see the
+    // rule's own doc comment.
+    let hit = try #require(hits.first)
+    #expect(hits.count == 1)
+    #expect(hit.path == "sessions/M31/2026-01-10/lights")
+    #expect(hit.severity == .suspicious)
+    #expect(hit.message.contains("3"))
+    #expect(hit.message.contains("l1.fits.gz"))
+    #expect(hit.message.contains("planet.ser"))
+    #expect(!hit.message.contains("notes.pdf"))
+}
+
+/// A planetary library keeps thousands of `.ser` captures in one folder. One
+/// finding per file there drowns out every other audit result, so the rule
+/// reports per directory -- and still separates two different directories.
+@Test func unindexedCompoundExtensionRuleEmitsOneFindingPerDirectoryNotPerFile() throws {
+    var files = (0..<1_200).map { index in
+        layoutTestFile("sessions/Jupiter/2026-01-10/lights/cap\(index).ser", kind: "other", ext: "ser")
+    }
+    files.append(layoutTestFile("sessions/M31/2026-01-10/darks/d1.fits.gz", kind: "other", ext: "gz"))
+    files.append(layoutTestFile("sessions/M31/2026-01-10/lights/l1.fit", kind: "fits", ext: "fit"))
+
+    let hits = UnindexedCompoundExtensionRule().evaluate(layoutTestContext(files))
+
+    #expect(hits.map(\.path) == [
+        "sessions/Jupiter/2026-01-10/lights",
+        "sessions/M31/2026-01-10/darks",
     ])
-    #expect(hits.allSatisfy { $0.severity == .suspicious })
+    #expect(hits.first?.message.contains("1200") == true)
+    // Only a handful of example names, never all 1200.
+    #expect(hits.first?.message.contains("…") == true)
 }
 
 @Test func unindexedCompoundExtensionRuleIgnoresFilesOutsideARoleDirectory() throws {
