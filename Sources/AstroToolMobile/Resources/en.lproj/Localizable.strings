@@ -184,3 +184,4 @@
 "The plan from your Mac could not be brought in safely. Your current plan on this iPhone is unchanged." = "The plan from your Mac could not be brought in safely. Your current plan on this iPhone is unchanged.";
 "This took too long and was stopped. Nothing changed on either device." = "This took too long and was stopped. Nothing changed on either device.";
 "The connection was stopped." = "The connection was stopped.";
+"Sync stopped because the app went to the background. Try again." = "Sync stopped because the app went to the background. Try again.";

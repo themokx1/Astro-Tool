@@ -169,4 +169,30 @@ struct MobileSyncSurfaceTests {
         #expect(rootView.contains("case identityChanged(deviceID: UUID)"))
         #expect(session.contains("func forgetPeer(deviceID: UUID) throws"))
     }
+
+    // MARK: - Fix 2: backgrounding mid nearby-sync must not dangle
+
+    @Test("Backgrounding mid nearby-sync cancels the session instead of leaving it running unbounded")
+    func scenePhaseChangeCancelsNearbySync() throws {
+        let rootView = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileRootView.swift"), encoding: .utf8)
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+
+        guard let sceneHandlerRange = rootView.range(of: ".onChange(of: scenePhase)") else {
+            Issue.record("scenePhase onChange handler not found in MobileRootView.swift")
+            return
+        }
+        // Only look within the `phase != .active` branch that already
+        // cancels the scanner/import/export paths (bounded by the next
+        // `.sheet(` call site, which starts well past that branch).
+        guard let branchEnd = rootView.range(of: ".sheet(isPresented: $showingScanner", range: sceneHandlerRange.upperBound..<rootView.endIndex) else {
+            Issue.record("could not bound the scenePhase != .active branch")
+            return
+        }
+        let branch = String(rootView[sceneHandlerRange.upperBound..<branchEnd.lowerBound])
+        #expect(branch.contains("cancelReturnExport()"))
+        #expect(branch.contains("cancelNearbySyncDueToBackgrounding()"))
+
+        #expect(rootView.contains("case backgrounded"))
+        #expect(screen.contains("Sync stopped because the app went to the background"))
+    }
 }

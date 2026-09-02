@@ -179,6 +179,8 @@ struct MobileNearbySyncScreen: View {
             return String(localized: "This took too long and was stopped. Nothing changed on either device.")
         case .cancelled:
             return String(localized: "The connection was stopped.")
+        case .backgrounded:
+            return String(localized: "Sync stopped because the app went to the background. Try again.")
         }
     }
 }

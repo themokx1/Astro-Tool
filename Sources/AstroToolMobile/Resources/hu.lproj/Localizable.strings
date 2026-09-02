@@ -179,3 +179,4 @@
 "The plan from your Mac could not be brought in safely. Your current plan on this iPhone is unchanged." = "A Macről érkező terv biztonságosan nem volt behozható. Az iPhone jelenlegi terve változatlan.";
 "This took too long and was stopped. Nothing changed on either device." = "Ez túl sokáig tartott, ezért megszakadt. Egyik eszközön sem történt változás.";
 "The connection was stopped." = "A kapcsolat megszakadt.";
+"Sync stopped because the app went to the background. Try again." = "A szinkronizálás megállt, mert az alkalmazás háttérbe került. Próbáld újra.";

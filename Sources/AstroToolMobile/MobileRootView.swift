@@ -51,6 +51,11 @@ enum MobileNearbySyncUIFailure: Equatable {
     case importFailed
     case timeout
     case cancelled
+    /// UI-only: the app left the foreground mid-sync. Never produced by
+    /// `NearbyPhoneSyncFailure` itself — `cancelNearbySyncDueToBackgrounding`
+    /// sets this directly so the sheet shows a calm, explanatory stopped
+    /// state instead of a spinner left spinning forever (fix item 2).
+    case backgrounded
 
     init(_ failure: NearbyPhoneSyncFailure) {
         switch failure {
@@ -383,6 +388,7 @@ struct MobileRootView: View {
                     showingScanner = false
                     cancelReturnExport()
                     showingReturnExporter = false
+                    cancelNearbySyncDueToBackgrounding()
                 } else {
                     Task { await refresh() }
                 }
@@ -590,6 +596,27 @@ struct MobileRootView: View {
         nearbySyncTask = nil
         nearbySyncSession = nil
         nearbySyncState = .idle
+    }
+
+    /// Cancels an in-flight nearby session because the app left the
+    /// foreground — the `scenePhase` handler's counterpart to
+    /// `cancelReturnExport()`, which already covers the scanner/import/
+    /// export paths but left `nearbySyncTask`/`nearbySyncSession` running
+    /// unbounded in the background (fix item 2). Unlike `cancelNearbySync()`
+    /// (used for an explicit user cancel or sheet dismissal, which returns
+    /// to `.idle`), this leaves a `.failed(.backgrounded)` state behind so a
+    /// sheet still on screen — or reopened later — shows why the sync
+    /// stopped instead of a spinner stuck mid-phase forever. A no-op if no
+    /// session was actually running.
+    private func cancelNearbySyncDueToBackgrounding() {
+        guard nearbySyncSession != nil || nearbySyncTask != nil else { return }
+        if let nearbySyncSession {
+            Task { await nearbySyncSession.cancel() }
+        }
+        nearbySyncTask?.cancel()
+        nearbySyncTask = nil
+        nearbySyncSession = nil
+        nearbySyncState = .failed(.backgrounded)
     }
 
     private func openNearbySyncSettings() {
