@@ -697,6 +697,7 @@ public struct LibraryWelcomeView: View {
             case .summary(let snapshot):
                 FirstScanSummaryView(
                     snapshot: snapshot,
+                    libraryName: store.selectedRoot?.lastPathComponent ?? "Image Library",
                     continueToLibrary: {
                         store.continueWithoutPersonalizing()
                         onContinue()
@@ -704,7 +705,8 @@ public struct LibraryWelcomeView: View {
                     personalize: {
                         store.setUpPreferences()
                         onPersonalize()
-                    }
+                    },
+                    chooseAnotherFolder: chooseAnotherLibrary
                 )
             case .accessProblem(let problem):
                 accessProblem(problem)

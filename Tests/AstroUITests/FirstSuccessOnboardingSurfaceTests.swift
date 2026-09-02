@@ -64,6 +64,29 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(root.contains("uiTestFixture != nil"))
     }
 
+    // MARK: - 2026-09-02 first-run audit, fix E: a scan that found nothing
+    // used to announce "Your library is ready" over 0 / 0 / 0.
+
+    @Test("A first scan that found nothing says so instead of claiming the library is ready")
+    func zeroResultScanHasItsOwnState() throws {
+        let summary = try source("Sources/AstroUI/Onboarding/FirstScanSummaryView.swift")
+        #expect(summary.contains("No astrophotos found in"))
+        #expect(summary.contains("Choose a Different Folder…"))
+        #expect(summary.contains("Continue anyway"))
+        // The zero branch must be a real branch on the counts, not copy that
+        // merely sits next to the tiles.
+        #expect(summary.contains("private var foundNothing: Bool"))
+        #expect(summary.contains("if foundNothing"))
+        // Identifiers existing automation waits for stay on both branches.
+        #expect(summary.contains("v2.onboarding.summary"))
+        #expect(summary.contains("v2.onboarding.continue"))
+        #expect(summary.contains("v2.onboarding.choose-different-folder"))
+        // The welcome view must supply a way back to the picker, otherwise
+        // the primary action would be a dead end.
+        let welcome = try source("Sources/AstroUI/Onboarding/LibraryWelcomeView.swift")
+        #expect(welcome.contains("chooseAnotherFolder: chooseAnotherLibrary"))
+    }
+
     @Test("The native folder picker starts only after the onboarding sheet has closed")
     func folderPickerDoesNotNestModalPresentation() throws {
         let root = try source("Sources/AstroUI/App/V2RootView.swift")

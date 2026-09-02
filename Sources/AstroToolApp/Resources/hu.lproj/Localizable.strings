@@ -2845,3 +2845,8 @@
 "The scan finished, but Projects and Nights could not be built for this folder. Try again, or open a different library." = "A vizsgálat lefutott, de a projektek és éjszakák nem épültek fel ehhez a mappához. Próbáld újra, vagy nyiss meg másik könyvtárat.";
 "This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures." = "Ez a mappa az AstroTool saját adatmappáját is tartalmazza. Válassz olyan mappát, amelyben csak a fotóid vannak — például a Képek mappán belül.";
 "Choose Another Folder…" = "Másik mappa választása…";
+"No astrophotos found in %@" = "Nem találtunk asztrofotót itt: %@";
+"AstroTool looked for sessions, stacks, and processed folders, and for image files it recognises, and found none. This is usually the wrong folder — pick the one that holds your captures." = "Az AstroTool sessions, stacks és processed mappákat, valamint ismert képfájlokat keresett, de egyet sem talált. Ilyenkor általában nem ez a jó mappa — válaszd azt, amelyben a felvételeid vannak.";
+"Nothing was changed in the folder that was scanned." = "A vizsgált mappában semmi nem változott.";
+"Choose a Different Folder…" = "Másik mappa választása…";
+"Continue anyway" = "Folytatás így is";
