@@ -3424,6 +3424,33 @@ private func writeProjectsFITS(_ relativePath: String, root: URL, exptime: Doubl
     #expect(result.stdout.contains("M31_Andromeda"))
 }
 
+/// The empty-list fallbacks of the human-readable tables must go through
+/// `L(...)` like every other terminal string -- they used to print a bare
+/// English "no targets" even under `ASTROTOOL_LANG=hu`.
+@Test func emptyLibraryTablesPrintLocalizedNoTargets() async throws {
+    let root = try makeTempRoot("no-targets-hu")
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    try FileManager.default.createDirectory(
+        at: root.appendingPathComponent("sessions", isDirectory: true),
+        withIntermediateDirectories: true
+    )
+    let scan = try await runCLI(["scan", "--root", root.path])
+    #expect(scan.exitCode == 0, "stderr: \(scan.stderr)")
+
+    let stats = try await runCLI(["stats", "--root", root.path])
+    #expect(stats.exitCode == 0, "stderr: \(stats.stderr)")
+    #expect(stats.stdout.contains("nincs célpont"))
+    #expect(!stats.stdout.contains("no targets"))
+
+    let projects = try await runCLI(["projects", "--root", root.path])
+    #expect(projects.exitCode == 0, "stderr: \(projects.stderr)")
+    #expect(projects.stdout.contains("nincs célpont"))
+
+    let english = try await runCLI(["stats", "--root", root.path], env: ["ASTROTOOL_LANG": "en"])
+    #expect(english.stdout.contains("no targets"))
+}
+
 // MARK: - export
 
 @Test func exportOutDashPrintsContentToStdoutWithoutWritingAFile() async throws {
