@@ -93,6 +93,9 @@ public final class AuditEngine {
             MixedSetupInTargetRule(),
             CorruptFITSRule(),
             CaptureClassificationRule(),
+            UnrecognizedLibraryLayoutRule(),
+            StrayAreaFilesRule(),
+            UnindexedCompoundExtensionRule(),
         ]
     }
 

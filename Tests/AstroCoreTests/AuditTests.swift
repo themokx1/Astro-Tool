@@ -876,6 +876,119 @@ private final class TickCounter: @unchecked Sendable {
     #expect(!GlobMatcher.matches(pattern: ".DS_Store", name: ".DS_Storex"))
 }
 
+// MARK: - unrecognized-library-layout / stray-area-files / unindexed-compound-extension
+
+/// Builds a `FileRecord` the way the real scanner would classify it --
+/// `area`/`role`/`target`/`sessionDate` all come from `PathClassifier`
+/// itself, not hand-picked, so a test bug in the classification can't hide
+/// behind a mismatched fixture. A synthetic `AuditContext` (no filesystem,
+/// no DB) is enough since these rules are pure functions of `ctx.files`.
+private func layoutTestFile(_ path: String, kind: String, ext: String) -> FileRecord {
+    let info = PathClassifier.classify(relativePath: path)
+    return FileRecord(
+        path: path, size: 100, mtime: 1, ext: ext, kind: kind,
+        area: info.area, target: info.target, sessionDate: info.dateRaw, role: info.role,
+        scannedAt: 2
+    )
+}
+
+private func layoutTestContext(_ files: [FileRecord], config: AstroConfig = AstroConfig()) -> AuditContext {
+    AuditContext(config: config, files: files, directories: [], fitsMetaByFileID: [:])
+}
+
+@Test func unrecognizedLibraryLayoutRuleFiresWhenNoFrameFileClassifiesAtAll() throws {
+    // An ASIAIR/N.I.N.A.-style tree: "Light", "Flat", "Dark" top-level
+    // folders that PathClassifier's `default:` case has no idea about.
+    let files = [
+        layoutTestFile("Light/M31/Light_001.fit", kind: "fits", ext: "fit"),
+        layoutTestFile("Light/M31/Light_002.fit", kind: "fits", ext: "fit"),
+        layoutTestFile("Dark/Dark_001.fit", kind: "fits", ext: "fit"),
+    ]
+    let ctx = layoutTestContext(files)
+
+    let hits = UnrecognizedLibraryLayoutRule().evaluate(ctx)
+    let hit = try #require(hits.first)
+    #expect(hits.count == 1)
+    #expect(hit.severity == .sureError)
+    #expect(hit.message.contains("Dark"))
+    #expect(hit.message.contains("Light"))
+    #expect(hit.message.contains("session-convert"))
+}
+
+@Test func unrecognizedLibraryLayoutRuleStaysSilentWhenSomeFramesClassifyNormally() throws {
+    let files = [
+        layoutTestFile("sessions/M31/2026-01-10/lights/l1.fit", kind: "fits", ext: "fit"),
+        layoutTestFile("Light/M31/Light_001.fit", kind: "fits", ext: "fit"),
+    ]
+    #expect(UnrecognizedLibraryLayoutRule().evaluate(layoutTestContext(files)).isEmpty)
+}
+
+@Test func unrecognizedLibraryLayoutRuleIgnoresNonFrameFiles() throws {
+    // Only non-frame-kind files exist -- nothing to convert, so the rule
+    // must not fire just because everything happens to sit at `area == .other`.
+    let files = [
+        layoutTestFile("README.txt", kind: "text", ext: "txt"),
+    ]
+    #expect(UnrecognizedLibraryLayoutRule().evaluate(layoutTestContext(files)).isEmpty)
+}
+
+@Test func strayAreaFilesRuleFlagsAStrayTopLevelFolderNextToAnOtherwiseCanonicalLibrary() throws {
+    let files = [
+        layoutTestFile("sessions/M31/2026-01-10/lights/l1.fit", kind: "fits", ext: "fit"),
+        layoutTestFile("sessions/M31/2026-01-10/lights/l2.fit", kind: "fits", ext: "fit"),
+        layoutTestFile("dump/M31/stray1.fit", kind: "fits", ext: "fit"),
+        layoutTestFile("dump/M31/stray2.fit", kind: "fits", ext: "fit"),
+    ]
+    let ctx = layoutTestContext(files)
+
+    let hits = StrayAreaFilesRule().evaluate(ctx)
+    let hit = try #require(hits.first { $0.path == "dump" })
+    #expect(hits.count == 1)
+    #expect(hit.severity == .suspicious)
+    #expect(hit.message.contains("2"))
+}
+
+@Test func strayAreaFilesRuleStaysSilentWhenNothingClassifiesAtAll() throws {
+    // The whole-library case belongs to UnrecognizedLibraryLayoutRule --
+    // this rule must not double-report it.
+    let files = [
+        layoutTestFile("Light/M31/Light_001.fit", kind: "fits", ext: "fit"),
+    ]
+    #expect(StrayAreaFilesRule().evaluate(layoutTestContext(files)).isEmpty)
+}
+
+@Test func unindexedCompoundExtensionRuleFlagsGzippedFITSAndSERFilesInRoleDirs() throws {
+    let files = [
+        layoutTestFile("sessions/M31/2026-01-10/lights/l1.fits.gz", kind: "other", ext: "gz"),
+        layoutTestFile("sessions/M31/2026-01-10/lights/l2.fit.gz", kind: "other", ext: "gz"),
+        layoutTestFile("sessions/M31/2026-01-10/lights/planet.ser", kind: "other", ext: "ser"),
+        // Not compound -- a plain unrecognized extension is not this rule's
+        // concern.
+        layoutTestFile("sessions/M31/2026-01-10/lights/notes.pdf", kind: "other", ext: "pdf"),
+        // Already indexed normally -- must not also match.
+        layoutTestFile("sessions/M31/2026-01-10/lights/l3.fit", kind: "fits", ext: "fit"),
+    ]
+    let ctx = layoutTestContext(files)
+
+    let hits = UnindexedCompoundExtensionRule().evaluate(ctx)
+    let flaggedPaths = Set(hits.map(\.path))
+    #expect(flaggedPaths == [
+        "sessions/M31/2026-01-10/lights/l1.fits.gz",
+        "sessions/M31/2026-01-10/lights/l2.fit.gz",
+        "sessions/M31/2026-01-10/lights/planet.ser",
+    ])
+    #expect(hits.allSatisfy { $0.severity == .suspicious })
+}
+
+@Test func unindexedCompoundExtensionRuleIgnoresFilesOutsideARoleDirectory() throws {
+    // Same compound extension, but not classified into a light/flat/dark/
+    // bias role -- e.g. loose directly under a stack date dir.
+    let files = [
+        layoutTestFile("stacks/M31/2026-01-10/master.fits.gz", kind: "other", ext: "gz"),
+    ]
+    #expect(UnindexedCompoundExtensionRule().evaluate(layoutTestContext(files)).isEmpty)
+}
+
 @Test func duplicatedPrefixDetectorFindsLongestRepeatedRun() throws {
     #expect(DuplicatedPrefixDetector.dedupe(["C2025", "R3", "C2025", "R3", "Panstarrs"]) == ["C2025", "R3", "Panstarrs"])
     #expect(DuplicatedPrefixDetector.dedupe(["C2025", "R3", "C2025", "R3", "Panstarrs", "Wide"]) == ["C2025", "R3", "Panstarrs", "Wide"])

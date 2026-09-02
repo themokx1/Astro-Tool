@@ -1108,3 +1108,134 @@ public struct CorruptFITSRule: AuditRule {
         }
     }
 }
+
+// MARK: - 20. unrecognized-library-layout
+
+/// The index holds frame-kind files (FITS/RAW/XISF) but not a single one of
+/// them classified into a recognized area (`sessions`/`stacks`/`processed`/
+/// `calibration_library`, per `PathClassifier`) -- the fingerprint of an
+/// N.I.N.A./ASIAIR/SGP-style acquisition tree that was scanned as-is,
+/// straight from the imaging PC/box, never converted into AstroTool's own
+/// layout. `PathClassifier`'s `default:` case silently returns `area:
+/// .other` for any top-level directory it doesn't recognize, and every
+/// existing rule guards on a specific area -- so without this rule a scan
+/// like that reports "N files added" and then every page (stats, planner,
+/// audit) reads as empty, which looks like a bug rather than "convert your
+/// library first". One finding for the whole run, not one per file: the fix
+/// is the same regardless of how many thousand files triggered it.
+public struct UnrecognizedLibraryLayoutRule: AuditRule {
+    public let id = "unrecognized-library-layout"
+    private static let frameKinds: Set<String> = ["fits", "raw", "xisf"]
+    private static let recognizedAreas: Set<LibraryArea> = [.sessions, .stacks, .processed, .calibration]
+
+    public init() {}
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        let frameFiles = ctx.files.filter { Self.frameKinds.contains($0.kind) }
+        guard !frameFiles.isEmpty else { return [] }
+        guard !frameFiles.contains(where: { Self.recognizedAreas.contains($0.area) }) else { return [] }
+
+        let topLevelDirs = Set(frameFiles.compactMap { file in
+            file.path.split(separator: "/", omittingEmptySubsequences: true).first.map(String.init)
+        }).sorted()
+        guard let firstDir = topLevelDirs.first else { return [] }
+        let dirsList = topLevelDirs.joined(separator: ", ")
+
+        return [Finding(
+            severity: .sureError,
+            category: id,
+            path: firstDir,
+            message: """
+            A könyvtárban vannak frame-fájlok (FITS/RAW/XISF), de egyikük sem esik a felismert \
+            sessions/, stacks/, processed/ vagy calibration_library/ területek egyikébe sem — a \
+            talált felső szintű mappák: \(dirsList). Ez tipikusan azt jelenti, hogy egy \
+            N.I.N.A./ASIAIR/SGP-szerű felvétel-könyvtár került beolvasásra átalakítás nélkül. A \
+            várt elrendezés: sessions/<cél>/<dátum>/captures/<slug>/lights (és flats/darks/biases \
+            mellette). Az egy-session konverter (astrotool session-convert) vagy a kártyáról \
+            importálás (astrotool capture create) segít bemásolni a meglévő fájlokat ebbe a \
+            szerkezetbe.
+            """,
+            suggestion: .review(note: "Futtasd az egy-session konvertert (astrotool session-convert) vagy a kártya-importot a felismert mappákra, hogy a fájlok bekerüljenek a sessions/<cél>/<dátum>/captures/<slug>/{lights,flats,darks,biases} szerkezetbe.")
+        )]
+    }
+}
+
+// MARK: - 21. stray-area-files
+
+/// Frame-kind files (FITS/RAW/XISF) sitting under `area == .other` while the
+/// rest of the library DOES classify into a recognized area — as opposed to
+/// `UnrecognizedLibraryLayoutRule` (nothing classifies at all), this is a
+/// stray folder next to an otherwise-canonical layout: an old
+/// pre-conversion leftover, a manual export dropped at the library root, a
+/// typo'd top-level directory name. Grouped by top-level directory — one
+/// finding per stray top-level dir, not one per file.
+public struct StrayAreaFilesRule: AuditRule {
+    public let id = "stray-area-files"
+    private static let frameKinds: Set<String> = ["fits", "raw", "xisf"]
+    private static let recognizedAreas: Set<LibraryArea> = [.sessions, .stacks, .processed, .calibration]
+
+    public init() {}
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        let frameFiles = ctx.files.filter { Self.frameKinds.contains($0.kind) }
+        // The whole-library case is `UnrecognizedLibraryLayoutRule`'s --
+        // this rule only fires once SOME frame files classify normally.
+        guard frameFiles.contains(where: { Self.recognizedAreas.contains($0.area) }) else { return [] }
+
+        var countByTopDir: [String: Int] = [:]
+        for file in frameFiles where file.area == .other {
+            guard let top = file.path.split(separator: "/", omittingEmptySubsequences: true).first.map(String.init) else { continue }
+            countByTopDir[top, default: 0] += 1
+        }
+
+        return countByTopDir.keys.sorted().map { dir in
+            let count = countByTopDir[dir] ?? 0
+            return Finding(
+                severity: .suspicious,
+                category: id,
+                path: dir,
+                message: "\"\(dir)\" alatt \(count) frame-fájl (FITS/RAW/XISF) található, de ez a mappa nem esik egyik felismert terület (sessions/, stacks/, processed/, calibration_library/) alá sem — valószínűleg egy eltévedt mappa a könyvtár szélén.",
+                suggestion: nil
+            )
+        }
+    }
+}
+
+// MARK: - 22. unindexed-compound-extension
+
+/// A `.fits.gz`/`.fit.gz` (gzip'd FITS, some acquisition tools' default
+/// output) or `.ser` (SER video sequence, common for planetary/lucky
+/// imaging) file sitting in a recognized frame-role directory
+/// (lights/flats/darks/biases). `LibraryScanner.kind(for:)` only inspects a
+/// file's LAST extension component — `.gz` for the compound case — so these
+/// land as `kind == "other"`: never counted as a light/flat/dark/bias, never
+/// contributing integration time, and (unlike a genuinely misplaced file)
+/// no other rule flags them because their directory placement is fine. This
+/// tells the user those files exist on disk but aren't indexed, rather than
+/// letting them silently vanish from every count.
+public struct UnindexedCompoundExtensionRule: AuditRule {
+    public let id = "unindexed-compound-extension"
+    private static let frameRoles: Set<FrameRole> = [.light, .flat, .dark, .bias]
+
+    public init() {}
+
+    public func evaluate(_ ctx: AuditContext) -> [Finding] {
+        ctx.files.compactMap { file -> Finding? in
+            guard file.kind == "other", Self.frameRoles.contains(file.role) else { return nil }
+            guard Self.hasUnindexedCompoundExtension(file.path) else { return nil }
+
+            return Finding(
+                severity: .suspicious,
+                category: id,
+                path: file.path,
+                message: "a(z) \"\((file.path as NSString).lastPathComponent)\" kiterjesztését az indexelő nem ismeri fel frame-ként (csak az utolsó kiterjesztést nézi) — a fájl a lemezen megvan, de nem számít bele egyetlen light/flat/dark/bias összesítésbe sem.",
+                suggestion: nil
+            )
+        }
+    }
+
+    private static func hasUnindexedCompoundExtension(_ path: String) -> Bool {
+        let lower = path.lowercased()
+        return lower.hasSuffix(".fits.gz") || lower.hasSuffix(".fit.gz") || lower.hasSuffix(".ser")
+    }
+}
