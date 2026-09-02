@@ -874,6 +874,97 @@ private func fakeVolumeProbe(
     #expect(present.count == 1, "expected exactly one non-missing row after the NFD->NFC rescan, got \(present.count)")
 }
 
+/// The stale NFD row must be ADOPTED (its `files.path` rewritten to the
+/// canonical NFC spelling, id preserved), not retired next to a brand-new
+/// NFC row. Every dependent row -- ratings, verdicts, `fits_meta`, capture
+/// assignments, notes -- hangs off `files.id`, so inserting a second row and
+/// marking the first missing silently strands the user's own ratings and
+/// verdicts on a dead row and reports the frame as a missing file.
+@Test func rescanAdoptsAStaleNFDRowInPlaceKeepingItsIDAndDependentRows() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let nfd = "Café Target".decomposedStringWithCanonicalMapping
+    let nfc = "Café Target".precomposedStringWithCanonicalMapping
+    #expect(Array(nfd.utf8) != Array(nfc.utf8), "fixture precondition: NFD and NFC byte forms must actually differ")
+
+    let nfdPath = "sessions/\(nfd)/2026-01-10/lights/light_0001.fit"
+    let nfcPath = "sessions/\(nfc)/2026-01-10/lights/light_0001.fit"
+
+    // A row exactly as an earlier scan from an HFS+/NFD volume left it,
+    // plus the user's own rating and verdict hanging off its id.
+    let staleID = try fixture.db.upsertFile(FileRecord(
+        id: nil, path: nfdPath,
+        size: 10, mtime: 1, ext: "fit", kind: "fits", area: .sessions,
+        target: nfd, sessionDate: "2026-01-10", role: .light, scannedAt: 1,
+        inode: nil, nlink: nil
+    ))
+    try fixture.db.upsertRating(RatingRecord(
+        fileID: staleID, fwhm: 2.75, roundness: 0.9, starCount: 1234,
+        background: 100, saturatedFraction: 0, score: 88, ratedAt: 1,
+        sirilVersion: "1.2", inputSig: "sig"
+    ))
+    try fixture.db.upsertUserVerdict(UserVerdictRecord(
+        fileID: staleID, accepted: false, source: "user", recordedAt: 1
+    ))
+
+    // The tree on disk is NFC (today's APFS/SMB reality).
+    let fileURL = fixture.root.appendingPathComponent(nfcPath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "fixture content\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    let summary = try scanner.scan()
+
+    let allFiles = try fixture.db.allFiles(includeMissing: true)
+    #expect(allFiles.count == 1, "the stale row must be adopted, not duplicated -- got \(allFiles.map(\.path))")
+    #expect(summary.missing == 0)
+
+    let adopted = try #require(try fixture.db.file(path: nfcPath))
+    #expect(adopted.id == staleID, "adoption must preserve the row id every dependent row points at")
+    #expect(adopted.missing == false)
+    #expect(Array(adopted.path.utf8) == Array(nfcPath.utf8))
+    #expect(try fixture.db.rating(fileID: staleID)?.score == 88)
+    #expect(try fixture.db.userVerdict(fileID: staleID)?.accepted == false)
+}
+
+/// `files.target` is derived from the path, so a pre-normalization scan left
+/// it decomposed too. Swift's own `!=` is Unicode-canonical and would call
+/// that "unchanged", but SQLite's `GROUP BY target` is byte-wise -- leaving
+/// one night split across two byte-distinct target values as soon as a newly
+/// scanned sibling file records the NFC spelling. A plain rescan must heal it.
+@Test func rescanHealsATargetLeftInADifferentNormalizationFormByAnEarlierScan() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let nfd = "Café Target".decomposedStringWithCanonicalMapping
+    let nfc = "Café Target".precomposedStringWithCanonicalMapping
+    let nfcPath = "sessions/\(nfc)/2026-01-10/lights/light_0001.fit"
+
+    let fileURL = fixture.root.appendingPathComponent(nfcPath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "fixture content\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+    let id = try #require(try fixture.db.file(path: nfcPath)?.id)
+
+    // Rewind the row to exactly what a pre-normalization scan stored: NFD
+    // path AND NFD target, with size/mtime still matching the real file, so
+    // the rescan takes the `unchanged` fast path.
+    try fixture.db.db.run(
+        "UPDATE files SET path = ?, target = ? WHERE id = ?;",
+        bind: [.text("sessions/\(nfd)/2026-01-10/lights/light_0001.fit"), .text(nfd), .int(id)]
+    )
+
+    _ = try scanner.scan()
+
+    let healed = try #require(try fixture.db.file(path: nfcPath))
+    #expect(healed.id == id)
+    #expect(Array((healed.target ?? "").utf8) == Array(nfc.utf8))
+    #expect(try fixture.db.allFiles(includeMissing: true).count == 1)
+}
+
 @Test func scannedRelativePathIsStoredInPrecomposedNFCForm() throws {
     let fixture = try ScanFixture.makeEmpty()
     defer { fixture.cleanup() }

@@ -1510,24 +1510,22 @@ public final class Database: @unchecked Sendable {
     @discardableResult
     public func upsertCaptureSource(_ record: CaptureSourceRecord) throws -> Int64 {
         try withLock {
-            var existingID: Int64?
-            var existingGroupID: Int64?
-            try db.query(
-                "SELECT id, capture_group_id FROM capture_sources WHERE relative_path = ?;",
-                bind: [.text(record.relativePath)]
-            ) { row in
-                existingID = row.int64(0)
-                existingGroupID = row.int64(1)
-            }
-            if let existingID, let existingGroupID {
-                guard existingGroupID == record.captureGroupID else {
+            let canonicalPath = PathNormalization.canonical(record.relativePath)
+            if let existing = try captureSourceUnlocked(anySpellingOf: record.relativePath),
+               let existingID = existing.id
+            {
+                guard existing.captureGroupID == record.captureGroupID else {
                     throw AstroError.invalidInput(
-                        "capture source \"\(record.relativePath)\" already belongs to group \(existingGroupID)"
+                        "capture source \"\(record.relativePath)\" already belongs to group \(existing.captureGroupID)"
                     )
                 }
+                // The path is rewritten too: a row left decomposed by a
+                // pre-normalization write must converge on the canonical
+                // spelling rather than staying invisible to byte-wise
+                // lookups forever.
                 try db.run(
-                    "UPDATE capture_sources SET role = ? WHERE id = ?;",
-                    bind: [.text(record.role.rawValue), .int(existingID)]
+                    "UPDATE capture_sources SET role = ?, relative_path = ? WHERE id = ?;",
+                    bind: [.text(record.role.rawValue), .text(canonicalPath), .int(existingID)]
                 )
                 return existingID
             }
@@ -1537,10 +1535,48 @@ public final class Database: @unchecked Sendable {
             }
             try db.run(
                 "INSERT INTO capture_sources(capture_group_id, relative_path, role) VALUES (?, ?, ?);",
-                bind: [.int(record.captureGroupID), .text(record.relativePath), .text(record.role.rawValue)]
+                bind: [.int(record.captureGroupID), .text(canonicalPath), .text(record.role.rawValue)]
             )
             return db.lastInsertRowID
         }
+    }
+
+    /// One mapping row for `path`, matched against every byte-distinct
+    /// normalization spelling of it (see `Self.pathNormalizationVariants`).
+    /// `capture_sources.relative_path` is compared byte-wise by SQLite just
+    /// like `files.path`, so a canonical (NFC) lookup would otherwise miss a
+    /// row a pre-normalization write left decomposed -- and the caller would
+    /// duplicate the mapping, or silently skip a planned removal.
+    ///
+    /// Callers must already hold `lock`.
+    private func captureSourceUnlocked(anySpellingOf path: String) throws -> CaptureSourceRecord? {
+        for variant in Self.pathNormalizationVariants(of: path) {
+            var found: CaptureSourceRecord?
+            try db.query(
+                "SELECT id, capture_group_id, relative_path, role FROM capture_sources WHERE relative_path = ?;",
+                bind: [.text(variant)]
+            ) { found = Self.captureSourceRecord(from: $0) }
+            if let found { return found }
+        }
+        return nil
+    }
+
+    /// Test-only seam for `captureSourceUnlocked(anySpellingOf:)`, whose
+    /// normalization tolerance has no other directly observable surface.
+    func captureSourceForTesting(anySpellingOf path: String) throws -> CaptureSourceRecord? {
+        try withLock {
+            try captureSourceUnlocked(anySpellingOf: path)
+        }
+    }
+
+    /// Every byte-distinct spelling of a relative path that a write from
+    /// before path normalization could have stored, canonical (NFC) first.
+    /// See `PathNormalization`'s doc comment for the background.
+    static func pathNormalizationVariants(of path: String) -> [String] {
+        let canonical = PathNormalization.canonical(path)
+        let decomposed = path.decomposedStringWithCanonicalMapping
+        var seenBytes: Set<Data> = []
+        return [canonical, decomposed, path].filter { seenBytes.insert(Data($0.utf8)).inserted }
     }
 
     public func captureSources(groupID: Int64) throws -> [CaptureSourceRecord] {
@@ -1730,11 +1766,10 @@ public final class Database: @unchecked Sendable {
                             "Az eltávolítandó forrásmappa kívül esik a konverzió sessionjén: \(removal.relativePath)"
                         )
                     }
-                    var previous: CaptureSourceRecord?
-                    try db.query(
-                        "SELECT id, capture_group_id, relative_path, role FROM capture_sources WHERE relative_path = ?;",
-                        bind: [.text(removal.relativePath)]
-                    ) { previous = Self.captureSourceRecord(from: $0) }
+                    // Normalization-tolerant: the plan carries today's
+                    // canonical path, while the row may still be stored in
+                    // the spelling a pre-normalization write left behind.
+                    let previous = try captureSourceUnlocked(anySpellingOf: removal.relativePath)
                     guard let previous else { continue }
                     guard previous.captureGroupID == removal.expectedGroupID,
                           previous.role == removal.role
@@ -1746,10 +1781,11 @@ public final class Database: @unchecked Sendable {
                     backup.sourceBackups.append(
                         ConversionSourceBackup(relativePath: removal.relativePath, previous: previous)
                     )
-                    try db.run(
-                        "DELETE FROM capture_sources WHERE relative_path = ?;",
-                        bind: [.text(removal.relativePath)]
-                    )
+                    // Deleted by id, not by path: the row's own stored
+                    // spelling may differ byte-wise from the plan's.
+                    if let previousID = previous.id {
+                        try db.run("DELETE FROM capture_sources WHERE id = ?;", bind: [.int(previousID)])
+                    }
                 }
 
                 for proposed in plan.proposedGroups {
@@ -1834,11 +1870,10 @@ public final class Database: @unchecked Sendable {
                                 "A forrásmappa kívül esik a konverzió sessionjén: \(mapping.relativePath)"
                             )
                         }
-                        var previous: CaptureSourceRecord?
-                        try db.query(
-                            "SELECT id, capture_group_id, relative_path, role FROM capture_sources WHERE relative_path = ?;",
-                            bind: [.text(mapping.relativePath)]
-                        ) { previous = Self.captureSourceRecord(from: $0) }
+                        // Same normalization tolerance as the removal loop
+                        // above -- an existing mapping stored in another
+                        // spelling must be recognized, not duplicated.
+                        let previous = try captureSourceUnlocked(anySpellingOf: mapping.relativePath)
                         if let previous {
                             guard previous.captureGroupID == groupID else {
                                 throw AstroError.invalidInput(
@@ -2083,21 +2118,89 @@ public final class Database: @unchecked Sendable {
 
     public func fileID(path: String) throws -> Int64? {
         try withLock {
-            var id: Int64?
-            try db.query("SELECT id FROM files WHERE path = ?;", bind: [.text(path)]) { row in
-                id = row.int64(0)
-            }
-            return id
+            try fileIDUnlocked(path: path)
         }
     }
 
     public func file(path: String) throws -> FileRecord? {
         try withLock {
-            var record: FileRecord?
-            try db.query(Self.fileSelectSQL + " WHERE path = ?;", bind: [.text(path)]) { row in
-                record = Self.fileRecord(from: row)
+            try fileUnlocked(path: path)
+        }
+    }
+
+    /// Callers must already hold `lock`.
+    private func fileIDUnlocked(path: String) throws -> Int64? {
+        var id: Int64?
+        try db.query("SELECT id FROM files WHERE path = ?;", bind: [.text(path)]) { row in
+            id = row.int64(0)
+        }
+        return id
+    }
+
+    /// Callers must already hold `lock`.
+    private func fileUnlocked(path: String) throws -> FileRecord? {
+        var record: FileRecord?
+        try db.query(Self.fileSelectSQL + " WHERE path = ?;", bind: [.text(path)]) { row in
+            record = Self.fileRecord(from: row)
+        }
+        return record
+    }
+
+    /// Re-points a row indexed under a differently NORMALIZED spelling of
+    /// `canonicalPath` onto the canonical spelling IN PLACE, keeping its `id`.
+    ///
+    /// A library first scanned from an HFS+/NFD volume has its `files.path`
+    /// stored decomposed, and SQLite compares `TEXT` byte-wise -- so a
+    /// canonical (NFC) `file(path:)` lookup misses that row entirely. Without
+    /// this, the scanner would INSERT a second row for the same file and then
+    /// retire the old one, stranding every dependent row (`ratings`,
+    /// `fits_meta`, `user_verdicts`, `file_capture_assignments`,
+    /// `session_notes`, ...) on a dead id: the user's own ratings and verdicts
+    /// silently vanish and the frame is reported as a missing file.
+    /// `PathNormalization`'s doc comment has the full normalization
+    /// background.
+    ///
+    /// Returns the row now living at `canonicalPath` when a variant row was
+    /// found, `nil` when no spelling of this path is indexed at all (a
+    /// genuinely new file). If BOTH spellings somehow have a row, the
+    /// canonical one is kept (dependent metadata cannot be merged blind) and
+    /// the variant is marked missing so it stops counting as a live frame.
+    public func adoptNormalizationVariant(
+        canonicalPath: String,
+        variants: [String]
+    ) throws -> FileRecord? {
+        let canonicalBytes = Data(canonicalPath.utf8)
+        // Byte-wise, not Swift-canonical: `==` on String would discard the
+        // very NFD/NFC distinction this method exists to bridge.
+        var seenBytes: Set<Data> = [canonicalBytes]
+        let distinct = variants.filter { seenBytes.insert(Data($0.utf8)).inserted }
+        guard !distinct.isEmpty else { return nil }
+
+        return try withLock {
+            try inOwnOrAmbientTransaction {
+                var canonicalID = try fileIDUnlocked(path: canonicalPath)
+                var changed = false
+                for variant in distinct {
+                    guard let variantID = try fileIDUnlocked(path: variant) else { continue }
+                    if let canonicalID {
+                        guard variantID != canonicalID else { continue }
+                        try db.run(
+                            "UPDATE files SET missing = 1 WHERE id = ?;",
+                            bind: [.int(variantID)]
+                        )
+                        changed = true
+                        continue
+                    }
+                    try db.run(
+                        "UPDATE files SET path = ? WHERE id = ?;",
+                        bind: [.text(canonicalPath), .int(variantID)]
+                    )
+                    canonicalID = variantID
+                    changed = true
+                }
+                guard changed else { return nil }
+                return try fileUnlocked(path: canonicalPath)
             }
-            return record
         }
     }
 

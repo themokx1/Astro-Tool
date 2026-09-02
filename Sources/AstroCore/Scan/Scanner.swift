@@ -625,7 +625,22 @@ public final class LibraryScanner {
         let info = PathClassifier.classify(relativePath: relativePath)
         let kind = Self.kind(for: ext)
 
-        let existing = try db.file(path: relativePath)
+        var existing = try db.file(path: relativePath)
+        if existing == nil {
+            // The canonical (NFC) lookup above compares byte-wise inside
+            // SQLite, so it misses a row this library recorded under a
+            // different normalization form -- an NFD spelling from an old
+            // HFS+ volume, or whatever raw spelling the filesystem served
+            // before paths were canonicalized at scan time. Adopt that row
+            // in place rather than inserting a duplicate here and retiring
+            // the old one below: every rating, verdict and meta row hangs
+            // off its id.
+            existing = try db.adoptNormalizationVariant(
+                canonicalPath: relativePath,
+                variants: pathNormalizationVariants(relativePath: relativePath, fileURL: fileURL)
+            )
+        }
+
         if let existing, !existing.missing, existing.size == size, abs(existing.mtime - mtime) <= 1.0 {
             summary.unchanged += 1
             try healStaleClassification(existing: existing, info: info, kind: kind, summary: &summary)
@@ -701,6 +716,32 @@ public final class LibraryScanner {
         try refineLooseFrameRole(fileID: fileID, info: info, ext: ext, baseRecord: record)
     }
 
+    /// Every byte-distinct spelling of `relativePath` an earlier scan of this
+    /// library could have written into `files.path`, for
+    /// `Database.adoptNormalizationVariant` to look up when the canonical
+    /// (NFC) key misses:
+    ///  - the fully DECOMPOSED (NFD) form -- covers every row stored by an
+    ///    HFS+/NFD-era scan, whatever the raw spelling on disk was, since
+    ///    canonical decomposition is the same for all canonically equivalent
+    ///    spellings;
+    ///  - the RAW filesystem spelling, rebuilt from `fileURL`'s own path
+    ///    components -- covers a row written from a third, partially
+    ///    normalized form that neither NFC nor NFD reproduces (some SMB/NFS
+    ///    servers), which is exactly what pre-normalization code stored.
+    ///
+    /// Only ever called on the (rare) lookup miss, so the `pathComponents`
+    /// allocations here never touch the unchanged-file fast path.
+    private func pathNormalizationVariants(relativePath: String, fileURL: URL) -> [String] {
+        var variants = [relativePath.decomposedStringWithCanonicalMapping]
+        let rootComponents = URL(fileURLWithPath: config.rootPath, isDirectory: true)
+            .standardizedFileURL.pathComponents
+        let entryComponents = fileURL.standardizedFileURL.pathComponents
+        if entryComponents.count > rootComponents.count {
+            variants.append(entryComponents[rootComponents.count...].joined(separator: "/"))
+        }
+        return variants
+    }
+
     /// Files whose size/mtime match the stored row (the `unchanged` fast
     /// path in `recordFile`) still skip metadata re-capture, but their
     /// classification is pure string work over `relativePath` -- cheap
@@ -741,8 +782,17 @@ public final class LibraryScanner {
             effectiveRole = info.role
         }
 
+        // `target` is compared BYTE-WISE, unlike every other field here.
+        // It is derived from the path, so a pre-normalization scan of an
+        // HFS+/NFD library stored it decomposed; Swift's own `!=` is
+        // Unicode-canonical and would call that "unchanged", while SQLite's
+        // `WHERE target = ?`/`GROUP BY target` is byte-wise and would split
+        // one night into two as soon as a newly scanned sibling file records
+        // today's NFC spelling. See `PathNormalization`'s doc comment.
+        let targetDrifted = Data((existing.target ?? "").utf8) != Data((info.target ?? "").utf8)
+
         guard existing.area != info.area
-            || existing.target != info.target
+            || targetDrifted
             || existing.sessionDate != info.dateRaw
             || existing.role != effectiveRole
             || existing.kind != kind

@@ -164,6 +164,59 @@ private func captureTestGroup(
     }
 }
 
+/// `capture_sources.relative_path` is the other relative-path-keyed column
+/// in the schema, and SQLite matches it byte-wise just like `files.path`. A
+/// row written by a pre-normalization scan of an HFS+/NFD library must be
+/// recognized (and adopted) by today's canonical NFC path instead of
+/// silently gaining a second, competing folder mapping.
+@Test func upsertCaptureSourceAdoptsADifferentlyNormalizedExistingRow() throws {
+    let database = try Database(path: ":memory:")
+    let groupID = try database.upsertCaptureGroup(captureTestGroup())
+    let nfd = "sessions/Café_1396/2026-08-08/lights_osc".decomposedStringWithCanonicalMapping
+    let nfc = "sessions/Café_1396/2026-08-08/lights_osc".precomposedStringWithCanonicalMapping
+    #expect(Array(nfd.utf8) != Array(nfc.utf8), "fixture precondition: NFD and NFC byte forms must actually differ")
+
+    // Exactly what a pre-normalization write left behind.
+    try database.db.run(
+        "INSERT INTO capture_sources(capture_group_id, relative_path, role) VALUES (?, ?, ?);",
+        bind: [.int(groupID), .text(nfd), .text(FrameRole.light.rawValue)]
+    )
+    let staleID = database.db.lastInsertRowID
+
+    let adoptedID = try database.upsertCaptureSource(
+        CaptureSourceRecord(captureGroupID: groupID, relativePath: nfc, role: .flat)
+    )
+
+    #expect(adoptedID == staleID, "the existing mapping must be updated in place, not duplicated")
+    let sources = try database.captureSources(groupID: groupID)
+    #expect(sources.count == 1)
+    #expect(sources.first?.role == .flat)
+    #expect(Array((sources.first?.relativePath ?? "").utf8) == Array(nfc.utf8))
+}
+
+/// The shared lookup behind `upsertCaptureSource` and the session-conversion
+/// workflow's own source-mapping reads: given today's canonical path it must
+/// still find a row stored in a different normalization form, so a planned
+/// removal/remap acts on the real mapping row instead of silently skipping
+/// it and leaving a stale one behind.
+@Test func captureSourceLookupToleratesADifferentNormalizationForm() throws {
+    let database = try Database(path: ":memory:")
+    let groupID = try database.upsertCaptureGroup(captureTestGroup())
+    let nfd = "sessions/IC_1396/2026-08-08/lights_café".decomposedStringWithCanonicalMapping
+    let nfc = "sessions/IC_1396/2026-08-08/lights_café".precomposedStringWithCanonicalMapping
+    #expect(Array(nfd.utf8) != Array(nfc.utf8), "fixture precondition: NFD and NFC byte forms must actually differ")
+
+    try database.db.run(
+        "INSERT INTO capture_sources(capture_group_id, relative_path, role) VALUES (?, ?, ?);",
+        bind: [.int(groupID), .text(nfd), .text(FrameRole.light.rawValue)]
+    )
+    let staleID = database.db.lastInsertRowID
+
+    let found = try database.captureSourceForTesting(anySpellingOf: nfc)
+    #expect(found?.id == staleID)
+    #expect(try database.captureSourceForTesting(anySpellingOf: "sessions/IC_1396/2026-08-08/nope") == nil)
+}
+
 @Test func fileCaptureAssignmentRoundTripsUpdatesAndClears() throws {
     let database = try Database(path: ":memory:")
     let fileID = try database.upsertFile(
