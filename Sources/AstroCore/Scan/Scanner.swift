@@ -375,20 +375,24 @@ public final class LibraryScanner {
 
         // Every write below (`walk`'s per-file upserts, then `markMissing`)
         // runs inside ONE explicit transaction -- `walk` itself commits and
-        // reopens it every ~2000 files (see `Self.transactionBatchSize`) so
-        // a 100k+-file scan pays for one fsync per BATCH instead of one per
-        // statement, which used to dominate wall-clock time on a spinning
-        // disk or network share. On any error (including cancellation),
+        // reopens it every ~2000 files OR every ~2 seconds, whichever comes
+        // first (see `Self.shouldCommitBatch`), so a 100k+-file scan pays
+        // for one fsync per BATCH instead of one per statement -- which used
+        // to dominate wall-clock time on a spinning disk or network share --
+        // without holding the index's write lock for minutes at a time when
+        // the per-file work is slow. On any error (including cancellation),
         // everything fully written so far this run is still a valid
         // incremental result and must survive -- committed here rather than
         // left open (and so invisible to every other reader) forever.
         try db.beginTransaction()
+        var writeBatch = WriteBatchState()
         do {
             try walk(
                 dirURL: startURL,
                 relPrefix: subpath ?? "",
                 seen: &seen,
                 processedCount: &processedCount,
+                writeBatch: &writeBatch,
                 progress: progress,
                 progressUpdate: progressUpdate,
                 total: total,
@@ -450,6 +454,38 @@ public final class LibraryScanner {
     /// a slow disk, not minutes.
     static let transactionBatchSize = 2000
 
+    /// How long the open write transaction may stay open regardless of how
+    /// FEW files went into it. The file count alone is not a bound on
+    /// lock-hold time: the per-file work inside a batch (a FITS header
+    /// read, an ImageIO/Exif probe) is unbounded, so 2000 files on a NAS or
+    /// a spinning disk can take minutes -- and for all of it, every other
+    /// connection to this index is blocked on the write lock and fails
+    /// outright once it waits past `busy_timeout` (30 s). Committing on
+    /// elapsed time keeps the lock-hold interval roughly constant whatever
+    /// the per-file cost turns out to be, at the price of a few extra
+    /// fsyncs on a slow library.
+    static let transactionBatchMaxSeconds: Double = 2.0
+
+    /// Whether the open write transaction should be committed (and a fresh
+    /// one opened) now -- bounded by BOTH accumulated files and elapsed
+    /// time, see the two constants above. Pure and static so the decision
+    /// is unit-testable without a 2000-file fixture library or a real
+    /// two-second wait.
+    static func shouldCommitBatch(filesSinceCommit: Int, secondsSinceCommit: Double) -> Bool {
+        guard filesSinceCommit > 0 else { return false }
+        return filesSinceCommit >= transactionBatchSize
+            || secondsSinceCommit >= transactionBatchMaxSeconds
+    }
+
+    /// The open write transaction's bookkeeping, threaded through the
+    /// recursive `walk` so a commit boundary can be decided from the batch's
+    /// own accumulated files and age rather than from the scan-wide
+    /// `processedCount`.
+    private struct WriteBatchState {
+        var filesSinceCommit = 0
+        var lastCommitAt = Date()
+    }
+
     private static func isUnder(_ path: String, anyOf prefixes: [String]) -> Bool {
         prefixes.contains { path == $0 || path.hasPrefix($0 + "/") }
     }
@@ -471,6 +507,7 @@ public final class LibraryScanner {
         relPrefix: String,
         seen: inout Set<String>,
         processedCount: inout Int,
+        writeBatch: inout WriteBatchState,
         progress: (@Sendable (Int) -> Void)?,
         progressUpdate: (@Sendable (ScanProgress) -> Void)?,
         total: Int?,
@@ -542,6 +579,7 @@ public final class LibraryScanner {
                     relPrefix: relativePath,
                     seen: &seen,
                     processedCount: &processedCount,
+                    writeBatch: &writeBatch,
                     progress: progress,
                     progressUpdate: progressUpdate,
                     total: total,
@@ -575,9 +613,15 @@ public final class LibraryScanner {
             // its own writes -- a commit boundary always lands between two
             // whole files, so the transaction `scan()` commits on an error
             // right after this never contains a half-written file.
-            if processedCount % LibraryScanner.transactionBatchSize == 0 {
+            writeBatch.filesSinceCommit += 1
+            if Self.shouldCommitBatch(
+                filesSinceCommit: writeBatch.filesSinceCommit,
+                secondsSinceCommit: Date().timeIntervalSince(writeBatch.lastCommitAt)
+            ) {
                 try db.commitTransaction()
                 try db.beginTransaction()
+                writeBatch.filesSinceCommit = 0
+                writeBatch.lastCommitAt = Date()
             }
             if processedCount % 64 == 0 {
                 progressUpdate?(ScanProgress(scanned: processedCount, total: total))

@@ -2039,3 +2039,36 @@ private func makeFixtureWithStaleStackProductPromotion() throws -> (fixture: Sca
 
     #expect(try fixture.db.allFiles(includeMissing: false).count < 512)
 }
+
+// MARK: - Write-batch bounding (M2)
+
+/// The scan's write transaction must be bounded by elapsed time as well as
+/// file count. Per-file work (a FITS header read, an ImageIO/Exif probe) is
+/// unbounded, so on a NAS a 2000-file batch can hold the index's write lock
+/// for minutes -- long past the 30 s `busy_timeout` every other connection
+/// waits out before failing.
+@Test func writeBatchCommitsOnEitherFileCountOrElapsedTime() {
+    // Nothing written since the last commit: never commit an empty batch.
+    #expect(LibraryScanner.shouldCommitBatch(filesSinceCommit: 0, secondsSinceCommit: 3_600) == false)
+    // Neither bound reached yet.
+    #expect(LibraryScanner.shouldCommitBatch(filesSinceCommit: 1, secondsSinceCommit: 0) == false)
+    #expect(
+        LibraryScanner.shouldCommitBatch(
+            filesSinceCommit: LibraryScanner.transactionBatchSize - 1,
+            secondsSinceCommit: LibraryScanner.transactionBatchMaxSeconds - 0.1
+        ) == false
+    )
+    // Either bound alone is enough.
+    #expect(
+        LibraryScanner.shouldCommitBatch(
+            filesSinceCommit: LibraryScanner.transactionBatchSize,
+            secondsSinceCommit: 0
+        )
+    )
+    #expect(
+        LibraryScanner.shouldCommitBatch(
+            filesSinceCommit: 1,
+            secondsSinceCommit: LibraryScanner.transactionBatchMaxSeconds
+        )
+    )
+}
