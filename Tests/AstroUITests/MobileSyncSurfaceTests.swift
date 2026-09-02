@@ -232,4 +232,13 @@ struct MobileSyncSurfaceTests {
         #expect(screen.contains("Pairing with: \\(peerDisplayName)"))
         #expect(rootView.contains("case pairingCode(code: String, peerDisplayName: String)"))
     }
+
+    // MARK: - Fix 5: silent Application Support -> temporaryDirectory fallback
+
+    @Test("A temporaryDirectory fallback for Application Support surfaces through durabilityWarning instead of degrading silently")
+    func applicationSupportFallbackSurfacesDurabilityWarning() throws {
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileLibraryStore.swift"), encoding: .utf8)
+        #expect(store.contains("usedTemporaryFallback"))
+        #expect(store.contains("self.durabilityWarning = initial.durabilityWarning || resolvedApplicationSupport.usedTemporaryFallback"))
+    }
 }
