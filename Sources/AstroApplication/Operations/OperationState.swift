@@ -54,6 +54,22 @@ public enum OperationKind: Hashable, Sendable {
     /// is nothing to key it by. Nothing constructs this case yet; see
     /// `.buildMaster`'s own doc comment for why this is a stub.
     case liveNightWatch
+
+    /// `true` for every frame-rating operation, whatever its scope.
+    ///
+    /// `.rate`'s key names the scope -- one series
+    /// (`ReviewStore.rateSelectedSeries`), one project, or the whole library
+    /// ("Rate All", `ProjectRatingRunner`) -- and each of those call sites
+    /// used to dedupe only against its OWN key. But the scopes OVERLAP: a
+    /// series belongs to a project, and every project belongs to the
+    /// library, so "Rate All" plus one project plus one series could all be
+    /// running at once, three operations measuring the same frames and
+    /// writing the same `ratings` rows. Rating is exclusive app-wide, and
+    /// this is the shared predicate both call sites gate on.
+    public var isRating: Bool {
+        if case .rate = self { return true }
+        return false
+    }
 }
 
 public enum CancellationPolicy: Hashable, Sendable {

@@ -141,6 +141,35 @@ struct ReviewStoreTests {
         )
     }
 
+    @Test("Rating a series is refused while a rating of another scope is still running")
+    func ratingIsRefusedWhileAnotherScopeRates() async throws {
+        let fixture = try await ReviewStoreFixture.make()
+        let quality = try fixture.installQualityFixture()
+        let store = ReviewStore(
+            metadataFactory: { _ in fixture.metadata },
+            qualityQueryFactory: { _ in FrameQualityQuery(db: quality.db, config: quality.config) },
+            ratingCommandFactory: { root in FrameRatingCommand(db: quality.db, config: quality.config, root: root) }
+        )
+        try await store.open(rootURL: fixture.root, projectID: fixture.project.id)
+        store.selectSeries(fixture.series[2].id)
+        let host = OperationHost(center: OperationCenter())
+        // "Rate All" (`ProjectRatingRunner`'s `.allProjects` scope) already
+        // covers this series' frames -- this store used to dedupe only
+        // against its OWN `.rate(series:)` key and start a second run.
+        let busy = await host.run(
+            kind: ProjectRatingRunner.kind(for: .allProjects(libraryName: "TestLibrary")),
+            title: "Rating Frames", cancellation: .cooperative
+        ) {
+            try await Task.sleep(nanoseconds: 30_000_000_000)
+        }
+
+        await store.rateSelectedSeries(mode: .nativeOnly, operationHost: host)
+
+        #expect(host.activeOperations.filter { $0.kind.isRating }.count == 1)
+        #expect(host.toasts.contains { $0.level == .info })
+        _ = await host.cancel(id: busy)
+    }
+
     @Test("Rating with no series selected notifies instead of crashing")
     func rateWithNoSeriesSelectedNoOps() async throws {
         let store = ReviewStore(

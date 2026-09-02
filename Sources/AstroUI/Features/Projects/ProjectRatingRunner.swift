@@ -130,8 +130,16 @@ enum ProjectRatingRunner {
         case .allProjects:
             title = "\(OperationHost.localized("Rating Frames")) — \(OperationHost.localized("All Projects"))"
         }
-        guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: OperationHost.localized("Frame rating is already running for this scope."))
+        // Rating is exclusive app-wide, not per-scope: this used to dedupe
+        // only on its own `kind`, so "Rate All" could run alongside a single
+        // project's rating and `ReviewStore`'s single-series rating, all
+        // measuring the same frames. See `OperationKind.isRating`.
+        if let running = operationHost.activeOperations.first(where: { $0.kind.isRating }) {
+            operationHost.notify(.info, message: OperationHost.localized(
+                running.kind == kind
+                    ? "Frame rating is already running for this scope."
+                    : "Frame rating is already running."
+            ))
             return
         }
 

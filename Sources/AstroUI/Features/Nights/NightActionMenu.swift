@@ -152,8 +152,15 @@ public struct NightActionMenu: View {
     ) {
         guard let rootURL else { return }
         let kind = OperationKind.rate(series: "night-\(nightID.uuidString)")
-        guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: OperationHost.localized("Frame rating is already running for this night."))
+        // Exclusive against every rating scope, not just this night's: a
+        // night's frames are also covered by their project's rating and by
+        // "Rate All". See `OperationKind.isRating`.
+        if let running = operationHost.activeOperations.first(where: { $0.kind.isRating }) {
+            operationHost.notify(.info, message: OperationHost.localized(
+                running.kind == kind
+                    ? "Frame rating is already running for this night."
+                    : "Frame rating is already running."
+            ))
             return
         }
         Task {

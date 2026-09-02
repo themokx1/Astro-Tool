@@ -211,4 +211,50 @@ struct ProjectRatingRunnerTests {
         let stored = try #require(try fixture.indexDB.rating(fileID: fixture.fileID))
         #expect(stored.fwhm == 3.0)
     }
+
+    // MARK: - Rating is exclusive app-wide, not per-scope
+
+    @Test("Rating all projects is refused while a single project's rating is still running")
+    func allProjectsIsRefusedWhileAnotherScopeRates() async throws {
+        // The scopes overlap -- every project's frames are also "all
+        // projects" frames -- but each call site used to dedupe only on its
+        // own `.rate` key, so both could run at once over the same frames.
+        let fixture = try await RunnerFixture.make()
+        defer { fixture.cleanup() }
+        let host = OperationHost(center: OperationCenter())
+        let command = FrameRatingCommand(db: fixture.indexDB, config: fixture.config, root: fixture.libraryDir)
+        let busy = await host.run(
+            kind: ProjectRatingRunner.kind(for: .project(id: fixture.project.id, displayName: "A")),
+            title: "Rating Frames", cancellation: .cooperative
+        ) {
+            try await Task.sleep(nanoseconds: 30_000_000_000)
+        }
+
+        await ProjectRatingRunner.run(
+            scope: .allProjects(libraryName: "TestLibrary"),
+            rootURL: fixture.libraryDir,
+            metadataFactory: { _ in fixture.metadata },
+            operationHost: host,
+            commandFactory: { _ in command }
+        )
+
+        #expect(
+            host.activeOperations.filter { $0.kind.isRating }.count == 1,
+            "a second rating run must never measure the same frames concurrently"
+        )
+        #expect(host.toasts.contains { $0.level == .info })
+        #expect(try fixture.indexDB.rating(fileID: fixture.fileID) == nil, "nothing was rated")
+        _ = await host.cancel(id: busy)
+    }
+
+    @Test("Every rating scope answers to the shared isRating predicate, and nothing else does")
+    func isRatingCoversEveryScopeAndOnlyRating() {
+        #expect(ProjectRatingRunner.kind(for: .allProjects(libraryName: "L")).isRating)
+        #expect(ProjectRatingRunner.kind(for: .project(id: UUID(), displayName: "A")).isRating)
+        #expect(OperationKind.rate(series: UUID().uuidString).isRating)
+        #expect(OperationKind.rate(series: "night-\(UUID().uuidString)").isRating)
+        #expect(!OperationKind.scan(library: "L").isRating)
+        #expect(!OperationKind.sensorMeasurement(library: "L").isRating)
+        #expect(!OperationKind.audit(library: "L").isRating)
+    }
 }

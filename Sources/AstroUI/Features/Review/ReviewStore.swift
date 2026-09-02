@@ -139,8 +139,15 @@ public final class ReviewStore {
         }
         let label = "\(snapshot?.project.displayName ?? "Project") · \(AstroFormat.exposureSeconds(selected.series.exposureSeconds))"
         let kind = OperationKind.rate(series: selected.series.id.uuidString)
-        guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else {
-            operationHost.notify(.info, message: OperationHost.localized("Frame rating is already running for this series."))
+        // Exclusive against EVERY rating scope, not just this series':
+        // "Rate All" and a single project's rating both cover these same
+        // frames. See `OperationKind.isRating`.
+        if let running = operationHost.activeOperations.first(where: { $0.kind.isRating }) {
+            operationHost.notify(.info, message: OperationHost.localized(
+                running.kind == kind
+                    ? "Frame rating is already running for this series."
+                    : "Frame rating is already running."
+            ))
             return
         }
 
