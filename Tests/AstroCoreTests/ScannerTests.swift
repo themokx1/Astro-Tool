@@ -1717,12 +1717,93 @@ private func makeFixtureWithStaleStackProductPromotion() throws -> (fixture: Sca
     let first = try #require(values.first)
     let last = try #require(values.last)
     #expect(first.scanned == 0)
-    #expect(first.total == nil)
-    #expect(values.dropLast().allSatisfy { $0.total == nil })
-    #expect(last.scanned == last.total!)
+    // The pre-count pass finishes well under its 2s deadline for a fixture
+    // this small, so every update -- including the very first one -- should
+    // already carry the SAME total, not just the final one.
+    let total = try #require(first.total)
+    #expect(values.allSatisfy { $0.total == total })
+    #expect(last.scanned == total)
     #expect(last.fraction == 1)
     #expect(values.count <= (last.scanned / 64) + 3)
     #expect(values.dropFirst().dropLast().allSatisfy { $0.scanned % 64 == 0 })
+}
+
+/// Task 6 fix: a FIRST scan (nothing in the DB yet) used to always emit
+/// `total: nil`, so the UI showed an indeterminate spinner the whole time
+/// even for a small library that finishes in well under a second. A cheap
+/// pre-count pass now gives `scan(progressUpdate:)` a real total before the
+/// walk even starts.
+@Test func progressCarriesATotalOnASmallFixtureLibraryFromTheVeryFirstUpdate() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    for i in 0..<5 {
+        let url = fixture.root.appendingPathComponent("sessions/M31/2026-01-10/lights/f\(i).fit")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "x".write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    final class ProgressBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var stored: [ScanProgress] = []
+        func append(_ progress: ScanProgress) { lock.withLock { stored.append(progress) } }
+        var values: [ScanProgress] { lock.withLock { stored } }
+    }
+    let box = ProgressBox()
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+
+    let summary = try scanner.scan(progressUpdate: box.append)
+
+    let first = try #require(box.values.first)
+    #expect(first.total == summary.added)
+    #expect(box.values.allSatisfy { $0.total == summary.added })
+}
+
+/// `progressUpdate == nil` (a caller that never asked for progress, e.g. the
+/// CLI) must skip the pre-count pass entirely -- it's a second tree walk
+/// spent for nobody, not just a value nobody reads.
+@Test func scanWithoutAProgressUpdateCallbackDoesNotPerformThePreCountWalk() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let url = fixture.root.appendingPathComponent("sessions/M31/2026-01-10/lights/f0.fit")
+    try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "x".write(to: url, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    let summary = try scanner.scan()
+    #expect(summary.added == 1)
+}
+
+/// The pre-count pass bails out to `nil` (never a stale partial count) the
+/// moment the caller cancels, so a slow pre-count on an enormous library
+/// never blocks cancellation from taking effect promptly.
+@Test func preCountBailsOutToNilTotalWhenCancelledMidWalk() throws {
+    let fixture = try ScanFixture.make()
+    defer { fixture.cleanup() }
+
+    for i in 0..<512 {
+        let url = fixture.root.appendingPathComponent("stacks/PreCountCancel/f\(i).fit")
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("x".utf8).write(to: url)
+    }
+
+    final class CancelAfterFirstCheck: @unchecked Sendable {
+        private let lock = NSLock()
+        private var checks = 0
+        func shouldCancel() -> Bool {
+            lock.withLock {
+                checks += 1
+                return checks > 1
+            }
+        }
+    }
+    let cancellation = CancelAfterFirstCheck()
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+
+    #expect(throws: CancellationError.self) {
+        _ = try scanner.scan(progressUpdate: { _ in }, shouldCancel: cancellation.shouldCancel)
+    }
 }
 
 @Test func detailedScanCooperativelyCancelsBeforeProcessingAllFiles() throws {

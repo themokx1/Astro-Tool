@@ -76,7 +76,10 @@ struct LibrarySessionTests {
         let first = try #require(updates.first)
         let last = try #require(updates.last)
         #expect(first.scanned == 0)
-        #expect(first.total == nil)
+        // AstroCore's cheap pre-count pass (Task 6 fix) finishes well under
+        // its 2s deadline for a fixture this small, so `total` is already
+        // known on the very first update, not just the last.
+        #expect(first.total != nil)
         #expect(last.scanned == last.total!)
         #expect(last.fraction == 1)
         #expect(updates.compactMap(\.fraction).allSatisfy { (0...1).contains($0) })
@@ -110,7 +113,7 @@ struct LibrarySessionTests {
         await #expect(throws: CancellationError.self) {
             try await task.value
         }
-        #expect(!blocker.values.contains { $0.total != nil })
+        #expect(!blocker.values.isEmpty)
     }
 
     @Test("A failed scan does not consume a revision")
@@ -329,7 +332,11 @@ private final class SessionProgressBlocker: @unchecked Sendable {
     func recordAndBlock(_ progress: LibraryScanProgress) {
         let result = lock.withLock { () -> (Bool, CheckedContinuation<Void, Never>?) in
             stored.append(progress)
-            guard !didBlock, progress.scanned >= 64, progress.total == nil else {
+            // No longer gated on `total == nil` -- AstroCore's pre-count
+            // pass (Task 6 fix) now gives a real total for a fixture this
+            // small, so that condition would never become true again and
+            // this test would hang waiting for a block that never happens.
+            guard !didBlock, progress.scanned >= 64 else {
                 return (false, nil)
             }
             didBlock = true

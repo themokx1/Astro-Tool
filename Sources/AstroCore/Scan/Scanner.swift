@@ -310,7 +310,18 @@ public final class LibraryScanner {
         var processedCount = 0
         var changedTargets = Set<String>()
         var changedSessions = Set<ScanSummary.SessionKey>()
-        progressUpdate?(ScanProgress(scanned: 0, total: nil))
+
+        // Only bothered with `progressUpdate` at all is a caller that wants
+        // a progress UI -- `estimatedFileCount` walks the same tree the
+        // scan is about to, so it's wasted work behind a caller (e.g. the
+        // CLI) that never asked for progress updates in the first place.
+        let total = progressUpdate == nil ? nil : estimatedFileCount(
+            startURL: startURL,
+            relPrefix: subpath ?? "",
+            shouldCancel: shouldCancel,
+            deadline: Date().addingTimeInterval(2.0)
+        )
+        progressUpdate?(ScanProgress(scanned: 0, total: total))
 
         try walk(
             dirURL: startURL,
@@ -319,6 +330,7 @@ public final class LibraryScanner {
             processedCount: &processedCount,
             progress: progress,
             progressUpdate: progressUpdate,
+            total: total,
             shouldCancel: shouldCancel,
             summary: &summary,
             refreshMeta: refreshMeta,
@@ -382,6 +394,7 @@ public final class LibraryScanner {
         processedCount: inout Int,
         progress: (@Sendable (Int) -> Void)?,
         progressUpdate: (@Sendable (ScanProgress) -> Void)?,
+        total: Int?,
         shouldCancel: @Sendable () -> Bool,
         summary: inout ScanSummary,
         refreshMeta: Bool,
@@ -452,6 +465,7 @@ public final class LibraryScanner {
                     processedCount: &processedCount,
                     progress: progress,
                     progressUpdate: progressUpdate,
+                    total: total,
                     shouldCancel: shouldCancel,
                     summary: &summary,
                     refreshMeta: refreshMeta,
@@ -479,7 +493,7 @@ public final class LibraryScanner {
                 changedSessions: &changedSessions
             )
             if processedCount % 64 == 0 {
-                progressUpdate?(ScanProgress(scanned: processedCount, total: nil))
+                progressUpdate?(ScanProgress(scanned: processedCount, total: total))
             }
         }
     }
@@ -490,6 +504,69 @@ public final class LibraryScanner {
         if shouldCancel() {
             throw CancellationError()
         }
+    }
+
+    /// A cheap upper-bound file count for `ScanProgress.total`, computed by
+    /// walking the same tree `walk` is about to (respecting the same
+    /// directory/file exclusions) but touching only `isDirectoryKey`/
+    /// `isSymbolicLinkKey` per entry -- none of the size/mtime/FITS-header
+    /// work the real scan does per file. Without this, the FIRST scan of a
+    /// library shows an indeterminate spinner the entire time, since
+    /// `walk` alone has no way to know how many files are left until it's
+    /// already seen all of them.
+    ///
+    /// Bails out to `nil` (never partially reports a total) if it's still
+    /// running past `deadline` or the caller cancels -- an honest
+    /// indeterminate progress bar beats stalling the real scan behind a
+    /// slow pre-count on an enormous library or a network/spinning-disk
+    /// root, where directory enumeration itself can be the expensive part.
+    private func estimatedFileCount(
+        startURL: URL,
+        relPrefix: String,
+        shouldCancel: @Sendable () -> Bool,
+        deadline: Date
+    ) -> Int? {
+        guard let enumerator = FileManager.default.enumerator(
+            at: startURL,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+            options: []
+        ) else { return nil }
+
+        let startComponents = startURL.standardizedFileURL.pathComponents
+        var count = 0
+        var visited = 0
+
+        for case let entryURL as URL in enumerator {
+            visited += 1
+            // Checked periodically, not per-entry -- `shouldCancel`/`Date()`
+            // aren't free, and this loop can run over hundreds of thousands
+            // of entries on a real library.
+            if visited % 256 == 0, shouldCancel() || Date() >= deadline {
+                return nil
+            }
+
+            guard let values = try? entryURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isSymbolicLink != true
+            else { continue }
+
+            let entryComponents = entryURL.standardizedFileURL.pathComponents
+            let suffix = entryComponents.count > startComponents.count
+                ? entryComponents[startComponents.count...].joined(separator: "/")
+                : entryURL.lastPathComponent
+            let relativePath = PathNormalization.canonical(relPrefix.isEmpty ? suffix : relPrefix + "/" + suffix)
+            let name = entryURL.lastPathComponent
+
+            if values.isDirectory == true {
+                if isExcludedDir(name: name, relativePath: relativePath) {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+
+            guard !isExcludedFile(name: name, relativePath: relativePath) else { continue }
+            count += 1
+        }
+        return count
     }
 
     private func recordFile(
