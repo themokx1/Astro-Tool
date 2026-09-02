@@ -127,6 +127,13 @@ public struct ProjectWorkspaceView: View {
     /// "Rate Entire Project" action in `header` below -- the owner's own
     /// words: "az egészet tudjam értékelni, az összes session összes
     /// capture, ezt úgy is kéne tudnom, hogy minden projektre ráengedni".
+    /// v5 library-switch fixes (item 3): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost` so a
+    /// rating started here reuses that one connection instead of opening a
+    /// competing second one -- see `ProjectRatingRunner.run`'s own
+    /// `sharedMetadata` doc comment. `nil` when nothing is open for this
+    /// root (yet), which falls back to the runner's own factory.
+    let sharedMetadataStore: MetadataStore?
     @Environment(OperationHost.self) private var operationHost
     /// Wave 4 (post-20014) fix: this view's own stable identity within
     /// `WorkspaceActionCenter` -- see that type's own doc comment for why
@@ -180,9 +187,11 @@ public struct ProjectWorkspaceView: View {
         openCalibration: @escaping () -> Void = {},
         openInsights: @escaping (String?) -> Void = { _ in },
         saveAnnotation: @escaping (Double?, String) async throws -> Void,
-        dailySummariesProvider: ClearNightDailySummariesProvider? = nil
+        dailySummariesProvider: ClearNightDailySummariesProvider? = nil,
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         self.snapshot = snapshot
+        self.sharedMetadataStore = sharedMetadataStore
         self.rootURL = rootURL
         self.accessMode = accessMode
         self.annotation = annotation
@@ -404,6 +413,7 @@ public struct ProjectWorkspaceView: View {
                 scope: .project(id: snapshot.project.id, displayName: snapshot.project.displayName),
                 rootURL: rootURL,
                 metadataFactory: ProjectsStore.productionMetadata,
+                sharedMetadata: sharedMetadataStore,
                 operationHost: operationHost
             )
         }

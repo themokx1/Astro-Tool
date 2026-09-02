@@ -344,6 +344,25 @@ enum InspectorVisibilityPolicy {
     }
 }
 
+/// v5 library-switch fixes (item 3): the window's ALREADY-OPEN metadata
+/// connection for `rootURL`, or `nil` when this store is not open for that
+/// library -- nothing opened yet, a failed open (which clears both), or a
+/// switch still in flight whose store belongs to the PREVIOUS library. The
+/// root check is the whole point: handing back a store for the wrong library
+/// would answer a question about library B with library A's rows.
+///
+/// `AppModel.currentMetadataStore`'s own doc comment already states that this
+/// database "is meant to have one owner at a time"; this is how the other
+/// readers in this window (`LibraryHealthStore`, `ProjectRatingRunner`) get
+/// to honour that instead of each opening a competing connection guarded by
+/// nothing but `busy_timeout`.
+private extension ProjectsStore {
+    func sharedMetadataStore(for rootURL: URL) -> MetadataStore? {
+        guard self.rootURL == rootURL.standardizedFileURL else { return nil }
+        return metadataStore
+    }
+}
+
 @MainActor
 private struct V2Shell: View {
     @Bindable var router: AppRouter
@@ -967,6 +986,11 @@ private struct V2Shell: View {
             // `CalibrationView` above are wired for quarantine apply/
             // rollback and calibration link apply.
             libraryHealthStore.onLibraryFindingsChanged = refreshSidebarBadges
+            // v5 library-switch fixes (item 3): the Health store used to
+            // open its own confined `MetadataStore` in `load`/`runAudit`/
+            // `verifyIntegrity`. It now asks for the window's already-open
+            // one first -- see `sharedMetadataStore(for:)` below.
+            libraryHealthStore.sharedMetadataProvider = projectsStore.sharedMetadataStore(for:)
         }
         .task {
             guard !didRunUITestLibraryPickerHandoff,
@@ -1885,6 +1909,14 @@ private struct DetailHost: View {
 
     private var isLibraryLoading: Bool { homeLibraryState == .loading }
 
+    /// v5 library-switch fixes (item 3): the one open metadata connection
+    /// the four rating entry points below should reuse, or `nil` while
+    /// nothing is open for the currently selected root.
+    private var sharedMetadataStore: MetadataStore? {
+        guard let root = onboardingStore.selectedRoot ?? libraryRootFallback else { return nil }
+        return projectsStore.sharedMetadataStore(for: root)
+    }
+
     @ViewBuilder
     private func destination(for route: ContentRoute) -> some View {
         switch route {
@@ -1956,7 +1988,8 @@ private struct DetailHost: View {
                 extraCardProviders: [
                     IngestHomeCardProvider(watcher: ingestWatcher, runScan: rescan),
                     LiveNightHomeCardProvider(watcher: liveNightWatcher),
-                ]
+                ],
+                sharedMetadataStore: sharedMetadataStore
             )
         case .projects:
             ProjectsView(
@@ -1975,7 +2008,8 @@ private struct DetailHost: View {
                     // binding's own single-click load, which drives the
                     // inline detail panel on THIS page) no longer race it.
                     router.push(.project(project.id.uuidString))
-                }
+                },
+                sharedMetadataStore: sharedMetadataStore
             )
         case .project(let rawID):
             if let id = UUID(uuidString: rawID), let snapshot = projectsStore.selectedProject, snapshot.id == id {
@@ -1999,7 +2033,8 @@ private struct DetailHost: View {
                     openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) },
                     saveAnnotation: { goal, notes in
                         try await projectsStore.saveSelectedProjectAnnotation(goalHours: goal, notes: notes)
-                    }
+                    },
+                    sharedMetadataStore: sharedMetadataStore
                 )
             } else {
                 RoutePendingLoadView(
@@ -2136,7 +2171,8 @@ private struct DetailHost: View {
                 snapshot: onboardingStore.phase.summary,
                 rootURL: onboardingStore.selectedRoot,
                 initialSetupFilter: router.pendingInsightsSetupFilter,
-                chooseLibrary: chooseLibrary
+                chooseLibrary: chooseLibrary,
+                sharedMetadataStore: sharedMetadataStore
             )
             .onAppear { router.pendingInsightsSetupFilter = nil }
         case .health:

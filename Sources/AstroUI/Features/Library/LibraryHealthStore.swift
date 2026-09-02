@@ -51,6 +51,17 @@ public final class LibraryHealthStore {
     /// already refresh the badge through `OperationHost`'s own
     /// `recentOutcomes` success path in `V2RootView`.
     public var onLibraryFindingsChanged: (() -> Void)?
+    /// v5 library-switch fixes (item 3): hands back the window's ALREADY-OPEN
+    /// `MetadataStore` for the asked-for root, or `nil` when there is none
+    /// for that library (nothing open yet, or the window is mid-switch and
+    /// its store still belongs to the previous library). `load`/`runAudit`/
+    /// `verifyIntegrity` each used to open their OWN confined connection to
+    /// a database `AppModel.currentMetadataStore`'s own doc comment says
+    /// "is meant to have one owner at a time" -- three more SQLite
+    /// connections competing with `ProjectsStore`'s, with nothing but
+    /// `busy_timeout` between them. `metadataFactory` stays as the fallback
+    /// (and is what tests inject).
+    public var sharedMetadataProvider: (@MainActor (URL) -> MetadataStore?)?
 
     private let metadataFactory: MetadataFactory
     private let queryFactory: QueryFactory
@@ -78,7 +89,7 @@ public final class LibraryHealthStore {
         self.accessMode = accessMode
         defer { isLoading = false }
         do {
-            let metadata = try metadataFactory(rootURL.standardizedFileURL)
+            let metadata = try resolvedMetadata(rootURL: rootURL.standardizedFileURL)
             self.metadata = metadata
             self.rootURL = rootURL.standardizedFileURL
             snapshot = try await queryFactory(rootURL, metadata, accessMode).snapshot(includeAcknowledged: showAcknowledged)
@@ -150,7 +161,7 @@ public final class LibraryHealthStore {
         }
 
         do {
-            let metadata = try metadataFactory(standardizedRoot)
+            let metadata = try resolvedMetadata(rootURL: standardizedRoot)
             self.metadata = metadata
             self.rootURL = standardizedRoot
             let command = try auditCommandFactory(standardizedRoot, metadata)
@@ -189,7 +200,7 @@ public final class LibraryHealthStore {
         }
 
         do {
-            let metadata = try metadataFactory(standardizedRoot)
+            let metadata = try resolvedMetadata(rootURL: standardizedRoot)
             self.metadata = metadata
             self.rootURL = standardizedRoot
             let command = try auditCommandFactory(standardizedRoot, metadata)
@@ -223,6 +234,13 @@ public final class LibraryHealthStore {
 
     private func recordVerifySummary(_ summary: FixityVerifier.Summary) {
         lastVerifySummary = summary
+    }
+
+    /// The window's shared connection when it is really this root's, else
+    /// a freshly opened one.
+    private func resolvedMetadata(rootURL: URL) throws -> MetadataStore {
+        if let shared = sharedMetadataProvider?(rootURL) { return shared }
+        return try metadataFactory(rootURL)
     }
 
     private func refresh() async {

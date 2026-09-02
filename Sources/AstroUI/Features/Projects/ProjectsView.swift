@@ -14,6 +14,13 @@ public struct ProjectsView: View {
     let reviewProject: (ProjectRecord) -> Void
     let showResults: (ProjectRecord) -> Void
     let openProject: (ProjectRecord) -> Void
+    /// v5 library-switch fixes (item 3): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost` so a
+    /// rating started here reuses that one connection instead of opening a
+    /// competing second one -- see `ProjectRatingRunner.run`'s own
+    /// `sharedMetadata` doc comment. `nil` when nothing is open for this
+    /// root (yet), which falls back to the runner's own factory.
+    var sharedMetadataStore: MetadataStore?
     /// Task 4 (2026-08-17 owner-feedback wave 3): backs "Rate All Projects"
     /// below -- the owner's own words: "ezt úgy is kéne tudnom, hogy minden
     /// projektre ráengedni" (run the whole-project rate across every
@@ -225,6 +232,7 @@ public struct ProjectsView: View {
                 scope: .allProjects(libraryName: rootURL.lastPathComponent),
                 rootURL: rootURL,
                 metadataFactory: ProjectsStore.productionMetadata,
+                sharedMetadata: sharedMetadataStore,
                 operationHost: operationHost
             )
         }

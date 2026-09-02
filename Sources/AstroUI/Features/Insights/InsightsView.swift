@@ -100,6 +100,14 @@ public struct InsightsView: View {
     /// Already provided globally by `V2RootView`'s `.environment(operationHost)`
     /// -- reading it here needs no wiring change anywhere else, exactly like
     /// `HomeView`'s own `@Environment(OperationHost.self)`.
+    /// v5 library-switch fixes (item 3): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost` so a
+    /// rating started here reuses that one connection instead of opening a
+    /// competing second one -- see `ProjectRatingRunner.run`'s own
+    /// `sharedMetadata` doc comment. `nil` when nothing is open for this
+    /// root (yet), which falls back to the runner's own factory.
+    let sharedMetadataStore: MetadataStore?
+
     @Environment(OperationHost.self) private var operationHost
 
     public init(
@@ -107,12 +115,14 @@ public struct InsightsView: View {
         rootURL: URL?,
         initialSetupFilter: String? = nil,
         chooseLibrary: @escaping () -> Void,
-        store: InsightsStore = InsightsStore()
+        store: InsightsStore = InsightsStore(),
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         self.librarySnapshot = snapshot
         self.rootURL = rootURL
         self.initialSetupFilter = initialSetupFilter
         self.chooseLibrary = chooseLibrary
+        self.sharedMetadataStore = sharedMetadataStore
         _store = State(initialValue: store)
         _selectedSetup = State(initialValue: initialSetupFilter)
     }
@@ -376,6 +386,7 @@ public struct InsightsView: View {
                 scope: .allProjects(libraryName: rootURL.lastPathComponent),
                 rootURL: rootURL,
                 metadataFactory: ProjectsStore.productionMetadata,
+                sharedMetadata: sharedMetadataStore,
                 operationHost: operationHost,
                 mode: .fullReMeasure
             )

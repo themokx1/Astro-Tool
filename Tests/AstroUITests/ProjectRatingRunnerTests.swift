@@ -155,6 +155,7 @@ struct ProjectRatingRunnerTests {
             scope: .allProjects(libraryName: "TestLibrary"),
             rootURL: fixture.libraryDir,
             metadataFactory: { _ in fixture.metadata },
+            sharedMetadata: nil,
             operationHost: host,
             commandFactory: { _ in command }
         )
@@ -178,6 +179,7 @@ struct ProjectRatingRunnerTests {
             scope: .allProjects(libraryName: "TestLibrary"),
             rootURL: fixture.libraryDir,
             metadataFactory: { _ in fixture.metadata },
+            sharedMetadata: nil,
             operationHost: host,
             mode: .fullReMeasure,
             commandFactory: { _ in command }
@@ -202,6 +204,7 @@ struct ProjectRatingRunnerTests {
             scope: .project(id: fixture.project.id, displayName: fixture.project.displayName),
             rootURL: fixture.libraryDir,
             metadataFactory: { _ in fixture.metadata },
+            sharedMetadata: nil,
             operationHost: host,
             mode: .fullReMeasure,
             commandFactory: { _ in command }
@@ -234,6 +237,7 @@ struct ProjectRatingRunnerTests {
             scope: .allProjects(libraryName: "TestLibrary"),
             rootURL: fixture.libraryDir,
             metadataFactory: { _ in fixture.metadata },
+            sharedMetadata: nil,
             operationHost: host,
             commandFactory: { _ in command }
         )
@@ -247,6 +251,34 @@ struct ProjectRatingRunnerTests {
         _ = await host.cancel(id: busy)
     }
 
+    // MARK: - v5 library-switch fixes, item 3: this runner used to open its
+    // own confined `MetadataStore` connection through `metadataFactory` on
+    // every run, competing with `ProjectsStore`'s already-open one for the
+    // same database.
+
+    @Test("An already-open metadata store is reused instead of opening a second connection")
+    func sharedMetadataStoreIsUsedInsteadOfTheFactory() async throws {
+        let fixture = try await RunnerFixture.make()
+        defer { fixture.cleanup() }
+        let host = OperationHost(center: OperationCenter())
+        let command = FrameRatingCommand(db: fixture.indexDB, config: fixture.config, root: fixture.libraryDir)
+
+        await ProjectRatingRunner.run(
+            scope: .allProjects(libraryName: "TestLibrary"),
+            rootURL: fixture.libraryDir,
+            // Opening one here would be the bug -- the run must go through
+            // `sharedMetadata` and never touch this.
+            metadataFactory: { _ in throw ProjectRatingRunnerTestFailure.shouldNotOpenASecondConnection },
+            sharedMetadata: fixture.metadata,
+            operationHost: host,
+            commandFactory: { _ in command }
+        )
+        await host.settle()
+
+        #expect(try fixture.indexDB.rating(fileID: fixture.fileID) != nil)
+        #expect(!host.toasts.contains { $0.level == .failure })
+    }
+
     @Test("Every rating scope answers to the shared isRating predicate, and nothing else does")
     func isRatingCoversEveryScopeAndOnlyRating() {
         #expect(ProjectRatingRunner.kind(for: .allProjects(libraryName: "L")).isRating)
@@ -257,4 +289,8 @@ struct ProjectRatingRunnerTests {
         #expect(!OperationKind.sensorMeasurement(library: "L").isRating)
         #expect(!OperationKind.audit(library: "L").isRating)
     }
+}
+
+private enum ProjectRatingRunnerTestFailure: Error, Equatable {
+    case shouldNotOpenASecondConnection
 }

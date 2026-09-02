@@ -67,6 +67,14 @@ public struct HomeView: View {
     /// second one reinvented for Home. Also lets the card watch
     /// `activeOperations` for that same operation's progress instead of
     /// keeping its own separate "is it running" state.
+    /// v5 library-switch fixes (item 3): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost` so a
+    /// rating started here reuses that one connection instead of opening a
+    /// competing second one -- see `ProjectRatingRunner.run`'s own
+    /// `sharedMetadata` doc comment. `nil` when nothing is open for this
+    /// root (yet), which falls back to the runner's own factory.
+    let sharedMetadataStore: MetadataStore?
+
     @Environment(OperationHost.self) private var operationHost
 
     public init(
@@ -82,7 +90,8 @@ public struct HomeView: View {
         openCalibration: @escaping () -> Void = {},
         openNightsCalendar: @escaping () -> Void = {},
         openBriefing: @escaping () -> Void = {},
-        extraCardProviders: [any HomeCardProviding] = []
+        extraCardProviders: [any HomeCardProviding] = [],
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         _store = Bindable(store)
         self.rootURL = rootURL
@@ -97,6 +106,7 @@ public struct HomeView: View {
         self.openNightsCalendar = openNightsCalendar
         self.openBriefing = openBriefing
         self.extraCardProviders = extraCardProviders
+        self.sharedMetadataStore = sharedMetadataStore
     }
 
     public var body: some View {
@@ -579,6 +589,7 @@ public struct HomeView: View {
                 scope: .allProjects(libraryName: rootURL.lastPathComponent),
                 rootURL: rootURL,
                 metadataFactory: ProjectsStore.productionMetadata,
+                sharedMetadata: sharedMetadataStore,
                 operationHost: operationHost
             )
         }

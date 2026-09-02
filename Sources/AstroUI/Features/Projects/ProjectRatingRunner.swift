@@ -108,6 +108,17 @@ enum ProjectRatingRunner {
     /// `.fullReMeasure`) can ask for them through this exact same batching
     /// layer, instead of duplicating it.
     ///
+    /// `sharedMetadata` is the window's ALREADY-OPEN `MetadataStore` for
+    /// `rootURL`, when there is one -- v5 library-switch fixes (item 3).
+    /// This runner used to open its OWN confined connection through
+    /// `metadataFactory` on every run, so a rating competed with
+    /// `ProjectsStore`'s connection over the same SQLite file with nothing
+    /// but `busy_timeout` between them, even though
+    /// `AppModel.currentMetadataStore`'s own doc comment says that database
+    /// "is meant to have one owner at a time". `metadataFactory` stays as
+    /// the fallback for the paths that genuinely have no open store to
+    /// reuse (and for tests injecting a fixture-backed one).
+    ///
     /// `commandFactory` mirrors `metadataFactory`'s injection shape purely so
     /// tests can supply a fixture-backed `FrameRatingCommand(db:config:root:)`
     /// (real sqlite + real FITS bytes on disk, `RatingCommandFixture`'s own
@@ -118,6 +129,7 @@ enum ProjectRatingRunner {
         scope: ProjectRatingScope,
         rootURL: URL,
         metadataFactory: @escaping ProjectsStore.MetadataFactory,
+        sharedMetadata: MetadataStore?,
         operationHost: OperationHost,
         mode: FrameRatingMode = .nativeOnly,
         commandFactory: @escaping (URL) throws -> FrameRatingCommand = { try FrameRatingCommand.production(rootURL: $0) }
@@ -144,7 +156,7 @@ enum ProjectRatingRunner {
         }
 
         do {
-            let metadata = try metadataFactory(rootURL)
+            let metadata = try sharedMetadata ?? metadataFactory(rootURL)
             let projects: [ProjectRecord]
             switch scope {
             case .project(let id, _):

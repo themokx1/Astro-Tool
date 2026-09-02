@@ -236,6 +236,92 @@ struct LibraryHealthStoreTests {
         }
     }
 
+    // MARK: - v5 library-switch fixes, item 3: this store used to open its
+    // OWN `MetadataStore` in `load`/`runAudit`/`verifyIntegrity`. That is a
+    // second (third, fourth) confined SQLite connection to a database
+    // `AppModel.currentMetadataStore`'s own doc comment says "is meant to
+    // have one owner at a time", competing with `ProjectsStore`'s with
+    // nothing but `busy_timeout` between them.
+
+    @Test("load reuses the window's already-open metadata store instead of opening its own")
+    func loadPrefersTheSharedMetadataStore() async throws {
+        let fixture = try Self.makeFixture()
+        let calls = MetadataFactoryCallCounter()
+        let store = LibraryHealthStore(
+            metadataFactory: { _ in
+                calls.count += 1
+                return fixture.metadata
+            },
+            queryFactory: { _, metadata, _ in
+                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
+            }
+        )
+        let root = fixture.root.standardizedFileURL
+        store.sharedMetadataProvider = { asked in asked == root ? fixture.metadata : nil }
+
+        await store.load(rootURL: fixture.root)
+
+        #expect(store.snapshot != nil)
+        #expect(calls.count == 0, "the already-open connection must be reused, not a second one opened")
+    }
+
+    @Test("A root the shared provider does not own still falls back to this store's own factory")
+    func loadFallsBackWhenNoSharedStoreIsOpenForThisRoot() async throws {
+        let fixture = try Self.makeFixture()
+        let calls = MetadataFactoryCallCounter()
+        let store = LibraryHealthStore(
+            metadataFactory: { _ in
+                calls.count += 1
+                return fixture.metadata
+            },
+            queryFactory: { _, metadata, _ in
+                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
+            }
+        )
+        // The window's store is open for some OTHER library -- exactly the
+        // mid-switch state where reusing it would answer for the wrong root.
+        store.sharedMetadataProvider = { _ in nil }
+
+        await store.load(rootURL: fixture.root)
+
+        #expect(store.snapshot != nil)
+        #expect(calls.count == 1)
+    }
+
+    @Test("runAudit and verifyIntegrity reuse the shared metadata store too")
+    func auditAndVerifyPreferTheSharedMetadataStore() async throws {
+        let fixture = try Self.makeFixture()
+        let calls = MetadataFactoryCallCounter()
+        let store = LibraryHealthStore(
+            metadataFactory: { _ in
+                calls.count += 1
+                return fixture.metadata
+            },
+            queryFactory: { _, metadata, _ in
+                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
+            },
+            auditCommandFactory: { _, metadata in
+                AuditRunCommand(db: fixture.db, config: fixture.config, metadata: metadata)
+            }
+        )
+        let root = fixture.root.standardizedFileURL
+        store.sharedMetadataProvider = { asked in asked == root ? fixture.metadata : nil }
+        let host = OperationHost(center: OperationCenter())
+
+        await store.runAudit(mode: .full, rootURL: fixture.root, operationHost: host)
+        await host.settle()
+        await store.verifyIntegrity(
+            options: VerifyRunOptions(sampleFraction: nil, fillMissingChecksums: true),
+            rootURL: fixture.root,
+            operationHost: host
+        )
+        await host.settle()
+
+        #expect(store.snapshot?.auditRuns.count == 1)
+        #expect(store.lastVerifySummary?.checked == 1)
+        #expect(calls.count == 0)
+    }
+
     private struct Fixture {
         let root: URL
         let indexDatabase: URL
@@ -276,4 +362,13 @@ struct LibraryHealthStoreTests {
 
 private enum LibraryHealthStoreTestFailure: Error, Equatable {
     case shouldNotBeCalled
+}
+
+/// Counts `LibraryHealthStore`'s own metadata-factory calls. A `@MainActor`
+/// class rather than a captured `var`: the factory closure is
+/// `@MainActor @Sendable`, so it can only capture something Sendable, and a
+/// global-actor-isolated class is.
+@MainActor
+private final class MetadataFactoryCallCounter {
+    var count = 0
 }
