@@ -37,9 +37,54 @@ struct LibrarySwitchRobustnessSurfaceTests {
         #expect(source.contains("@State private var libraryPreparationGeneration = 0"))
         #expect(source.contains("let generation = libraryPreparationGeneration"))
         // One guard per suspension point that is followed by a write: the
-        // gate's wait, `run`'s registration, and `outcome`'s completion.
+        // gate's wait, `run`'s registration, `outcome`'s completion, and
+        // (I9... I2) `adoptRunningPreparation`'s own await of the run it
+        // adopts.
         let occurrences = source.components(separatedBy: "generation == libraryPreparationGeneration").count - 1
-        #expect(occurrences == 3)
+        #expect(occurrences == 4)
+    }
+
+    // MARK: - v5 flow review, I2: select A -> select B -> select A again
+    // published nothing at all. A's runner was stale (B bumped the
+    // generation), B's runner found A selected and bailed on its
+    // `selectedRoot` guard, and the duplicate A request had simply returned.
+
+    @Test("A duplicate request adopts the running preparation's outcome instead of dropping it")
+    func aDuplicateRequestAdoptsTheRunningOutcome() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains("private func adoptRunningPreparation(kind: OperationKind, root: URL, generation: Int) async"))
+        // Both `.skipDuplicate` sites -- the pre-gate check and the one
+        // inside the gate loop -- must adopt rather than return empty.
+        let adoptCalls = source.components(separatedBy: "await adoptRunningPreparation(").count - 1
+        #expect(adoptCalls == 2)
+        // It awaits the run it adopts and applies it through the same one
+        // place the normal path publishes through.
+        #expect(source.contains("let phase = await operationHost.outcome(of: running.id)"))
+        #expect(source.contains("await applyPreparationOutcome(phase, id: running.id, root: root)"))
+        #expect(source.contains("private func applyPreparationOutcome(_ phase: OperationPhase, id: UUID, root: URL) async"))
+    }
+
+    @Test("The failure flag is cleared before the gate, not after it")
+    func theFailureFlagIsClearedBeforeTheGate() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        let clearIndex = try #require(source.range(of: "libraryPreparationDidFail = false"))
+        let gateIndex = try #require(source.range(of: "case .skipDuplicate = LibraryPreparationGate.decision"))
+        #expect(clearIndex.lowerBound < gateIndex.lowerBound, "a stale failure alert must not survive the gate")
+    }
+
+    @Test("A wait winner whose library is no longer selected re-drives the selected one instead of going silent")
+    func aStaleWaitWinnerRedrivesTheSelectedLibrary() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        let body = try #require(
+            source.components(separatedBy: "private func prepareLibrary(root: URL) async {").dropFirst().first
+        )
+        #expect(body.contains("guard onboardingStore.selectedRoot == root else {"))
+        #expect(body.contains("await prepareLibrary(root: selected)"))
+        // The re-drive has to happen BEFORE the pipeline runs -- opening the
+        // stores for an unselected library is the state divergence itself.
+        let redriveIndex = try #require(body.range(of: "await prepareLibrary(root: selected)"))
+        let runIndex = try #require(body.range(of: "let id = await operationHost.run("))
+        #expect(redriveIndex.lowerBound < runIndex.lowerBound)
     }
 
     @Test("A duplicate request for the library already preparing does not invalidate the one in flight")
