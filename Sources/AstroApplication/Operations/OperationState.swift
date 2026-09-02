@@ -70,6 +70,22 @@ public enum OperationKind: Hashable, Sendable {
         if case .rate = self { return true }
         return false
     }
+
+    /// `true` for every library-preparation operation, whatever library it
+    /// names -- the `isRating` counterpart for `.loadHome`, and for the same
+    /// reason.
+    ///
+    /// v5 library-switch fixes (item 1): `V2RootView.prepareLibrary` deduped
+    /// against its OWN `loadHome(library:)` key, so preparing library B
+    /// while A was still preparing sailed straight past that guard and
+    /// started a second concurrent pipeline -- two materializer passes, two
+    /// `projectsStore.open`/`nightsStore.open`/`homeStore.configure` runs,
+    /// and two sets of shell-state writes racing. Exactly one library can be
+    /// prepared at a time, and this is the shared predicate that gate reads.
+    public var isLoadingLibrary: Bool {
+        if case .loadHome = self { return true }
+        return false
+    }
 }
 
 public enum CancellationPolicy: Hashable, Sendable {

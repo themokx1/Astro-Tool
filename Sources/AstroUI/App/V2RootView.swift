@@ -83,6 +83,13 @@ public struct V2RootView: View {
     /// library FAILED and stopped -- otherwise dismissing the alert left it
     /// spinning "Opening the library…" with no way out.
     @State private var libraryPreparationDidFail = false
+    /// v5 library-switch fixes (item 1): bumped by every `prepareLibrary`
+    /// call that actually goes ahead, and re-checked after each of that
+    /// function's awaits. `prepareLibrary` assigns shell state (and calls
+    /// `appModel.libraryDidOpen`) AFTER awaiting the pipeline, so a
+    /// preparation superseded by a newer library must publish nothing --
+    /// the stores now guard their own opens, but these writes live here.
+    @State private var libraryPreparationGeneration = 0
     @State private var didRestoreWindowState = false
     @State private var operationHost = OperationHost(center: OperationCenter())
     /// Wave 4 (post-20014) fix: owned here (once per window, same lifetime
@@ -234,7 +241,31 @@ public struct V2RootView: View {
     /// firing and forgetting.
     private func prepareLibrary(root: URL) async {
         let kind = OperationKind.loadHome(library: root.lastPathComponent)
-        guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else { return }
+        // Checked BEFORE the generation is bumped, on purpose: a `.task(id:)`
+        // re-fire for the library already being prepared changes nothing,
+        // and must not make the running preparation stale and stop it from
+        // publishing its own outcome.
+        if case .skipDuplicate = LibraryPreparationGate.decision(preparing: kind, activeOperations: operationHost.activeOperations) {
+            return
+        }
+        libraryPreparationGeneration += 1
+        let generation = libraryPreparationGeneration
+        // Exactly one library prepares at a time -- see
+        // `LibraryPreparationGate`. Waiting rather than refusing is what
+        // keeps the NEWER library from being dropped on the floor; whoever
+        // is still the newest request when the wait ends is the one that
+        // proceeds.
+        gate: while true {
+            switch LibraryPreparationGate.decision(preparing: kind, activeOperations: operationHost.activeOperations) {
+            case .start:
+                break gate
+            case .skipDuplicate:
+                return
+            case .waitFor(let inFlightID):
+                _ = await operationHost.outcome(of: inFlightID)
+                guard generation == libraryPreparationGeneration else { return }
+            }
+        }
         let projectsStore = self.projectsStore
         let nightsStore = self.nightsStore
         let homeStore = self.homeStore
@@ -261,11 +292,15 @@ public struct V2RootView: View {
                 nightCount: nightsStore.nights.count
             )
         }
+        // `run` only awaits registration, but that is still a suspension
+        // point a newer preparation can start across.
+        guard generation == libraryPreparationGeneration else { return }
         let phase = await operationHost.outcome(of: id)
         // The library that finished preparing might not be the one still
         // selected any more (a `Choose Another Library…`/library switch
-        // raced this pipeline) -- only apply the outcome if it is.
-        guard onboardingStore.selectedRoot == root else { return }
+        // raced this pipeline) -- only apply the outcome if it is, and only
+        // if no newer preparation has taken over in the meantime.
+        guard generation == libraryPreparationGeneration, onboardingStore.selectedRoot == root else { return }
         switch phase {
         case .succeeded:
             appModel.libraryDidOpen(rootURL: root, metadataStore: projectsStore.metadataStore)

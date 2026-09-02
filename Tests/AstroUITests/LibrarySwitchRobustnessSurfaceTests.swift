@@ -20,6 +20,39 @@ struct LibrarySwitchRobustnessSurfaceTests {
         try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
+    // MARK: - Item 1: only one library preparation in flight at a time.
+
+    @Test("prepareLibrary gates on LibraryPreparationGate rather than its own library's key")
+    func prepareLibraryUsesTheGate() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains("LibraryPreparationGate.decision(preparing: kind, activeOperations: operationHost.activeOperations)"))
+        // The old library-specific dedupe must be gone: it is what let a
+        // second preparation start for a DIFFERENT library.
+        #expect(!source.contains("guard !operationHost.activeOperations.contains(where: { $0.kind == kind }) else { return }"))
+    }
+
+    @Test("A superseded preparation publishes nothing after each of its awaits")
+    func prepareLibraryIsGenerationAware() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains("@State private var libraryPreparationGeneration = 0"))
+        #expect(source.contains("let generation = libraryPreparationGeneration"))
+        // One guard per suspension point that is followed by a write: the
+        // gate's wait, `run`'s registration, and `outcome`'s completion.
+        let occurrences = source.components(separatedBy: "generation == libraryPreparationGeneration").count - 1
+        #expect(occurrences == 3)
+    }
+
+    @Test("A duplicate request for the library already preparing does not invalidate the one in flight")
+    func aDuplicateRequestDoesNotBumpTheGeneration() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        // The duplicate check runs BEFORE the generation is bumped -- a
+        // `.task(id:)` re-fire for the same library must not make the
+        // running preparation stale and stop it from publishing.
+        let checkIndex = try #require(source.range(of: "case .skipDuplicate = LibraryPreparationGate.decision"))
+        let bumpIndex = try #require(source.range(of: "libraryPreparationGeneration += 1"))
+        #expect(checkIndex.lowerBound < bumpIndex.lowerBound)
+    }
+
     // MARK: - Item 2: a library switch resets navigation and per-project state.
 
     @Test("A change of open library resets the router and the per-project stores")
