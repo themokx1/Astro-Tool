@@ -173,6 +173,8 @@ struct MobileNearbySyncScreen: View {
             return String(localized: "This Mac no longer matches what this iPhone already trusts. This usually means the Mac was reinstalled or replaced. If you did not expect that, stop here and check your Mac. Otherwise, forget it and pair again — you'll see the six-digit code once more.")
         case .transferFailed:
             return String(localized: "The connection was lost before the sync finished. Nothing changed on either device.")
+        case .connectionStalled:
+            return String(localized: "The connection stalled and was stopped. Nothing changed on either device.")
         case .importFailed:
             return String(localized: "The plan from your Mac could not be brought in safely. Your current plan on this iPhone is unchanged.")
         case .timeout:

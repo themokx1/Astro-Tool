@@ -2855,6 +2855,7 @@
 "This usually means the iPhone was reinstalled or replaced. Forgetting it lets you pair again — you'll see the six-digit code once more." = "Ez általában azt jelenti, hogy az iPhone-t újratelepítették vagy lecserélték. Ha elfelejted, újra párosíthatod — a hatjegyű kód ismét megjelenik.";
 "Forget this iPhone and pair again" = "iPhone elfelejtése és újrapárosítás";
 "The transfer could not complete." = "Az átvitel nem fejeződött be.";
+"The connection stalled. Nothing was changed." = "A kapcsolat elakadt. Semmi nem változott.";
 "The reviewed changes were not applied." = "Az ellenőrzött módosítások nem kerültek alkalmazásra.";
 "The connection timed out." = "A kapcsolat időtúllépés miatt megszakadt.";
 "Sync was cancelled." = "A szinkronizálást megszakítottuk.";

@@ -48,6 +48,10 @@ enum MobileNearbySyncUIFailure: Equatable {
     /// exactly which trusted peer to remove.
     case identityChanged(deviceID: UUID)
     case transferFailed
+    /// A `send`/`receive` during the post-handshake transfer idled past its
+    /// own timeout -- a stalled Wi-Fi link, or a Mac that paired and then
+    /// went silent. Distinct from `.transferFailed` (fix item 4).
+    case connectionStalled
     case importFailed
     case timeout
     case cancelled
@@ -63,6 +67,7 @@ enum MobileNearbySyncUIFailure: Equatable {
         case .pairingRejected: self = .pairingRejected
         case .identityChanged(let deviceID): self = .identityChanged(deviceID: deviceID)
         case .transferFailed: self = .transferFailed
+        case .connectionStalled: self = .connectionStalled
         case .importFailed: self = .importFailed
         case .timeout: self = .timeout
         case .cancelled: self = .cancelled

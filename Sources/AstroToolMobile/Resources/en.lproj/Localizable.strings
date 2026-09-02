@@ -181,6 +181,7 @@
 "The code was not confirmed on both devices. Nothing was sent or received." = "The code was not confirmed on both devices. Nothing was sent or received.";
 "This Mac no longer matches what this iPhone already trusts. This usually means the Mac was reinstalled or replaced. If you did not expect that, stop here and check your Mac. Otherwise, forget it and pair again — you'll see the six-digit code once more." = "This Mac no longer matches what this iPhone already trusts. This usually means the Mac was reinstalled or replaced. If you did not expect that, stop here and check your Mac. Otherwise, forget it and pair again — you'll see the six-digit code once more.";
 "The connection was lost before the sync finished. Nothing changed on either device." = "The connection was lost before the sync finished. Nothing changed on either device.";
+"The connection stalled and was stopped. Nothing changed on either device." = "The connection stalled and was stopped. Nothing changed on either device.";
 "The plan from your Mac could not be brought in safely. Your current plan on this iPhone is unchanged." = "The plan from your Mac could not be brought in safely. Your current plan on this iPhone is unchanged.";
 "This took too long and was stopped. Nothing changed on either device." = "This took too long and was stopped. Nothing changed on either device.";
 "The connection was stopped." = "The connection was stopped.";

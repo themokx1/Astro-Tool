@@ -650,6 +650,7 @@ public struct MobileSyncView: View {
         case .pairingRejected: "Pairing was declined."
         case .identityChanged: "This iPhone's saved identity no longer matches."
         case .transferFailed: "The transfer could not complete."
+        case .connectionStalled: "The connection stalled. Nothing was changed."
         case .applyRefused: "The reviewed changes were not applied."
         case .timeout: "The connection timed out."
         case .cancelled: "Sync was cancelled."

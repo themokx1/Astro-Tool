@@ -16,8 +16,18 @@ public enum NearbySyncFailure: Equatable, Sendable {
     /// without a second round trip to look it up.
     case identityChanged(deviceID: UUID)
     /// The authenticated handshake, the forward-snapshot publish, or the
-    /// wire-level package transfer itself failed.
+    /// wire-level package transfer itself failed for a reason other than an
+    /// idle stall (a corrupted/rejected chunk stream, a closed connection,
+    /// staging failure, etc).
     case transferFailed
+    /// A `NearbySecureChannel` `send`/`receive` during the post-handshake
+    /// transfer (forward publish, return receive) idled past its own
+    /// `ioTimeout` (`NearbyTransportError.transferTimeout`) — a stalled Wi-Fi
+    /// link, or a peer that paired and then went silent, rather than a
+    /// rejected or malformed transfer. Distinct from `.transferFailed` so
+    /// the UI can say plainly that the CONNECTION stalled, not that
+    /// something about the data was wrong.
+    case connectionStalled
     /// A return package was received and previewed, but the session ended
     /// without a confirmed apply — the user dismissed the review, rejected
     /// it, or the apply itself failed. Nothing phone-side was acknowledged.
@@ -385,7 +395,7 @@ public actor NearbySyncCoordinator {
             try await packageTransport.sendStaged(packageDirectory: packageDestination, packageID: publication.packageID, wrapping: wrapping)
         } catch {
             try? fileManager.removeItem(at: sendSessionDirectory)
-            finishTerminal(.failed(.transferFailed))
+            finishTerminal(.failed(Self.mapTransferFailure(error)))
             await listenerStop()
             return
         }
@@ -398,7 +408,7 @@ public actor NearbySyncCoordinator {
                 try await previewReturnClosure(directory, wrapping)
             }
         } catch {
-            finishTerminal(.failed(.transferFailed))
+            finishTerminal(.failed(Self.mapTransferFailure(error)))
             await listenerStop()
             return
         }
@@ -435,6 +445,17 @@ public actor NearbySyncCoordinator {
         eventContinuation?.yield(event)
         eventContinuation?.finish()
         eventContinuation = nil
+    }
+
+    /// Maps a failure from the post-handshake transfer phase (forward
+    /// publish + send, or the return receive) to `.connectionStalled` for an
+    /// idle-timeout specifically, `.transferFailed` for everything else —
+    /// see `NearbySyncFailure.connectionStalled`'s own doc comment.
+    private static func mapTransferFailure(_ error: Error) -> NearbySyncFailure {
+        if let transportError = error as? NearbyTransportError, transportError == .transferTimeout {
+            return .connectionStalled
+        }
+        return .transferFailed
     }
 
     private static func mapHandshakeFailure(_ error: Error) -> NearbySyncFailure {

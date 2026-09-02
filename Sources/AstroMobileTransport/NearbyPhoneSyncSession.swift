@@ -20,8 +20,17 @@ public enum NearbyPhoneSyncFailure: Equatable, Sendable {
     /// offer "Forget this Mac and pair again" (`forgetPeer(deviceID:)`)
     /// without a second round trip to look it up.
     case identityChanged(deviceID: UUID)
-    /// The handshake, or the wire-level exchange of package bytes, failed.
+    /// The handshake, or the wire-level exchange of package bytes, failed
+    /// for a reason other than an idle stall.
     case transferFailed
+    /// A `NearbySecureChannel` `send`/`receive` during the post-handshake
+    /// transfer idled past its own `ioTimeout`
+    /// (`NearbyTransportError.transferTimeout`) — a stalled Wi-Fi link, or a
+    /// Mac that paired and then went silent, rather than a rejected or
+    /// malformed transfer. Distinct from `.transferFailed` so the UI can say
+    /// plainly that the CONNECTION stalled, not that something about the
+    /// data was wrong.
+    case connectionStalled
     /// The forward package arrived and was hash-verified at the wire layer,
     /// but the caller's own handling of it (staging and importing through
     /// `MobileLibraryStore`) failed — an unrelated library, a stale
@@ -363,14 +372,14 @@ public actor NearbyPhoneSyncSession {
                     wrapping: returnPackage.wrapping
                 )
             } catch {
-                finishTerminal(.failed(.transferFailed))
+                finishTerminal(.failed(Self.mapPackageFailure(error)))
                 return
             }
         } else {
             do {
                 try await outcome.channel.send(.acknowledgement(NearbyAcknowledgementMessage(acknowledgedChangeIDs: [])))
             } catch {
-                finishTerminal(.failed(.transferFailed))
+                finishTerminal(.failed(Self.mapPackageFailure(error)))
                 return
             }
         }
@@ -416,7 +425,11 @@ public actor NearbyPhoneSyncSession {
     private static func mapPackageFailure(_ error: Error) -> NearbyPhoneSyncFailure {
         if error is NearbyPackageTransportError { return .transferFailed }
         if let transportError = error as? NearbyTransportError {
-            return transportError == .handshakeTimeout ? .timeout : .transferFailed
+            switch transportError {
+            case .handshakeTimeout: return .timeout
+            case .transferTimeout: return .connectionStalled
+            default: return .transferFailed
+            }
         }
         return .importFailed
     }

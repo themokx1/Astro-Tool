@@ -256,6 +256,57 @@ struct NearbyPhoneSyncSessionTests {
         #expect(residue.isEmpty)
     }
 
+    @Test("a Mac that pairs and then goes silent stalls the transfer, and is reported distinctly from a hard connection drop")
+    func stalledMacAfterPairingReportsConnectionStalledDistinctFromTransferFailed() async throws {
+        let (macConnection, phoneConnection) = InMemoryDuplexConnection.makePair()
+        let macStore = InMemoryDeviceIdentityStore()
+        let phoneStore = InMemoryDeviceIdentityStore()
+        let macIdentity = try macStore.loadOrCreateOwnIdentity(displayName: "Zoltán Macje")
+        let phoneIdentity = try phoneStore.loadOrCreateOwnIdentity(displayName: "Zoltán iPhone")
+        let phoneStaging = try TemporaryDirectory()
+
+        // Short so the idle-timeout the phone's channel inherits from this
+        // `timeout` fires quickly instead of the test waiting out a real
+        // 30s stall.
+        let phoneSession = NearbyPhoneSyncSession(
+            identity: phoneIdentity,
+            trustStore: phoneStore,
+            connect: { _ in phoneConnection },
+            packageService: MobilePackageService(),
+            stagingDirectory: phoneStaging.url,
+            timeout: .milliseconds(300)
+        )
+
+        let driveTask = Task { () throws -> Void in
+            let session = NearbyPairingSession(role: .listener, identity: macIdentity, trustStore: macStore, connection: macConnection, timeout: .milliseconds(300))
+            async let outcome = session.establish()
+            _ = try await session.shortAuthenticationCode
+            await session.confirmPairing()
+            _ = try await outcome
+            // The pairing itself completes normally, but the Mac never
+            // sends the forward package's `.packageManifest` -- standing in
+            // for a stalled Wi-Fi link, or the Mac app being backgrounded
+            // right after handshake but before any package bytes cross the
+            // wire. Deliberately never touches the channel/connection again
+            // (unlike `midTransferDropFailsClosedWithoutResidue`, which
+            // cancels the connection outright).
+        }
+
+        var collected: [NearbyPhoneSyncState] = []
+        for await state in await phoneSession.run(handleForwardPackage: { _, _ in nil }) {
+            collected.append(state)
+            if case .pairingCode = state { await phoneSession.confirmPairing() }
+        }
+        try await driveTask.value
+
+        // Distinct from `.transferFailed` (the hard-drop case above): an
+        // idle stall gets its own reason so the UI can say plainly that the
+        // CONNECTION stalled, not that the data was rejected or malformed.
+        #expect(collected.last == .failed(.connectionStalled))
+        let residue = try FileManager.default.contentsOfDirectory(atPath: phoneStaging.url.path)
+        #expect(residue.isEmpty)
+    }
+
     @Test("cancel while still searching ends the stream with exactly one failed(.cancelled) state")
     func cancelFromSearchingEndsCancelled() async throws {
         let phoneStore = InMemoryDeviceIdentityStore()

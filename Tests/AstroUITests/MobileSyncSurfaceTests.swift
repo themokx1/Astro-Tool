@@ -195,4 +195,22 @@ struct MobileSyncSurfaceTests {
         #expect(rootView.contains("case backgrounded"))
         #expect(screen.contains("Sync stopped because the app went to the background"))
     }
+
+    // MARK: - Fix 4: stall timeout in the transfer phase
+
+    @Test("A post-handshake idle stall is reported distinctly from a generic transfer failure, on both Mac and iPhone")
+    func connectionStalledIsMappedDistinctlyFromTransferFailed() throws {
+        let coordinator = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/MobileSync/NearbySyncCoordinator.swift"), encoding: .utf8)
+        let session = try String(contentsOf: root.appendingPathComponent("Sources/AstroMobileTransport/NearbyPhoneSyncSession.swift"), encoding: .utf8)
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+
+        #expect(coordinator.contains("case connectionStalled"))
+        #expect(coordinator.contains("mapTransferFailure"))
+        #expect(coordinator.contains("transportError == .transferTimeout"))
+        #expect(session.contains("case connectionStalled"))
+        #expect(session.contains("case .transferTimeout: return .connectionStalled"))
+        #expect(view.contains("case .connectionStalled: \"The connection stalled. Nothing was changed.\""))
+        #expect(screen.contains("case .connectionStalled:"))
+    }
 }

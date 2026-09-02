@@ -176,6 +176,7 @@
 "The code was not confirmed on both devices. Nothing was sent or received." = "A kódot nem erősítették meg mindkét eszközön. Semmi nem lett elküldve vagy fogadva.";
 "This Mac no longer matches what this iPhone already trusts. This usually means the Mac was reinstalled or replaced. If you did not expect that, stop here and check your Mac. Otherwise, forget it and pair again — you'll see the six-digit code once more." = "Ez a Mac már nem egyezik azzal, amit ez az iPhone eddig megbízhatónak tartott. Ez általában azt jelenti, hogy a Macet újratelepítették vagy lecserélték. Ha ezt nem vártad, itt állj meg, és ellenőrizd a Macet. Egyébként felejtsd el, és párosítsd újra — a hatjegyű kód ismét megjelenik.";
 "The connection was lost before the sync finished. Nothing changed on either device." = "A kapcsolat megszakadt a szinkronizálás befejezése előtt. Egyik eszközön sem történt változás.";
+"The connection stalled and was stopped. Nothing changed on either device." = "A kapcsolat elakadt, ezért megállt. Egyik eszközön sem történt változás.";
 "The plan from your Mac could not be brought in safely. Your current plan on this iPhone is unchanged." = "A Macről érkező terv biztonságosan nem volt behozható. Az iPhone jelenlegi terve változatlan.";
 "This took too long and was stopped. Nothing changed on either device." = "Ez túl sokáig tartott, ezért megszakadt. Egyik eszközön sem történt változás.";
 "The connection was stopped." = "A kapcsolat megszakadt.";

@@ -311,8 +311,15 @@ struct NearbySyncCoordinatorTests {
         }
         try await silentPhoneTask
 
+        // The phone never answers `receiveOptionalReturn`'s `channel.receive()`
+        // call, so this times out via the channel's own per-I/O `ioTimeout`
+        // (threaded from `handshakeTimeout` above) rather than hanging --
+        // and, since that is a `NearbyTransportError.transferTimeout`
+        // specifically (not just any transfer failure), it must map to the
+        // distinct `.connectionStalled` reason (fix item 4), not the
+        // generic `.transferFailed` a corrupted/rejected transfer gets.
         #expect(firstCollected.last.map {
-            if case .failed(.transferFailed) = $0 { return true }; return false
+            if case .failed(.connectionStalled) = $0 { return true }; return false
         } == true)
 
         // A completely fresh `startAdvertising` cycle on the SAME
