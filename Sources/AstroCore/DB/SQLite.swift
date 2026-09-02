@@ -48,6 +48,17 @@ public struct SQLiteRow {
 public final class SQLiteDB {
     private var handle: OpaquePointer?
 
+    /// The journal mode actually in effect, read back from SQLite itself
+    /// rather than assumed from the PRAGMA request. On a network share
+    /// (SMB/NFS) a `journal_mode=WAL` request can be silently refused by
+    /// SQLite (it falls back to the previous mode) or accepted only to fail
+    /// later with SQLITE_IOERR_SHMOPEN when the shared-memory file can't be
+    /// mapped -- callers/diagnostics that need to know whether WAL is really
+    /// active should read this instead of assuming the PRAGMA took effect.
+    /// `nil` for `:memory:` and for the read-only policy, where journal mode
+    /// is not managed here.
+    public private(set) var journalMode: String?
+
     private enum OpenPolicy {
         case standard
         case confinedIndex
@@ -122,16 +133,35 @@ public final class SQLiteDB {
         if path != ":memory:" {
             switch policy {
             case .standard:
-                try exec("PRAGMA busy_timeout=5000;")
-                try exec("PRAGMA journal_mode=WAL;")
+                try exec("PRAGMA busy_timeout=30000;")
+                journalMode = try Self.setJournalModeWithFallback(on: self)
             case .confinedIndex:
-                try exec("PRAGMA busy_timeout=5000;")
+                try exec("PRAGMA busy_timeout=30000;")
                 try exec("PRAGMA journal_mode=MEMORY;")
                 try exec("PRAGMA temp_store=MEMORY;")
+                journalMode = "memory"
             case .readOnly:
-                try exec("PRAGMA busy_timeout=5000;")
+                try exec("PRAGMA busy_timeout=30000;")
             }
         }
+    }
+
+    /// Requests WAL, then reads the mode SQLite actually settled on -- on a
+    /// network share the request can be silently downgraded. If it isn't
+    /// "wal", falls back to TRUNCATE (still crash-safe, and works reliably
+    /// over SMB/NFS unlike WAL's shared-memory file) rather than leaving the
+    /// database on whatever mode SQLite happened to pick.
+    private static func setJournalModeWithFallback(on db: SQLiteDB) throws -> String {
+        var mode = ""
+        try db.query("PRAGMA journal_mode=WAL;") { row in
+            mode = (row.string(0) ?? "").lowercased()
+        }
+        guard mode != "wal" else { return mode }
+
+        try db.query("PRAGMA journal_mode=TRUNCATE;") { row in
+            mode = (row.string(0) ?? "").lowercased()
+        }
+        return mode
     }
 
     deinit {

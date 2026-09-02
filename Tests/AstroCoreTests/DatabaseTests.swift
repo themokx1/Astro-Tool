@@ -98,6 +98,24 @@ private func indexCountRecord(
     #expect(seenB == "hello")
 }
 
+/// On local disk WAL is expected to succeed outright, so `journalMode`
+/// should reflect "wal" rather than needing the network-share fallback.
+@Test func sqliteDBReportsWALJournalModeOnLocalDisk() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-sqlite-journal-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("wal.sqlite").path
+
+    let db = try SQLiteDB(path: path)
+
+    #expect(db.journalMode == "wal")
+
+    var busyTimeout: Int64?
+    try db.query("PRAGMA busy_timeout;") { busyTimeout = $0.int64(0) }
+    #expect(busyTimeout == 30000)
+}
+
 @Test func sqliteDBLastInsertRowIDTracksAutoIncrement() throws {
     let db = try SQLiteDB(path: ":memory:")
     try db.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, a TEXT);")
