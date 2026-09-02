@@ -163,8 +163,26 @@ public final class LiveNightWatcher: @unchecked Sendable {
     /// a superseded start cancels the operation it just registered instead
     /// of publishing a second polling loop after the newer transition won.
     private var watchTransitionGeneration = 0
-    private var settingsObserver: NSObjectProtocol?
+    /// `nonisolated(unsafe)`: only ever mutated on the main actor, but
+    /// `deinit` is always `nonisolated` and has to read it to unregister --
+    /// the same shape `PlanningStore.defaultsObserver` already uses, and safe
+    /// for the same reason (nothing else can reach the object by then).
+    private nonisolated(unsafe) var settingsObserver: NSObjectProtocol?
     private let pollIntervalSeconds: Double
+    private let securityScopedAccess: SecurityScopedAccess
+    /// The folder whose security scope this watcher currently HOLDS -- `nil`
+    /// when it holds none. Distinct from `folderURL`: a scope can fail to
+    /// start (a plain local folder, or a stale bookmark), and stopping one
+    /// that never started is exactly the imbalance this tracks away.
+    /// `nonisolated(unsafe)` for the same `deinit` reason as
+    /// `settingsObserver`.
+    private nonisolated(unsafe) var scopedFolderURL: URL?
+    /// The raw bookmark blob `refreshFromSettings` last acted on. Every
+    /// defaults write in the app posts `UserDefaults.didChangeNotification`,
+    /// so this cheap comparison is what keeps an unrelated toggle from
+    /// re-resolving the bookmark (which can touch a network share) on every
+    /// single change.
+    private var configuredFolderBookmark: Data?
 
     public init(
         lister: LiveNightFolderLister = FileManagerLiveNightFolderLister(),
@@ -181,6 +199,7 @@ public final class LiveNightWatcher: @unchecked Sendable {
         },
         matchProject: @escaping @Sendable (String, [ProjectRecord]) -> IngestSuggestionEngine.ProjectMatch? =
             IngestSuggestionEngine.matchProject,
+        securityScopedAccess: SecurityScopedAccess = .production,
         now: @escaping @Sendable () -> Date = Date.init,
         idleThreshold: TimeInterval = 20 * 60,
         pollIntervalSeconds: Double = 20
@@ -190,9 +209,23 @@ public final class LiveNightWatcher: @unchecked Sendable {
         self.readRawMeta = readRawMeta
         self.quickStarProxyRadius = quickStarProxyRadius
         self.matchProject = matchProject
+        self.securityScopedAccess = securityScopedAccess
         self.now = now
         self.idleThreshold = idleThreshold
         self.pollIntervalSeconds = pollIntervalSeconds
+    }
+
+    deinit {
+        // `NotificationCenter` holds the observer block, so without this the
+        // watcher is kept alive by (and keeps reacting to) every defaults
+        // write for the rest of the process; an unreleased security scope is
+        // a kernel-side leak the app cannot recover either.
+        if let settingsObserver {
+            NotificationCenter.default.removeObserver(settingsObserver)
+        }
+        if let scopedFolderURL {
+            securityScopedAccess.stop(scopedFolderURL)
+        }
     }
 
     public func updateLibraryContext(_ context: LibraryContext?) {
@@ -204,14 +237,30 @@ public final class LiveNightWatcher: @unchecked Sendable {
     /// per-session accumulator -- pure state assignment, no `OperationHost`
     /// involved, so tests can drive a session with just this plus
     /// `pollNow()`, never a real timer or a real registered operation.
+    ///
+    /// Also the ONE place the watched folder's security scope is started and
+    /// stopped -- this is the only place `folderURL` changes, so pairing the
+    /// scope with it here is what keeps start and stop balanced no matter
+    /// which caller (Settings refresh, `startWatching`, `stopWatching`,
+    /// `deinit`) drives the transition.
     public func configureFolder(_ url: URL?) {
         let standardized = url?.standardizedFileURL
         guard folderURL != standardized else { return }
+        releaseScopedFolder()
         folderURL = standardized
+        if let standardized, securityScopedAccess.start(standardized) {
+            scopedFolderURL = standardized
+        }
         session = LiveNightSessionModel()
         pendingSizes = [:]
         confirmedPaths = []
         refreshGoal()
+    }
+
+    private func releaseScopedFolder() {
+        guard let scopedFolderURL else { return }
+        securityScopedAccess.stop(scopedFolderURL)
+        self.scopedFolderURL = nil
     }
 
     /// Registers the watch loop with `OperationHost` under `.liveNightWatch`
@@ -284,10 +333,23 @@ public final class LiveNightWatcher: @unchecked Sendable {
     private func refreshFromSettings(defaults: UserDefaults = .standard) async {
         guard let operationHost = boundOperationHost else { return }
         let enabled = defaults.bool(forKey: LiveNightWatcherSettings.enabledDefaultsKey)
-        guard enabled, let folder = Self.resolveConfiguredFolder(defaults: defaults) else {
+        let bookmark = defaults.data(forKey: LiveNightWatcherSettings.folderBookmarkDefaultsKey)
+        guard enabled, let bookmark else {
+            configuredFolderBookmark = nil
             if folderURL != nil { await stopWatching(operationHost: operationHost) }
             return
         }
+        // This runs for EVERY defaults write anywhere in the app, so the
+        // "did the configured folder actually change?" question is answered
+        // from the raw blob first -- resolving a bookmark can spin up a
+        // network mount, and used to happen on every unrelated toggle.
+        guard bookmark != configuredFolderBookmark || folderURL == nil else { return }
+        guard let folder = Self.resolveConfiguredFolder(defaults: defaults) else {
+            configuredFolderBookmark = nil
+            if folderURL != nil { await stopWatching(operationHost: operationHost) }
+            return
+        }
+        configuredFolderBookmark = bookmark
         guard folder != folderURL else { return }
         await startWatching(folder: folder, operationHost: operationHost)
     }
@@ -297,13 +359,19 @@ public final class LiveNightWatcher: @unchecked Sendable {
     /// back into an accessible `URL` -- the same
     /// `URL(resolvingBookmarkData:options:relativeTo:bookmarkDataIsStale:)`
     /// call `AppState`'s own root-folder bookmark resolution uses.
+    ///
+    /// A PURE resolve: it deliberately does not start the security-scoped
+    /// access, which it used to. Being `static`, it has nowhere to remember
+    /// the accessed URL, so every call leaked one unbalanced scope -- and its
+    /// caller ran on every `UserDefaults.didChangeNotification`. The scope
+    /// is now started and stopped by `configureFolder(_:)`, which owns the
+    /// watched folder's whole lifetime.
     public static func resolveConfiguredFolder(defaults: UserDefaults = .standard) -> URL? {
         guard let data = defaults.data(forKey: LiveNightWatcherSettings.folderBookmarkDefaultsKey) else { return nil }
         var isStale = false
         guard let url = try? URL(
             resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale
         ) else { return nil }
-        _ = url.startAccessingSecurityScopedResource()
         return url.standardizedFileURL
     }
 

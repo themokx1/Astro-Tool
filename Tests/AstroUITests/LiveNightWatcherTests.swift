@@ -70,13 +70,17 @@ private func makeWatcher(
     rawMeta: (exposureSeconds: Double?, captureDate: Date?) = (60, nil),
     proxyRadius: Double? = 2.5,
     now: @escaping @Sendable () -> Date = Date.init,
-    idleThreshold: TimeInterval = 1200
+    idleThreshold: TimeInterval = 1200,
+    /// `.inactive` by default: these folders are synthetic, so a real
+    /// `startAccessingSecurityScopedResource` would only ever return false.
+    securityScopedAccess: SecurityScopedAccess = .inactive
 ) -> LiveNightWatcher {
     LiveNightWatcher(
         lister: lister,
         readFITSExposureSeconds: { _ in fitsExposure },
         readRawMeta: { _ in rawMeta },
         quickStarProxyRadius: { _ in proxyRadius },
+        securityScopedAccess: securityScopedAccess,
         now: now,
         idleThreshold: idleThreshold,
         pollIntervalSeconds: 9999 // never actually fires in a test -- only pollNow() is called directly.
@@ -289,6 +293,129 @@ struct LiveNightWatcherTests {
         #expect(watcher.matchedProjectName == nil)
         #expect(watcher.currentGoalEstimate() == nil)
     }
+}
+
+/// The watcher's `UserDefaults.didChangeNotification` observer fires on
+/// EVERY defaults write anywhere in the app, and it used to resolve the
+/// configured bookmark -- starting a security-scoped access -- before it
+/// checked whether the folder had even changed, with no matching stop
+/// anywhere in the type. One leaked kernel scope per keystroke in Settings,
+/// plus a `NotificationCenter` block that outlived the watcher because
+/// nothing removed it. These pin the balance.
+@Suite("LiveNightWatcher security scope and observer lifetime")
+@MainActor
+struct LiveNightWatcherScopeTests {
+    private var repositoryRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+    }
+
+    private func source() throws -> String {
+        try String(
+            contentsOf: repositoryRoot
+                .appendingPathComponent("Sources/AstroUI/Features/LiveNight/LiveNightWatcher.swift"),
+            encoding: .utf8
+        )
+    }
+
+    @Test("Access starts once per watched folder and stops when the folder changes or the watch ends")
+    func scopedAccessIsBalanced() {
+        let probe = ScopedAccessProbe()
+        let watcher = makeWatcher(lister: FakeFolderLister(), securityScopedAccess: probe.client)
+
+        watcher.configureFolder(watchedFolder("M31"))
+        #expect(probe.startedURLs == [watchedFolder("M31")])
+        #expect(probe.stoppedURLs.isEmpty)
+
+        // Re-configuring the same folder must not stack a second scope.
+        watcher.configureFolder(watchedFolder("M31"))
+        #expect(probe.startedURLs == [watchedFolder("M31")])
+
+        watcher.configureFolder(watchedFolder("M42"))
+        #expect(probe.stoppedURLs == [watchedFolder("M31")], "the previous folder's scope is released before the next starts")
+        #expect(probe.startedURLs == [watchedFolder("M31"), watchedFolder("M42")])
+
+        watcher.configureFolder(nil)
+        #expect(probe.stoppedURLs == [watchedFolder("M31"), watchedFolder("M42")])
+        #expect(probe.startedURLs.count == 2, "clearing the folder starts nothing")
+    }
+
+    @Test("stopWatching releases the security scope it started")
+    func stopWatchingReleasesScope() async {
+        let probe = ScopedAccessProbe()
+        let watcher = makeWatcher(lister: FakeFolderLister(), securityScopedAccess: probe.client)
+        let host = OperationHost(center: OperationCenter())
+
+        await watcher.startWatching(folder: watchedFolder("M31"), operationHost: host)
+        #expect(probe.startedURLs == [watchedFolder("M31")])
+
+        await watcher.stopWatching(operationHost: host)
+        #expect(probe.stoppedURLs == [watchedFolder("M31")])
+    }
+
+    @Test("resolveConfiguredFolder is a pure resolve -- it never starts an access nobody can stop")
+    func resolveConfiguredFolderStartsNoAccess() throws {
+        let source = try source()
+        let body = try #require(
+            source.components(separatedBy: "public static func resolveConfiguredFolder").dropFirst().first
+        )
+        #expect(
+            !body.contains("startAccessingSecurityScopedResource"),
+            "a static resolver has nowhere to store the accessed URL, so its scope can never be balanced"
+        )
+    }
+
+    @Test("refreshFromSettings compares the stored bookmark before it resolves anything")
+    func refreshComparesBookmarkBeforeResolving() throws {
+        let source = try source()
+        let body = try #require(
+            source.components(separatedBy: "private func refreshFromSettings").dropFirst().first?
+                .components(separatedBy: "\n    }").first
+        )
+        let comparison = try #require(body.range(of: "configuredFolderBookmark"))
+        let resolve = try #require(body.range(of: "resolveConfiguredFolder"))
+        #expect(
+            comparison.lowerBound < resolve.lowerBound,
+            "every UserDefaults write reaches here, so the cheap blob comparison must gate the resolve"
+        )
+    }
+
+    @Test("deinit removes the settings observer and releases any held scope")
+    func deinitCleansUp() throws {
+        let source = try source()
+        let body = try #require(
+            source.components(separatedBy: "\n    deinit {").dropFirst().first?
+                .components(separatedBy: "\n    }").first
+        )
+        #expect(body.contains("removeObserver"))
+        #expect(body.contains("securityScopedAccess.stop"))
+    }
+}
+
+/// Records the start/stop calls `LiveNightWatcher` makes through its
+/// injected `SecurityScopedAccess` seam -- same probe shape
+/// `V2OnboardingTests` already uses for `OnboardingStore`.
+private final class ScopedAccessProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var started: [URL] = []
+    private var stopped: [URL] = []
+
+    var client: SecurityScopedAccess {
+        SecurityScopedAccess(
+            start: { [weak self] url in
+                self?.lock.withLock { self?.started.append(url) }
+                return true
+            },
+            stop: { [weak self] url in
+                self?.lock.withLock { self?.stopped.append(url) }
+            }
+        )
+    }
+
+    var startedURLs: [URL] { lock.withLock { started } }
+    var stoppedURLs: [URL] { lock.withLock { stopped } }
 }
 
 @Suite("LiveNightNightKey")
