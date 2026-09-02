@@ -131,6 +131,39 @@ private func captureTestGroup(
     #expect(fetched.updatedAt == 300)
 }
 
+/// `capture_groups.target` is canonicalized to NFC up front by
+/// `upsertCaptureGroup`/`captureGroup(target:...)`/`captureGroups(target:
+/// ...)`, same as `addTag`/`upsertSessionNotes` (schema v13) -- a caller
+/// still holding an NFD spelling (e.g. from an HFS+-sourced string
+/// elsewhere in the app) must land on the same row a canonical caller
+/// would, in both directions.
+@Test func captureGroupAccessorsCanonicalizeAnNFDTargetArgument() throws {
+    let nfd = "Café_1396".decomposedStringWithCanonicalMapping
+    let nfc = "Café_1396".precomposedStringWithCanonicalMapping
+    #expect(Array(nfd.utf8) != Array(nfc.utf8), "fixture precondition: NFD and NFC byte forms must actually differ")
+
+    let database = try Database(path: ":memory:")
+    var group = captureTestGroup()
+    group.target = nfd
+    let id = try database.upsertCaptureGroup(group)
+
+    #expect(try database.captureGroup(target: nfc, date: "2026-08-08", slug: "sv220-nb")?.id == id)
+    #expect(try database.captureGroups(target: nfc, date: "2026-08-08").map(\.id) == [id])
+    // The reverse direction too: writing under NFC, reading back with NFD.
+    var second = captureTestGroup(slug: "second", name: "Second")
+    second.target = nfc
+    let secondID = try database.upsertCaptureGroup(second)
+    #expect(try database.captureGroup(target: nfd, date: "2026-08-08", slug: "second")?.id == secondID)
+
+    // The stored row itself is the canonical spelling, not just tolerated
+    // at read time.
+    var storedTarget: String?
+    try database.db.query("SELECT target FROM capture_groups WHERE id = ?;", bind: [.int(id)]) {
+        storedTarget = $0.string(0)
+    }
+    #expect(Array((storedTarget ?? "").utf8) == Array(nfc.utf8))
+}
+
 @Test func captureGroupsAreScopedAndSortedByDisplayName() throws {
     let database = try Database(path: ":memory:")
     _ = try database.upsertCaptureGroup(captureTestGroup(slug: "sv220", name: "SV220"))

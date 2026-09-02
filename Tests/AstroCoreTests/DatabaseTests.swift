@@ -1374,6 +1374,106 @@ private func makeV12FixturePath(named name: String) throws -> String {
     #expect(rowCount == 2, "the duplicate 'favorite' tag must collapse to one row")
 }
 
+/// `capture_groups.target` has no `files.id` to hang healing off either
+/// (see `Database.canonicalizeCaptureGroupsTargets`'s doc comment), so a
+/// row left keyed on a decomposed target by a pre-normalization write must
+/// be rewritten by the same v12->v13 step, not just tolerated at read time.
+@Test func migrateV12ToV13MakesNFDKeyedCaptureGroupReachableByNFCTarget() throws {
+    let nfd = "Csillagköd".decomposedStringWithCanonicalMapping
+    let nfc = "Csillagköd".precomposedStringWithCanonicalMapping
+    #expect(Array(nfd.utf8) != Array(nfc.utf8), "fixture precondition: NFD and NFC byte forms must actually differ")
+
+    let path = try makeV12FixturePath(named: "capture-group")
+    defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.run(
+            """
+            INSERT INTO capture_groups(
+              target, session_date, slug, display_name, sensor_mode, signal_mode, created_at, updated_at)
+            VALUES (?, '2026-01-01', 'sv220', 'SV220', 'osc', 'dual_band', 100, 100);
+            """,
+            bind: [.text(nfd)]
+        )
+    }
+
+    let database = try Database(path: path)
+
+    var version: Int64 = -1
+    try database.db.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? -1 }
+    #expect(version == 13)
+
+    // Reachable under the canonical (NFC) key, exactly what a caller with a
+    // normally-typed target string would pass in.
+    #expect(try database.captureGroups(target: nfc, date: "2026-01-01").map(\.displayName) == ["SV220"])
+    #expect(try database.captureGroup(target: nfc, date: "2026-01-01", slug: "sv220")?.displayName == "SV220")
+
+    var storedTarget: String?
+    try database.db.query("SELECT target FROM capture_groups LIMIT 1;") { storedTarget = $0.string(0) }
+    #expect(Array((storedTarget ?? "").utf8) == Array(nfc.utf8))
+}
+
+/// Two `capture_groups` rows that canonicalize onto the SAME `(target,
+/// session_date, slug)` -- the table's own `UNIQUE` index -- can't both be
+/// merged the way `session_notes`/`tags` rows are, because a group's id is a
+/// foreign key `capture_sources`/`file_capture_assignments` depend on. The
+/// row that already has dependents wins; the loser's own dependents are
+/// re-pointed to the winner's id before the loser row is deleted, so no
+/// folder mapping is silently dropped.
+@Test func migrateV12ToV13ResolvesCaptureGroupsCollisionByRepointingDependentsToTheRowThatHasThem() throws {
+    let nfd = "Csillagköd".decomposedStringWithCanonicalMapping
+    let nfc = "Csillagköd".precomposedStringWithCanonicalMapping
+
+    let path = try makeV12FixturePath(named: "capture-group-collision")
+    defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    do {
+        let raw = try SQLiteDB(path: path)
+        // Written in this order -- the NFD row (with ONE dependent source)
+        // first, then the NFC row (with TWO dependent sources) -- so the
+        // NFC row must win purely on dependent count, not insertion order.
+        try raw.run(
+            """
+            INSERT INTO capture_groups(
+              target, session_date, slug, display_name, sensor_mode, signal_mode, created_at, updated_at)
+            VALUES (?, '2026-01-01', 'sv220', 'SV220 (régi)', 'osc', 'dual_band', 100, 100);
+            """,
+            bind: [.text(nfd)]
+        )
+        try raw.run(
+            """
+            INSERT INTO capture_groups(
+              target, session_date, slug, display_name, sensor_mode, signal_mode, created_at, updated_at)
+            VALUES (?, '2026-01-01', 'sv220', 'SV220 (új)', 'osc', 'dual_band', 200, 200);
+            """,
+            bind: [.text(nfc)]
+        )
+        try raw.run(
+            "INSERT INTO capture_sources(capture_group_id, relative_path, role) VALUES (1, 'sessions/x/2026-01-01/lights_a', 'light');"
+        )
+        try raw.run(
+            "INSERT INTO capture_sources(capture_group_id, relative_path, role) VALUES (2, 'sessions/x/2026-01-01/lights_b', 'light');"
+        )
+        try raw.run(
+            "INSERT INTO capture_sources(capture_group_id, relative_path, role) VALUES (2, 'sessions/x/2026-01-01/flats_b', 'flat');"
+        )
+    }
+
+    let database = try Database(path: path)
+
+    let groups = try database.captureGroups(target: nfc, date: "2026-01-01")
+    #expect(groups.count == 1, "the collision must resolve to exactly one group, not two")
+    #expect(groups.first?.displayName == "SV220 (új)", "the row with more dependents must survive with its own metadata")
+    let winnerID = try #require(groups.first?.id)
+
+    let sources = try database.captureSources(groupID: winnerID)
+    #expect(
+        Set(sources.map(\.relativePath)) == [
+            "sessions/x/2026-01-01/lights_a", "sessions/x/2026-01-01/lights_b", "sessions/x/2026-01-01/flats_b",
+        ],
+        "the loser's own source -- lights_a -- must be re-pointed to the winner, not dropped"
+    )
+}
+
 /// Mirrors the "failed migration rolls back DDL and leaves the old version
 /// stamp" family other stores in this codebase use (see
 /// `AstroApplicationTests/MetadataStoreTests.swift`), applied to this
@@ -1413,6 +1513,50 @@ private func makeV12FixturePath(named name: String) throws -> String {
         "SELECT value FROM session_notes WHERE target = 'M31' AND session_date = '2026-01-01' AND key = 'Camera';"
     ) { noteValue = $0.string(0) }
     #expect(noteValue == "ASI2600MC")
+}
+
+/// Same rollback guarantee as `...WhenATagsStepFails`, but the failure is in
+/// the LAST step of the three (`canonicalizeCaptureGroupsTargets`, added
+/// after `canonicalizeSessionNotesTargets`/`canonicalizeTagsTargets`): both
+/// earlier steps must still be fully undone, not just the failing one.
+@Test func migrateV12ToV13RollsBackEverythingAndLeavesOldVersionStampWhenACaptureGroupsStepFails() throws {
+    let path = try makeV12FixturePath(named: "rollback-capture-groups")
+    defer { try? FileManager.default.removeItem(atPath: (path as NSString).deletingLastPathComponent) }
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.run(
+            "INSERT INTO session_notes(target, session_date, key, value) VALUES ('M31', '2026-01-01', 'Camera', 'ASI2600MC');"
+        )
+        try raw.run(
+            "INSERT INTO tags(kind, target, session_date, tag) VALUES ('target', 'M31', NULL, 'favorite');"
+        )
+        // Simulates a corrupted/partially-upgraded database: `capture_groups`
+        // is missing, so `canonicalizeCaptureGroupsTargets` (which runs
+        // after both earlier steps inside the same transaction) fails.
+        try raw.exec("DROP TABLE capture_groups;")
+    }
+
+    #expect(throws: AstroError.self) {
+        _ = try Database(path: path)
+    }
+
+    let raw = try SQLiteDB(path: path)
+    var version: Int64 = -1
+    try raw.query("SELECT version FROM schema_version LIMIT 1;") { version = $0.int64(0) ?? -1 }
+    #expect(version == 12)
+
+    // Both earlier steps ran and would have rewritten these rows -- their
+    // effects must have been rolled back along with the failed capture
+    // groups step, not left half-applied.
+    var noteValue: String?
+    try raw.query(
+        "SELECT value FROM session_notes WHERE target = 'M31' AND session_date = '2026-01-01' AND key = 'Camera';"
+    ) { noteValue = $0.string(0) }
+    #expect(noteValue == "ASI2600MC")
+
+    var tagCount = 0
+    try raw.query("SELECT rowid FROM tags WHERE target = 'M31' AND tag = 'favorite';") { _ in tagCount += 1 }
+    #expect(tagCount == 1)
 }
 
 /// The write paths themselves canonicalize `target`, independent of the

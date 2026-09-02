@@ -993,6 +993,7 @@ public final class Database: @unchecked Sendable {
             do {
                 try canonicalizeSessionNotesTargets()
                 try canonicalizeTagsTargets()
+                try canonicalizeCaptureGroupsTargets()
                 try db.run("UPDATE schema_version SET version = ?;", bind: [.int(13)])
                 try db.exec("COMMIT;")
             } catch {
@@ -1101,6 +1102,114 @@ public final class Database: @unchecked Sendable {
                 "INSERT INTO tags(kind, target, session_date, tag) VALUES (?, ?, ?, ?);",
                 bind: [.text(key.kind), .text(key.target), key.date.map(SQLiteValue.text) ?? .null, .text(key.tag)]
             )
+        }
+    }
+
+    /// One-time v12->v13 upgrade step: rewrites `capture_groups.target` to
+    /// its canonical NFC form, same motivation as `canonicalizeSessionNotes
+    /// Targets`/`canonicalizeTagsTargets` -- this table has no `files.id` to
+    /// hang healing off either, and a scan never revisits it (see `Self.
+    /// noteMergeSeparator`'s doc comment for the shared background). Unlike
+    /// those two tables, though, `capture_groups.id` is a stable identity
+    /// that `capture_sources.capture_group_id`/`file_capture_assignments.
+    /// capture_group_id` reference by foreign key, so this step rewrites
+    /// `target` in place (`UPDATE ... SET target = ?`) rather than
+    /// delete-all/reinsert -- a row's id must survive the migration for its
+    /// dependents to keep resolving.
+    ///
+    /// Two rows can still canonicalize onto the SAME `(target, session_date,
+    /// slug)` -- the table's own `UNIQUE` index -- if the library was
+    /// scanned under both an NFD and an NFC spelling of the target folder
+    /// before this fix. One of the two rows is kept and the other deleted;
+    /// the losing row's own `capture_sources`/`file_capture_assignments` are
+    /// re-pointed to the surviving id first, so no folder mapping or
+    /// per-file assignment is silently dropped. The row that already has
+    /// dependents wins (there is real per-file state hanging off it); if
+    /// both do, the one with more of them wins; if neither does, the older
+    /// row (lower id, i.e. the one inserted first) wins -- "prefer real
+    /// state, else prefer history", the same spirit as the merge/union
+    /// policies above, just expressed through the FK graph instead of row
+    /// content.
+    private func canonicalizeCaptureGroupsTargets() throws {
+        struct Row { let id: Int64; let target: String; let date: String; let slug: String }
+        struct MergeKey: Hashable { let target: String; let date: String; let slug: String }
+
+        var rows: [Row] = []
+        try db.query("SELECT id, target, session_date, slug FROM capture_groups ORDER BY id;") { row in
+            guard let id = row.int64(0), let target = row.string(1),
+                  let date = row.string(2), let slug = row.string(3)
+            else { return }
+            rows.append(Row(id: id, target: target, date: date, slug: slug))
+        }
+        guard !rows.isEmpty else { return }
+
+        var order: [MergeKey] = []
+        var rowsByKey: [MergeKey: [Row]] = [:]
+        for r in rows {
+            let key = MergeKey(target: PathNormalization.canonical(r.target), date: r.date, slug: r.slug)
+            if rowsByKey[key] == nil { order.append(key) }
+            rowsByKey[key, default: []].append(r)
+        }
+
+        func dependentCount(_ id: Int64) throws -> Int {
+            var count = 0
+            try db.query(
+                "SELECT COUNT(*) FROM capture_sources WHERE capture_group_id = ?;", bind: [.int(id)]
+            ) { count += Int($0.int64(0) ?? 0) }
+            try db.query(
+                "SELECT COUNT(*) FROM file_capture_assignments WHERE capture_group_id = ?;", bind: [.int(id)]
+            ) { count += Int($0.int64(0) ?? 0) }
+            return count
+        }
+
+        // Byte-wise, not Swift's own `==`/`!=` -- see `PathNormalization`'s
+        // doc comment: Swift's `String` compares by Unicode CANONICAL
+        // equivalence, so an NFD and NFC spelling of the same target already
+        // compare EQUAL there and would silently skip the very rewrite this
+        // step exists to perform.
+        func isByteIdentical(_ a: String, _ b: String) -> Bool { Array(a.utf8) == Array(b.utf8) }
+
+        for key in order {
+            guard let candidates = rowsByKey[key], let first = candidates.first else { continue }
+
+            guard candidates.count > 1 else {
+                if !isByteIdentical(first.target, key.target) {
+                    try db.run(
+                        "UPDATE capture_groups SET target = ? WHERE id = ?;",
+                        bind: [.text(key.target), .int(first.id)]
+                    )
+                }
+                continue
+            }
+
+            var winner = first
+            var winnerDependents = try dependentCount(first.id)
+            for candidate in candidates.dropFirst() {
+                let candidateDependents = try dependentCount(candidate.id)
+                if candidateDependents > winnerDependents {
+                    winner = candidate
+                    winnerDependents = candidateDependents
+                }
+            }
+
+            for loser in candidates where loser.id != winner.id {
+                try db.run(
+                    "UPDATE capture_sources SET capture_group_id = ? WHERE capture_group_id = ?;",
+                    bind: [.int(winner.id), .int(loser.id)]
+                )
+                try db.run(
+                    "UPDATE file_capture_assignments SET capture_group_id = ? WHERE capture_group_id = ?;",
+                    bind: [.int(winner.id), .int(loser.id)]
+                )
+                try db.run("DELETE FROM capture_groups WHERE id = ?;", bind: [.int(loser.id)])
+            }
+
+            if !isByteIdentical(winner.target, key.target) {
+                try db.run(
+                    "UPDATE capture_groups SET target = ? WHERE id = ?;",
+                    bind: [.text(key.target), .int(winner.id)]
+                )
+            }
         }
     }
 
@@ -1550,10 +1659,14 @@ public final class Database: @unchecked Sendable {
 
     /// Inserts a capture group, or updates the editable fields of the row
     /// with the same `(target, sessionDate, slug)`. The original creation
-    /// timestamp and stable id survive an upsert.
+    /// timestamp and stable id survive an upsert. `record.target` is
+    /// canonicalized to NFC up front, same as `addTag`/`upsertSessionNotes`,
+    /// so a caller still holding an NFD spelling lands on the same row a
+    /// canonical caller would.
     @discardableResult
     public func upsertCaptureGroup(_ record: CaptureGroupRecord) throws -> Int64 {
-        try withLock {
+        let target = PathNormalization.canonical(record.target)
+        return try withLock {
             try db.run(
                 """
                 INSERT INTO capture_groups(
@@ -1571,7 +1684,7 @@ public final class Database: @unchecked Sendable {
                   updated_at = excluded.updated_at;
                 """,
                 bind: [
-                    .text(record.target), .text(record.sessionDate), .text(record.slug),
+                    .text(target), .text(record.sessionDate), .text(record.slug),
                     .text(record.displayName), .text(record.sensorMode.rawValue), .text(record.signalMode.rawValue),
                     record.filterManufacturer.map(SQLiteValue.text) ?? .null,
                     record.filterModel.map(SQLiteValue.text) ?? .null,
@@ -1584,7 +1697,7 @@ public final class Database: @unchecked Sendable {
             var id: Int64?
             try db.query(
                 "SELECT id FROM capture_groups WHERE target = ? AND session_date = ? AND slug = ?;",
-                bind: [.text(record.target), .text(record.sessionDate), .text(record.slug)]
+                bind: [.text(target), .text(record.sessionDate), .text(record.slug)]
             ) { id = $0.int64(0) }
             guard let id else {
                 throw AstroError.databaseError("upsertCaptureGroup: no row after upsert")
@@ -1604,8 +1717,10 @@ public final class Database: @unchecked Sendable {
         }
     }
 
-    public func captureGroup(target: String, date: String, slug: String) throws -> CaptureGroupRecord? {
-        try withLock {
+    /// `target` is canonicalized to NFC up front, same as `upsertCaptureGroup`.
+    public func captureGroup(target rawTarget: String, date: String, slug: String) throws -> CaptureGroupRecord? {
+        let target = PathNormalization.canonical(rawTarget)
+        return try withLock {
             var result: CaptureGroupRecord?
             try db.query(
                 "SELECT \(Self.captureGroupColumns) FROM capture_groups WHERE target = ? AND session_date = ? AND slug = ?;",
@@ -1615,8 +1730,10 @@ public final class Database: @unchecked Sendable {
         }
     }
 
-    public func captureGroups(target: String, date: String) throws -> [CaptureGroupRecord] {
-        try withLock {
+    /// `target` is canonicalized to NFC up front, same as `upsertCaptureGroup`.
+    public func captureGroups(target rawTarget: String, date: String) throws -> [CaptureGroupRecord] {
+        let target = PathNormalization.canonical(rawTarget)
+        return try withLock {
             var result: [CaptureGroupRecord] = []
             try db.query(
                 "SELECT \(Self.captureGroupColumns) FROM capture_groups WHERE target = ? AND session_date = ? ORDER BY display_name COLLATE NOCASE, slug;",
