@@ -75,6 +75,21 @@ public final class ReviewStore {
         self.ratingCommandFactory = ratingCommandFactory
     }
 
+    /// v5 library-switch fixes (item 2): forgets the project this store had
+    /// open. Nothing reset it on a library switch, so a `.review` route left
+    /// over from the previous library kept rendering that library's frames
+    /// (and its Accept/Reject actions kept writing to that library's
+    /// metadata store) under the newly opened one.
+    public func reset() {
+        snapshot = nil
+        selectedSeriesID = nil
+        errorMessage = nil
+        qualityByPath = [:]
+        metadata = nil
+        projectID = nil
+        rootURL = nil
+    }
+
     public func open(rootURL: URL, projectID: UUID) async throws {
         isLoading = true
         errorMessage = nil

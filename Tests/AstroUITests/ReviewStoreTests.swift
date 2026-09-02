@@ -19,6 +19,26 @@ struct ReviewStoreTests {
         #expect(store.selectedSeries?.series.exposureSeconds == 30)
     }
 
+    // MARK: - v5 library-switch fixes, item 2: nothing reset this store on a
+    // library switch, so a `.review(projectID:)` route left over from the
+    // previous library kept rendering that library's frames.
+
+    @Test("reset drops the previously reviewed project instead of leaving its frames on screen")
+    func resetClearsTheOpenProject() async throws {
+        let fixture = try await ReviewStoreFixture.make()
+        let store = ReviewStore(metadataFactory: { _ in fixture.metadata })
+        try await store.open(rootURL: fixture.root, projectID: fixture.project.id)
+        #expect(store.snapshot != nil)
+
+        store.reset()
+
+        #expect(store.snapshot == nil)
+        #expect(store.selectedSeriesID == nil)
+        #expect(store.selectedSeries == nil)
+        #expect(store.qualityByPath.isEmpty)
+        #expect(store.errorMessage == nil)
+    }
+
     @Test("A bulk reject refreshes series counts and logical exclusion")
     func bulkRejectRefreshesSnapshot() async throws {
         let fixture = try await ReviewStoreFixture.make()

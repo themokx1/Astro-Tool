@@ -322,6 +322,44 @@ struct LibraryHealthStoreTests {
         #expect(calls.count == 0)
     }
 
+    // MARK: - v5 library-switch fixes, item 2: nothing reset this store on a
+    // library switch, so it kept answering with the PREVIOUS library's
+    // findings until the next audit happened to run.
+
+    @Test("reset drops the previous library's findings instead of leaving them on screen")
+    func resetClearsTheLoadedLibrary() async throws {
+        let fixture = try Self.makeFixture()
+        let store = LibraryHealthStore(
+            metadataFactory: { _ in fixture.metadata },
+            queryFactory: { _, metadata, _ in
+                LibraryHealthQuery(indexDatabaseForTesting: fixture.indexDatabase, metadata: metadata)
+            },
+            auditCommandFactory: { _, metadata in
+                AuditRunCommand(db: fixture.db, config: fixture.config, metadata: metadata)
+            }
+        )
+        await store.load(rootURL: fixture.root, accessMode: .mutationEnabled)
+        let host = OperationHost(center: OperationCenter())
+        await store.verifyIntegrity(
+            options: VerifyRunOptions(sampleFraction: nil, fillMissingChecksums: true),
+            rootURL: fixture.root,
+            operationHost: host
+        )
+        await host.settle()
+        #expect(store.snapshot != nil)
+        #expect(store.lastVerifySummary != nil)
+
+        store.reset()
+
+        #expect(store.snapshot == nil)
+        #expect(store.lastVerifySummary == nil)
+        #expect(store.errorMessage == nil)
+        // A findings acknowledgement after a reset must not reach the
+        // previous library's metadata store either -- the row identifiers
+        // it would write are that library's, not this one's.
+        #expect(store.accessMode == .readOnly)
+    }
+
     private struct Fixture {
         let root: URL
         let indexDatabase: URL

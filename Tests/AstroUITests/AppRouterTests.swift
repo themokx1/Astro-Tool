@@ -314,6 +314,55 @@ struct AppRouterTests {
         #expect(router.currentSectionPath.isEmpty)
     }
 
+    // MARK: v5 library-switch fixes, item 2 -- a library switch invalidates
+    // every section's stack, not just the active one. Nothing used to reset
+    // navigation at all on a switch, so a `.review(projectID:)` route from
+    // library A stayed on the Projects stack under library B (and stayed
+    // reachable by clicking that section in the sidebar).
+
+    @Test("A library change clears EVERY section's stack, not only the active one")
+    func libraryChangeResetsEverySectionStack() {
+        let router = AppRouter()
+        router.navigate(to: .projects)
+        router.push(.project("m31"))
+        router.push(.review(projectID: UUID()))
+        router.navigate(to: .nights)
+        router.push(.night("2026-08-10"))
+        router.navigate(to: .home)
+
+        router.resetForLibraryChange()
+
+        #expect(router.primarySection == .home, "the section the user is looking at is not what a switch invalidates")
+        for section in [PrimarySection.projects, .nights, .library, .insights, .planning, .home] {
+            router.navigate(to: section)
+            #expect(router.currentSectionPath.isEmpty, "\(section) still holds the previous library's stack")
+            #expect(router.contentRoute == section.rootRoute)
+        }
+    }
+
+    @Test("A library change drops the inspector selection and both workspace tabs, keeping the inspector column's own visibility")
+    func libraryChangeClearsSelectionAndTabs() {
+        let router = AppRouter()
+        router.select(.project("m31"))
+        router.projectTab = .nights
+        router.nightTab = .frames
+        router.pendingInsightsSetupFilter = "ASI2600MC"
+        router.pendingCleanupCategories = ["duplicate-content"]
+        let wasInspectorPresented = router.isInspectorPresented
+
+        router.resetForLibraryChange()
+
+        #expect(router.inspectorSelection == nil)
+        #expect(router.projectTab == .overview)
+        #expect(router.nightTab == .overview)
+        #expect(router.pendingInsightsSetupFilter == nil)
+        #expect(router.pendingCleanupCategories == nil)
+        // Wave 4 Task 1: navigation is decoupled from inspector visibility
+        // -- a library switch is navigation, so it must not silently
+        // reopen/close the column the user chose.
+        #expect(router.isInspectorPresented == wasInspectorPresented)
+    }
+
     // MARK: Wave 4 navigation-rework code-review fix -- cross-section push
     // no longer hijacks primarySection
 

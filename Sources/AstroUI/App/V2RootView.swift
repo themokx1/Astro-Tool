@@ -1002,6 +1002,29 @@ private struct V2Shell: View {
             requestLibraryPicker()
         }
         .onChange(of: nightsStore.nights) { _, _ in refreshSidebarBadges() }
+        // v5 library-switch fixes (item 2): switching libraries invalidates
+        // every route this window has pushed and every per-project store it
+        // holds. Nothing reset any of that before, so a `.review`/
+        // `.resultsWorkspace` route from the previous library stayed on its
+        // section's stack (see `AppRouter.resetForLibraryChange`), Review
+        // kept rendering the previous project's frames, and the Health store
+        // kept reporting the previous library's findings until the next
+        // audit happened to run.
+        //
+        // `nil -> root` is deliberately NOT a switch: that is the first open
+        // of the session, and it is the route `restoreWindowStateOnce` has
+        // just restored that would be thrown away here.
+        .onChange(of: onboardingStore.selectedRoot) { previous, current in
+            guard let previous, previous != current else { return }
+            router.resetForLibraryChange()
+            reviewStore.reset()
+            libraryHealthStore.reset()
+            guard let current else { return }
+            // Re-loaded rather than just cleared, so whoever reads the
+            // snapshot next (the Health page, the sidebar badge) sees the
+            // NEW library's findings instead of nothing at all.
+            Task { await libraryHealthStore.load(rootURL: current, accessMode: libraryAccessMode) }
+        }
         .sheet(isPresented: $isMobileSyncPresented) {
             MobileSyncView(
                 rootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
@@ -2215,14 +2238,37 @@ private struct DetailHost: View {
             )
         case .review(let projectID):
             if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
-                ReviewWorkspace(store: reviewStore, rootURL: rootURL, projectID: projectID)
+                if projectIsMissingFromCurrentLibrary(projectID) {
+                    notInThisLibraryPlaceholder(
+                        title: "Review",
+                        systemImage: "checkmark.rectangle.stack",
+                        message: "This project is not in the library that is open now.",
+                        actionTitle: "Back to Projects",
+                        section: .projects
+                    )
+                } else {
+                    ReviewWorkspace(store: reviewStore, rootURL: rootURL, projectID: projectID)
+                }
             } else {
                 noLibraryPlaceholder(title: "Review", systemImage: "checkmark.rectangle.stack")
             }
         case .resultsWorkspace(let projectID):
-            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback,
-               let project = projectsStore.projects.first(where: { $0.id == projectID }) {
-                ResultsView(rootURL: rootURL, project: project, review: { router.push(.review(projectID: projectID)) })
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
+                if let project = projectsStore.projects.first(where: { $0.id == projectID }) {
+                    ResultsView(rootURL: rootURL, project: project, review: { router.push(.review(projectID: projectID)) })
+                } else {
+                    // A library IS open -- either its rows are still
+                    // loading (`RoutePendingLoadView`'s own job elsewhere,
+                    // but here the honest answer is just "not yet") or this
+                    // project genuinely is not in it.
+                    notInThisLibraryPlaceholder(
+                        title: "Results",
+                        systemImage: "square.stack.3d.up",
+                        message: "This project is not in the library that is open now.",
+                        actionTitle: "Back to Projects",
+                        section: .projects
+                    )
+                }
             } else {
                 noLibraryPlaceholder(title: "Results", systemImage: "square.stack.3d.up")
             }
@@ -2255,21 +2301,73 @@ private struct DetailHost: View {
                 noLibraryPlaceholder(title: "Sensor Profiles", systemImage: "sensor")
             }
         case .archiveTaskDetail(let rawKind, let cardCount):
-            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback,
-               let kind = ArchiveTaskKind(rawValue: rawKind) {
-                ArchiveTaskDetailView(
-                    rootURL: rootURL,
-                    kind: kind,
-                    openQuarantinePreview: { categories in
-                        router.pendingCleanupCategories = categories.isEmpty ? nil : categories
-                        router.push(.cleanup)
-                    },
-                    cardCount: cardCount
-                )
+            if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
+                if let kind = ArchiveTaskKind(rawValue: rawKind) {
+                    ArchiveTaskDetailView(
+                        rootURL: rootURL,
+                        kind: kind,
+                        openQuarantinePreview: { categories in
+                            router.pendingCleanupCategories = categories.isEmpty ? nil : categories
+                            router.push(.cleanup)
+                        },
+                        cardCount: cardCount
+                    )
+                } else {
+                    // An unknown kind reaches here from a restored window
+                    // state (or a deep link) written by another build. A
+                    // library IS open, so "Choose an image library first"
+                    // was simply false -- and the Library section is where
+                    // the findings this route wanted actually live.
+                    notInThisLibraryPlaceholder(
+                        title: "Findings",
+                        systemImage: "list.bullet",
+                        message: "This findings list is not part of the library that is open now.",
+                        actionTitle: "Back to Library",
+                        section: .library
+                    )
+                }
             } else {
                 noLibraryPlaceholder(title: "Findings", systemImage: "list.bullet")
             }
         }
+    }
+
+    /// v5 library-switch fixes (item 2): `true` when a library IS open and
+    /// finished loading, but `projectID` is not one of ITS projects -- a
+    /// route left over from a previously open library (`.review`,
+    /// `.resultsWorkspace`), or a project deleted out from under a restored
+    /// window state. Deliberately `false` while `projectsStore` is still
+    /// loading or holds no open library at all: the rows simply are not
+    /// there yet, and claiming the project is missing would flash the wrong
+    /// message on every single open.
+    private func projectIsMissingFromCurrentLibrary(_ projectID: UUID) -> Bool {
+        guard !projectsStore.isLoading, projectsStore.rootURL != nil else { return false }
+        return !projectsStore.projects.contains { $0.id == projectID }
+    }
+
+    /// The counterpart of `noLibraryPlaceholder` for a route THIS library
+    /// cannot answer while a library is, in fact, open. `.resultsWorkspace`
+    /// for a since-switched-away project used to land on the no-library
+    /// placeholder and say "Choose an image library first" with a library
+    /// open and its projects on screen one click away -- simply false, and
+    /// it offered a library picker as the only way out. This says what is
+    /// actually wrong and hands back the section the route came from.
+    private func notInThisLibraryPlaceholder(
+        title: LocalizedStringKey,
+        systemImage: String,
+        message: LocalizedStringKey,
+        actionTitle: LocalizedStringKey,
+        section: PrimarySection
+    ) -> some View {
+        ContentUnavailableView {
+            Label(title, systemImage: systemImage)
+        } description: {
+            Text(message)
+        } actions: {
+            Button(actionTitle) { router.navigate(to: section) }
+                .buttonStyle(.borderedProminent)
+        }
+        .accessibilityIdentifier("v2.detail.not-in-current-library")
     }
 
     private func noLibraryPlaceholder(title: String, systemImage: String) -> some View {

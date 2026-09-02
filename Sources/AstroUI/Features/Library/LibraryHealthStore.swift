@@ -83,6 +83,20 @@ public final class LibraryHealthStore {
         self.auditCommandFactory = auditCommandFactory
     }
 
+    /// v5 library-switch fixes (item 2): forgets the library this store had
+    /// loaded. Nothing reset it on a library switch, so it kept reporting
+    /// the PREVIOUS library's findings (and its own `accessMode`) until the
+    /// next audit happened to run -- and an acknowledgement made in the
+    /// meantime would have written to that library's metadata store.
+    public func reset() {
+        snapshot = nil
+        errorMessage = nil
+        lastVerifySummary = nil
+        accessMode = .readOnly
+        metadata = nil
+        rootURL = nil
+    }
+
     public func load(rootURL: URL, accessMode: LibraryAccessMode = .readOnly) async {
         isLoading = true
         errorMessage = nil

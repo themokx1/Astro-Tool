@@ -223,6 +223,31 @@ public final class AppRouter {
         paths[primarySection] = []
     }
 
+    /// v5 library-switch fixes (item 2): drops EVERY section's stack, not
+    /// just the active one. Nothing reset navigation on a library switch,
+    /// so a `.review(projectID:)`/`.resultsWorkspace(projectID:)`/
+    /// `.archiveTaskDetail` route pushed under library A stayed on its
+    /// section's stack under library B -- invisible until the user clicked
+    /// that section in the sidebar and landed straight back on a project
+    /// the open library does not even contain. `popToRoot()` alone is not
+    /// enough for that: it only clears the section the user happens to be
+    /// looking at.
+    ///
+    /// Deliberately NOT touched: `primarySection` (the section the user is
+    /// on is not what a switch invalidates -- only its contents),
+    /// `isInspectorPresented` (Wave 4 Task 1 decoupled navigation from
+    /// inspector visibility, and a switch is navigation), and `presentation`
+    /// (a modal is dismissed by whoever presented it; the library picker
+    /// itself is one of them).
+    public func resetForLibraryChange() {
+        paths = [:]
+        inspectorSelection = nil
+        projectTab = .overview
+        nightTab = .overview
+        pendingInsightsSetupFilter = nil
+        pendingCleanupCategories = nil
+    }
+
     /// Switches to `section`. Re-selecting the ALREADY-active section (a
     /// sidebar re-click) pops that section back to its root -- the standard
     /// macOS sidebar pattern; switching to a genuinely different section

@@ -20,6 +20,50 @@ struct LibrarySwitchRobustnessSurfaceTests {
         try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
+    // MARK: - Item 2: a library switch resets navigation and per-project state.
+
+    @Test("A change of open library resets the router and the per-project stores")
+    func libraryRootChangeResetsNavigationAndStores() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains(".onChange(of: onboardingStore.selectedRoot) { previous, current in"))
+        #expect(source.contains("router.resetForLibraryChange()"))
+        #expect(source.contains("reviewStore.reset()"))
+        #expect(source.contains("libraryHealthStore.reset()"))
+    }
+
+    @Test("The first open of a library does not wipe the restored window state")
+    func theInitialOpenIsNotTreatedAsASwitch() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        // `nil -> root` is the FIRST open (and the one `restoreWindowStateOnce`
+        // has just restored a route for), not a switch away from anything.
+        #expect(source.contains("guard let previous, previous != current else { return }"))
+    }
+
+    @Test("The health store is re-loaded for the new root rather than left empty")
+    func healthStoreReloadsForTheNewRoot() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains("await libraryHealthStore.load(rootURL: current, accessMode: libraryAccessMode)"))
+    }
+
+    @Test("A project route the current library cannot answer gets its own state, not the no-library one")
+    func staleProjectRouteHasItsOwnPlaceholder() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains("private func projectIsMissingFromCurrentLibrary(_ projectID: UUID) -> Bool"))
+        #expect(source.contains("v2.detail.not-in-current-library"))
+        #expect(source.contains("Back to Projects"))
+        // ... and it must not be reachable while the rows are merely still
+        // loading, which would flash the wrong message on every open.
+        #expect(source.contains("guard !projectsStore.isLoading, projectsStore.rootURL != nil else { return false }"))
+    }
+
+    @Test("Review, Results and the findings detail each route to that state instead of \"Choose an image library first\"")
+    func allThreeRoutesUseTheStalePlaceholder() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        let occurrences = source.components(separatedBy: "notInThisLibraryPlaceholder(").count - 1
+        // Three call sites plus the helper's own declaration.
+        #expect(occurrences == 4)
+    }
+
     // MARK: - Item 3: one MetadataStore per library.
 
     @Test("V2RootView hands LibraryHealthStore the window's already-open metadata connection")

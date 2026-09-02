@@ -156,6 +156,11 @@
 "Choose a folder to build a local, read-only index. Your image files stay untouched." = "Válassz egy mappát egy helyi, csak olvasható index felépítéséhez. A képfájljaid érintetlenek maradnak.";
 "Choose an image folder, then explore the Library workspace through a local, read-only index." = "Válassz egy képmappát, majd fedezd fel a Könyvtár munkateret egy helyi, csak olvasható indexen keresztül.";
 "Choose an image library first." = "Először válassz egy képkönyvtárat.";
+/* v5 library-switch fixes, item 2: the "this route belongs to another library" state -- DetailHost.notInThisLibraryPlaceholder's own message/action, separate from the no-library placeholder above. The extraction script does not see literals passed to a custom function's LocalizedStringKey parameters, so these four are hand-added like the other String(localized:) call sites in this codebase. */
+"This project is not in the library that is open now." = "Ez a projekt nincs a most megnyitott könyvtárban.";
+"This findings list is not part of the library that is open now." = "Ez a találatlista nem a most megnyitott könyvtárhoz tartozik.";
+"Back to Projects" = "Vissza a Projektekhez";
+"Back to Library" = "Vissza a Könyvtárhoz";
 "Choose the folder that contains your astrophotography images. AstroTool reads it locally and builds a separate index for fast browsing." = "Válaszd ki az asztrofotós képeidet tartalmazó mappát. Az AstroTool helyben olvassa be, és külön indexet épít a gyors böngészéshez.";
 "Choose the target first; AstroTool will keep its identity canonical." = "Először válaszd ki a célpontot; az AstroTool megőrzi annak egységes azonosítóját.";
 "Cleanup Preview" = "Tisztítás előnézete";
