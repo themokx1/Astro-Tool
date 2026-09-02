@@ -1068,6 +1068,106 @@ struct MobileSyncStoreTests {
         continuation.finish()
     }
 
+    // MARK: - v5 flow review, I9: "Forget and pair again" used to `try?` the
+    // forget and auto-retry, so a Keychain refusal was invisible and even a
+    // successful forget only produced an unrelated timeout (the peer still
+    // trusts the old key).
+
+    @Test("A failed forget becomes its own state carrying the error, and never auto-retries into the same dead end")
+    func forgetFailureSurfacesInsteadOfRetrying() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let id = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
+        let deviceID = UUID()
+        let startCount = ValueCounter()
+        let forgetCount = ValueCounter()
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot },
+            nearbyStartAdvertising: { _ in
+                startCount.value += 1
+                let (stream, continuation) = AsyncStream<NearbySyncEvent>.makeStream()
+                continuation.yield(.failed(.identityChanged(deviceID: deviceID)))
+                continuation.finish()
+                return stream
+            },
+            nearbyForgetPeer: { _ in
+                forgetCount.value += 1
+                throw MobileSyncStoreTestForgetError.keychainRefused
+            }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+
+        store.startNearbySync()
+        try await waitFor(store) { if case .failed(.identityChanged) = $0 { return true }; return false }
+        await waitForCount(startCount, toReach: 1)
+
+        store.forgetNearbyPeerAndRetry()
+        try await waitFor(store) { if case .forgetFailed = $0 { return true }; return false }
+        guard case .forgetFailed(let reportedID, let message) = store.nearbyPhase else {
+            Issue.record("expected .forgetFailed, got \(store.nearbyPhase)")
+            return
+        }
+        #expect(reportedID == deviceID)
+        #expect(message == MobileSyncStoreTestForgetError.keychainRefused.localizedDescription)
+        #expect(!message.isEmpty)
+        // No session was restarted: the old code went straight back to the
+        // identical identityChanged failure.
+        #expect(startCount.value == 1)
+
+        // "Try again" on this state repeats the FORGET, not the pairing.
+        store.forgetNearbyPeerAndRetry()
+        await waitForCount(forgetCount, toReach: 2)
+        #expect(startCount.value == 1)
+    }
+
+    @Test("A successful forget waits for the peer's own forget instead of retrying straight away")
+    func successfulForgetAsksThePeerToForgetTooBeforeRetrying() async throws {
+        let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let id = PortableLibraryID(rawValue: UUID())
+        let snapshot = MobileLibrarySnapshot.empty(libraryID: id)
+        let deviceID = UUID()
+        let startCount = ValueCounter()
+        let forgottenIDs = ForgottenDeviceIDs()
+        let store = MobileSyncStore(
+            rootURL: root,
+            identityPreview: { _ in PortableIdentityPreview(proposedID: id, relativePath: "id", alreadyExists: true) },
+            snapshotProvider: { _, _ in snapshot },
+            nearbyStartAdvertising: { _ in
+                startCount.value += 1
+                let (stream, continuation) = AsyncStream<NearbySyncEvent>.makeStream()
+                continuation.yield(.failed(.identityChanged(deviceID: deviceID)))
+                continuation.finish()
+                return stream
+            },
+            nearbyForgetPeer: { forgotten in forgottenIDs.append(forgotten) }
+        )
+        await store.preview()
+        store.confirmSummary(store.preview!.confirmationToken)
+
+        store.startNearbySync()
+        try await waitFor(store) { if case .failed(.identityChanged) = $0 { return true }; return false }
+        await waitForCount(startCount, toReach: 1)
+
+        store.forgetNearbyPeerAndRetry()
+        try await waitFor(store) { $0 == .forgottenAwaitingPeer }
+        #expect(forgottenIDs.value == [deviceID])
+        #expect(startCount.value == 1, "forgetting is one-sided -- an immediate retry could only time out")
+
+        // The instructional state's own Try again is what starts the fresh
+        // pairing, once the user has forgotten this Mac on the iPhone too.
+        store.retryNearbySync()
+        try await waitFor(store) { if case .failed(.identityChanged) = $0 { return true }; return false }
+        await waitForCount(startCount, toReach: 2)
+        #expect(startCount.value == 2)
+    }
+
     @MainActor
     private func waitFor(
         _ store: MobileSyncStore,
@@ -1148,5 +1248,26 @@ private extension MobileLibrarySnapshot {
 
     var summary: MobileSnapshotSummary {
         .init(projectCount: projects.count, nightCount: nights.count, captureCount: captures.count, briefingCount: briefings.count, noteCount: notes.count)
+    }
+}
+
+private enum MobileSyncStoreTestForgetError: Error, LocalizedError {
+    case keychainRefused
+
+    var errorDescription: String? {
+        "The Keychain refused to remove this device."
+    }
+}
+
+private final class ForgottenDeviceIDs: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ids: [UUID] = []
+
+    func append(_ id: UUID) {
+        lock.withLock { ids.append(id) }
+    }
+
+    var value: [UUID] {
+        lock.withLock { ids }
     }
 }

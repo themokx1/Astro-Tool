@@ -241,11 +241,18 @@ public struct V2RootView: View {
     /// firing and forgetting.
     private func prepareLibrary(root: URL) async {
         let kind = OperationKind.loadHome(library: root.lastPathComponent)
+        // Cleared BEFORE the gate, not after it: every path below either
+        // publishes an outcome for `root` or hands the work over, and a flag
+        // left standing across the gate kept the "needs attention" alert on
+        // screen for a library that was no longer even the one preparing.
+        libraryPreparationDidFail = false
         // Checked BEFORE the generation is bumped, on purpose: a `.task(id:)`
         // re-fire for the library already being prepared changes nothing,
         // and must not make the running preparation stale and stop it from
-        // publishing its own outcome.
+        // publishing its own outcome. It does NOT return empty-handed
+        // though -- see `adoptRunningPreparation`.
         if case .skipDuplicate = LibraryPreparationGate.decision(preparing: kind, activeOperations: operationHost.activeOperations) {
+            await adoptRunningPreparation(kind: kind, root: root, generation: libraryPreparationGeneration)
             return
         }
         libraryPreparationGeneration += 1
@@ -260,17 +267,31 @@ public struct V2RootView: View {
             case .start:
                 break gate
             case .skipDuplicate:
+                // Someone started this exact library while we waited: adopt
+                // that run's outcome instead of returning silently.
+                await adoptRunningPreparation(kind: kind, root: root, generation: generation)
                 return
             case .waitFor(let inFlightID):
                 _ = await operationHost.outcome(of: inFlightID)
                 guard generation == libraryPreparationGeneration else { return }
             }
         }
+        // The selection can change across the wait above. Running this
+        // pipeline for a library nobody has selected any more would leave
+        // the stores holding one library while the shell shows another, and
+        // the `selectedRoot` guard at the end would then publish nothing at
+        // all -- the exact silent dead end this used to produce. Drive the
+        // library that IS selected instead.
+        guard onboardingStore.selectedRoot == root else {
+            if let selected = onboardingStore.selectedRoot {
+                await prepareLibrary(root: selected)
+            }
+            return
+        }
         let projectsStore = self.projectsStore
         let nightsStore = self.nightsStore
         let homeStore = self.homeStore
         let uiTestFixture = self.uiTestFixture
-        libraryPreparationDidFail = false
         let id = await operationHost.run(
             kind: kind,
             title: "\(OperationHost.localized("Preparing")) \(root.lastPathComponent)",
@@ -306,6 +327,28 @@ public struct V2RootView: View {
         // raced this pipeline) -- only apply the outcome if it is, and only
         // if no newer preparation has taken over in the meantime.
         guard generation == libraryPreparationGeneration, onboardingStore.selectedRoot == root else { return }
+        await applyPreparationOutcome(phase, id: id, root: root)
+    }
+
+    /// Adopts a preparation for `root` that somebody else already has in
+    /// flight -- the `.skipDuplicate` decision. It used to just `return`,
+    /// which is how the A -> B -> A selection sequence ended up publishing
+    /// nothing at all: A's own runner had been made stale by B's generation
+    /// bump, B's runner then found A selected and bailed on its
+    /// `selectedRoot` guard, and this duplicate request had already walked
+    /// away. Awaiting the running operation and applying ITS outcome for
+    /// `root` -- under the very same generation/selection guards the normal
+    /// path uses -- is what closes that hole.
+    private func adoptRunningPreparation(kind: OperationKind, root: URL, generation: Int) async {
+        guard let running = operationHost.activeOperations.first(where: { $0.kind == kind }) else { return }
+        let phase = await operationHost.outcome(of: running.id)
+        guard generation == libraryPreparationGeneration, onboardingStore.selectedRoot == root else { return }
+        await applyPreparationOutcome(phase, id: running.id, root: root)
+    }
+
+    /// The one place a settled preparation becomes shell state, shared by
+    /// the normal path and by `adoptRunningPreparation`.
+    private func applyPreparationOutcome(_ phase: OperationPhase, id: UUID, root: URL) async {
         switch phase {
         case .succeeded:
             appModel.libraryDidOpen(rootURL: root, metadataStore: projectsStore.metadataStore)

@@ -117,6 +117,16 @@ public enum NearbySyncPhase: Equatable, Sendable {
     case verifying
     case done
     case failed(NearbySyncFailure)
+    /// The forget half of "Forget this iPhone and pair again" itself failed
+    /// (a Keychain write refusal), carrying the reason. It used to be
+    /// swallowed by a `try?`, after which the retry walked straight back
+    /// into the identical `identityChanged` dead end.
+    case forgetFailed(deviceID: UUID, message: String)
+    /// The Mac has forgotten the iPhone. Forgetting is one-sided: the phone
+    /// still trusts the Mac's old key, so retrying now only produces an
+    /// unrelated timeout. This state asks for the same action there first,
+    /// and offers "Try again" once it is done.
+    case forgottenAwaitingPeer
 }
 
 @MainActor
@@ -421,26 +431,50 @@ public final class MobileSyncStore {
         Task { await reject() }
     }
 
-    /// The one retry action spec §4.3 allows after an interruption.
+    /// The one retry action spec §4.3 allows after an interruption --
+    /// also the button on `.forgottenAwaitingPeer`, which is where the user
+    /// lands once the Mac has forgotten the iPhone and the phone's own
+    /// forget is done.
     public func retryNearbySync() {
-        guard case .failed = nearbyPhase else { return }
-        startNearbySync()
+        switch nearbyPhase {
+        case .failed, .forgottenAwaitingPeer:
+            startNearbySync()
+        default:
+            return
+        }
     }
 
     /// The dedicated recovery action for `.failed(.identityChanged)`:
-    /// forgets the iPhone's stale record on the Mac's own trust store, then
-    /// retries — so the next handshake goes through a fresh first pairing
-    /// (a new six-digit code) instead of repeating the exact same terminal
-    /// failure forever. A no-op for any other failure reason. The iPhone
-    /// must forget the Mac the same way on its own side (its own
-    /// `.failed(.identityChanged)` screen offers the same action) for the
-    /// retry to actually succeed rather than time out.
+    /// forgets the iPhone's stale record on the Mac's own trust store, so
+    /// the next handshake can go through a fresh first pairing (a new
+    /// six-digit code) instead of repeating the exact same terminal failure
+    /// forever. Also the retry action ON `.forgetFailed`, which is the same
+    /// forget attempted again.
+    ///
+    /// It deliberately does NOT retry by itself any more. Two reasons, both
+    /// of which used to be hidden: a failed forget was swallowed by a
+    /// `try?` and the retry walked back into the identical dead end; and
+    /// forgetting is one-sided, so even a successful forget leaves the
+    /// iPhone trusting the Mac's old key — an immediate retry could only
+    /// time out. Both outcomes now get their own state
+    /// (`.forgetFailed` / `.forgottenAwaitingPeer`), each with its own
+    /// button.
     public func forgetNearbyPeerAndRetry() {
-        guard case .failed(.identityChanged(let deviceID)) = nearbyPhase else { return }
+        let peerDeviceID: UUID
+        switch nearbyPhase {
+        case .failed(.identityChanged(let deviceID)): peerDeviceID = deviceID
+        case .forgetFailed(let deviceID, _): peerDeviceID = deviceID
+        default: return
+        }
         let forget = nearbyForgetPeer
         Task { [weak self] in
-            try? await forget(deviceID)
-            self?.retryNearbySync()
+            do {
+                try await forget(peerDeviceID)
+            } catch {
+                self?.nearbyPhase = .forgetFailed(deviceID: peerDeviceID, message: error.localizedDescription)
+                return
+            }
+            self?.nearbyPhase = .forgottenAwaitingPeer
         }
     }
 

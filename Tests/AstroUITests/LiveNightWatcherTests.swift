@@ -355,6 +355,40 @@ struct LiveNightWatcherScopeTests {
         #expect(probe.stoppedURLs == [watchedFolder("M31")])
     }
 
+    @Test("The scope is started and stopped on the URL as handed in, not on a standardized copy")
+    func scopedAccessUsesTheResolvedInstance() {
+        let probe = ScopedAccessProbe()
+        let watcher = makeWatcher(lister: FakeFolderLister(), securityScopedAccess: probe.client)
+
+        // Stands in for the instance `URL(resolvingBookmarkData:)` returns:
+        // a URL whose `standardizedFileURL` is a DIFFERENT instance. A real
+        // security scope is attached to the instance itself, so starting on
+        // the standardized copy grants nothing and tracks nothing.
+        let asHandedIn = watchedFolder("M31")
+            .appendingPathComponent("..")
+            .appendingPathComponent("M31")
+        #expect(asHandedIn != asHandedIn.standardizedFileURL, "the fixture must actually differ once standardized")
+
+        watcher.configureFolder(asHandedIn)
+        #expect(probe.startedURLs == [asHandedIn])
+
+        watcher.configureFolder(nil)
+        #expect(probe.stoppedURLs == [asHandedIn], "the stop must name the same instance the start did")
+    }
+
+    @Test("resolveConfiguredFolder hands back the resolved instance, scope and all")
+    func resolveConfiguredFolderKeepsTheResolvedInstance() throws {
+        let source = try source()
+        let body = try #require(
+            source.components(separatedBy: "public static func resolveConfiguredFolder").dropFirst().first?
+                .components(separatedBy: "\n    }").first
+        )
+        #expect(
+            !body.contains("standardizedFileURL"),
+            "standardizing here discards the instance the security scope belongs to"
+        )
+    }
+
     @Test("resolveConfiguredFolder is a pure resolve -- it never starts an access nobody can stop")
     func resolveConfiguredFolderStartsNoAccess() throws {
         let source = try source()

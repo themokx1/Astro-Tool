@@ -75,6 +75,68 @@ struct LibraryPreparationTests {
         #expect(!OperationKind.catalogFetch.isLoadingLibrary)
     }
 
+    // MARK: - v5 flow review, I2: the A -> B -> A selection sequence.
+
+    /// The decisions the three requests get, in order, with A's own run
+    /// still in flight for the third one. The third is `.skipDuplicate` --
+    /// which is correct, and exactly why that branch may not simply return:
+    /// A's own runner has been made stale by B's generation bump, so this
+    /// duplicate is the only request left that can publish A's outcome.
+    @Test("Selecting A, then B, then A again while A still runs makes the third request the only one that can publish")
+    func theThirdRequestIsTheDuplicateThatMustAdopt() {
+        let aRun = UUID()
+        let aKind = OperationKind.loadHome(library: "Astro")
+        let bKind = OperationKind.loadHome(library: "Backup")
+
+        // 1. Nothing in flight: A starts.
+        #expect(LibraryPreparationGate.decision(preparing: aKind, activeOperations: []) == .start)
+
+        let aInFlight = [operation(kind: aKind, id: aRun)]
+        // 2. B waits A out rather than running alongside it.
+        #expect(LibraryPreparationGate.decision(preparing: bKind, activeOperations: aInFlight) == .waitFor(aRun))
+        // 3. A again, with A's run still going: a duplicate, and the run it
+        //    must adopt is findable by kind alone.
+        #expect(LibraryPreparationGate.decision(preparing: aKind, activeOperations: aInFlight) == .skipDuplicate)
+        #expect(aInFlight.first(where: { $0.kind == aKind })?.id == aRun)
+    }
+
+    /// The seam `adoptRunningPreparation` stands on: a second, later caller
+    /// awaiting the SAME operation must get its real settled phase, both
+    /// while it is still running and after it has already settled.
+    @Test("A second awaiter of the same operation gets the same settled outcome")
+    func outcomeCanBeAdoptedByASecondAwaiter() async {
+        let host = OperationHost(center: OperationCenter())
+        let id = await host.run(
+            kind: .loadHome(library: "Astro"), title: "Preparing Astro", cancellation: .unavailable
+        ) {}
+
+        async let first = host.outcome(of: id)
+        async let second = host.outcome(of: id)
+        let (firstPhase, secondPhase) = await (first, second)
+        #expect(firstPhase == .succeeded)
+        #expect(secondPhase == .succeeded)
+
+        // Adopting after the fact works too -- the duplicate request may
+        // only reach its await once the run has already finished.
+        #expect(await host.outcome(of: id) == .succeeded)
+    }
+
+    @Test("An adopted failure is reported as a failure, not silently swallowed")
+    func adoptedFailureKeepsItsPhaseAndMessage() async {
+        struct PreparationFailure: Error, LocalizedError {
+            var errorDescription: String? { "Projects could not be built." }
+        }
+        let host = OperationHost(center: OperationCenter())
+        let id = await host.run(
+            kind: .loadHome(library: "Astro"), title: "Preparing Astro", cancellation: .unavailable
+        ) {
+            throw PreparationFailure()
+        }
+
+        #expect(await host.outcome(of: id) == .failed)
+        #expect(await host.errorMessage(for: id) == "Projects could not be built.")
+    }
+
     @Test("The gate waits for the FIRST library preparation it finds, so a chain of waiters resolves in one order")
     func waitTargetsTheOperationThatIsActuallyRunning() async {
         let host = OperationHost(center: OperationCenter())

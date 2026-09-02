@@ -585,7 +585,10 @@ public struct MobileSyncView: View {
                     .astroSectionTitle()
                     .accessibilityIdentifier("v5.nearby.state")
                 if !peerDisplayName.isEmpty {
-                    Text("Pairing with: \(peerDisplayName)")
+                    // The name comes from the peer's own hello, before any
+                    // trust decision and outside the signed transcript, so
+                    // it is a claim -- the code is what verifies the device.
+                    Text("Pairing with a device calling itself “\(peerDisplayName)” — confirm the code matches")
                         .astroBody()
                         .foregroundStyle(AstroTokens.Color.inkDim)
                         .accessibilityIdentifier("v5.nearby.peer-name")
@@ -637,6 +640,44 @@ public struct MobileSyncView: View {
                             .buttonStyle(.borderedProminent)
                             .accessibilityIdentifier("v5.nearby.retry")
                     }
+                    Button("Cancel", role: .cancel) { store.cancelNearbySync() }
+                        .accessibilityIdentifier("v5.nearby.cancel")
+                }
+            }
+        case .forgetFailed(_, let message):
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                Label("This iPhone could not be forgotten.", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(AstroTokens.Color.critical)
+                    .accessibilityIdentifier("v5.nearby.state")
+                // The real reason, not a swallowed error: without it a
+                // Keychain refusal looked exactly like the dead end it
+                // was supposed to clear.
+                Text(verbatim: message)
+                    .astroBody()
+                    .foregroundStyle(AstroTokens.Color.inkDim)
+                    .accessibilityIdentifier("v5.nearby.forget-error")
+                HStack {
+                    Button("Try again", systemImage: "arrow.clockwise") { store.forgetNearbyPeerAndRetry() }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v5.nearby.forget-and-retry")
+                    Button("Cancel", role: .cancel) { store.cancelNearbySync() }
+                        .accessibilityIdentifier("v5.nearby.cancel")
+                }
+            }
+        case .forgottenAwaitingPeer:
+            VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
+                Label("This iPhone has been forgotten on this Mac.", systemImage: "checkmark.circle")
+                    .accessibilityIdentifier("v5.nearby.state")
+                Text("Now do the same on your iPhone — Connect to my Mac ▸ Forget this Mac and pair again — then press Try again here.")
+                    .astroBody()
+                    .foregroundStyle(AstroTokens.Color.inkDim)
+                HStack {
+                    // Its own identifier: the failure state keeps the single
+                    // pinned retry action, while this one only ever appears
+                    // after a successful forget, to start a fresh pairing.
+                    Button("Try again", systemImage: "arrow.clockwise") { store.retryNearbySync() }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("v5.nearby.pair-again")
                     Button("Cancel", role: .cancel) { store.cancelNearbySync() }
                         .accessibilityIdentifier("v5.nearby.cancel")
                 }

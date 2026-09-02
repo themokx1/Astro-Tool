@@ -1193,7 +1193,7 @@ private func statsNameColumnText(_ s: TargetStats, maxWidth: Int = 40) -> String
 
 private func printStatsTable(_ stats: [TargetStats], showGross: Bool) {
     guard !stats.isEmpty else {
-        print("no targets")
+        print(L("no targets", "nincs célpont"))
         return
     }
 
@@ -3031,7 +3031,7 @@ private func planNameColumnText(_ plan: TargetPlan) -> String {
 
 private func printPlanTable(_ plans: [TargetPlan]) {
     guard !plans.isEmpty else {
-        print("no targets")
+        print(L("no targets", "nincs célpont"))
         return
     }
 
@@ -3151,7 +3151,7 @@ func cmdProjects(_ args: [String]) throws -> Int32 {
 
 private func printProjectsGrouped(_ projects: [ProjectState]) {
     guard !projects.isEmpty else {
-        print("no targets")
+        print(L("no targets", "nincs célpont"))
         return
     }
 

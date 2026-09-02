@@ -164,13 +164,16 @@
 "Open iPhone Sync on your Mac first, then look for it here." = "Először nyisd meg az iPhone szinkronizálása lehetőséget a Macen, majd keresd itt.";
 "Look for my Mac" = "Mac keresése";
 "Check that both screens show the same code" = "Ellenőrizd, hogy mindkét képernyőn ugyanaz a kód látható-e";
-"Pairing with: %@" = "Párosítás vele: %@";
+"Pairing with a device calling itself “%@” — confirm the code matches" = "Egy magát „%@” néven mutató eszközzel párosítasz — ellenőrizd, hogy a kód egyezik";
 "Not a match" = "Nem egyezik";
 "Codes match" = "A kódok egyeznek";
 "Your Mac is up to date" = "A Mac naprakész";
 "Done" = "Kész";
 "Open Settings" = "Beállítások megnyitása";
 "Try again" = "Újrapróbálás";
+"This Mac could not be forgotten." = "Ezt a Macet nem sikerült elfelejteni.";
+"This Mac has been forgotten on this iPhone." = "Ez az iPhone elfelejtette ezt a Macet.";
+"Now do the same on your Mac — iPhone Sync ▸ Forget this iPhone and pair again — then tap Try again here." = "Most tedd meg ugyanezt a Macen: iPhone szinkronizálása ▸ iPhone elfelejtése és új párosítás — utána koppints itt az Újrapróbálásra.";
 "Forget this Mac and pair again" = "Mac elfelejtése és újrapárosítás";
 "Send with AirDrop instead" = "Küldés inkább AirDroppal";
 "AstroTool could not find your Mac on this network. Check that Local Network access is allowed for AstroTool in Settings, and that iPhone Sync is open on your Mac." = "Az AstroTool nem találta meg a Macet ezen a hálózaton. Ellenőrizd, hogy a Beállításokban engedélyezve van-e a helyi hálózat elérése az AstroTool számára, és hogy az iPhone szinkronizálása meg van-e nyitva a Macen.";

@@ -96,8 +96,31 @@ public actor NearbyPairingSession {
     /// before `shortAuthenticationCode` ever resolves. Multi-Mac/multi-
     /// iPhone disambiguation (fix item 3): the pairing-code confirmation UI
     /// needs to say WHICH device answered before the user compares digits,
-    /// not just after `establish()` returns.
+    /// not just after `establish()` returns. Always the sanitized form (see
+    /// `sanitizedDisplayName(_:)`), never the raw wire value.
     private var resolvedPeerDisplayName: String = ""
+
+    /// Longest peer-supplied display name any UI will be handed. Long enough
+    /// for a real device name ("Zoltán MacBook Pro 16 (munkahelyi)"), short
+    /// enough that it cannot push the SAS code out of view.
+    static let maximumPeerDisplayNameLength = 64
+
+    /// Clamps a peer-supplied display name before anything shows or stores
+    /// it. The name rides in `.hello`, which arrives BEFORE any trust
+    /// decision and which the signed transcript deliberately does not cover,
+    /// so it is attacker-chosen text: control characters (newlines included)
+    /// are dropped so it cannot forge extra lines of UI copy, and the result
+    /// is capped so it cannot crowd out the code the user must compare. The
+    /// wire format and the transcript are untouched — this is a display and
+    /// storage clamp only.
+    static func sanitizedDisplayName(_ raw: String) -> String {
+        let withoutControlCharacters = String(String.UnicodeScalarView(
+            raw.unicodeScalars.filter { !CharacterSet.controlCharacters.contains($0) }
+        ))
+        let trimmed = withoutControlCharacters.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > maximumPeerDisplayNameLength else { return trimmed }
+        return String(trimmed.prefix(maximumPeerDisplayNameLength - 1)) + "…"
+    }
 
     public init(
         role: NearbyRole,
@@ -197,8 +220,12 @@ public actor NearbyPairingSession {
         // Set as soon as the hello is structurally valid -- well before the
         // trust decision, key exchange, or SAS derivation below, so
         // `peerDisplayName` is already readable the instant a caller sees
-        // the pairing code (fix item 3).
-        resolvedPeerDisplayName = peerHello.displayName
+        // the pairing code (fix item 3). Sanitized here, once, because this
+        // is untrusted text at this point in the handshake -- the same
+        // clamped value is what gets stored as the trusted peer's name
+        // below.
+        let peerName = Self.sanitizedDisplayName(peerHello.displayName)
+        resolvedPeerDisplayName = peerName
 
         // Trust decision, from the hello exchange alone.
         let storedPeer = try trustStore.trustedPeers().first { $0.deviceID == peerHello.deviceID }
@@ -334,7 +361,7 @@ public actor NearbyPairingSession {
             try trustStore.storeTrustedPeer(MobilePeerIdentity(
                 deviceID: peerHello.deviceID,
                 signingPublicKeyRawRepresentation: peerHello.signingPublicKeyRawRepresentation,
-                displayName: peerHello.displayName
+                displayName: peerName
             ))
         }
 
@@ -358,7 +385,7 @@ public actor NearbyPairingSession {
             peer: MobilePeerIdentity(
                 deviceID: peerHello.deviceID,
                 signingPublicKeyRawRepresentation: peerIdentityPub,
-                displayName: peerHello.displayName
+                displayName: peerName
             ),
             wasFirstPairing: isFirstPairing
         )
