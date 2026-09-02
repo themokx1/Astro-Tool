@@ -144,6 +144,12 @@ public final class NightsStore {
     public private(set) var nightWeather: [String: DailyCloudSummary] = [:]
     public private(set) var isLoading = false
     public private(set) var errorMessage: String?
+    /// Which library the rows above actually came from -- recorded for the
+    /// same reason `ProjectsStore.rootURL` is: without it nothing can tell
+    /// whether a published night belongs to the library currently open.
+    /// `nil` whenever no library is open (including right after a failed
+    /// `open`).
+    public private(set) var rootURL: URL?
     public private(set) var selectedMonth: String?
     public private(set) var selectedNightID: UUID?
     /// W4-3b (owner's second Projects complaint, same disease on this page):
@@ -157,6 +163,12 @@ public final class NightsStore {
     private let metadataFactory: MetadataFactory
     private let calendarProvider: CalendarProvider
     private let weatherProvider: WeatherProvider
+    /// Bumped at the start of EVERY `open(rootURL:)` call and captured into
+    /// that call's own local `generation` -- the same guard shape
+    /// `ProjectsStore.selectProject`/`ArchiveStore.load` already use. Without
+    /// it, a library switch while the first load is still in flight lets the
+    /// older load's nights publish last, under the newer library's root.
+    private var openGeneration = 0
 
     /// `calendarProvider` is `Optional`/`nil` rather than defaulted directly
     /// to `NightsStore.productionCalendar`, and MUST stay that way: an
@@ -284,25 +296,52 @@ public final class NightsStore {
     public func selectNight(_ id: UUID?) { selectedNightID = id }
 
     public func open(rootURL: URL) async throws {
+        openGeneration += 1
+        let generation = openGeneration
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        // A superseded open must not clear the spinner a newer one is still
+        // earning.
+        defer { if generation == openGeneration { isLoading = false } }
         do {
             let metadata = try metadataFactory(rootURL.standardizedFileURL)
-            nights = try await NightsQuery(metadata: metadata).nights().map(NightRow.init)
-            planningNights = (try? await calendarProvider(rootURL.standardizedFileURL)) ?? []
+            self.rootURL = rootURL.standardizedFileURL
+            // Every result lands in a local first: this method awaits three
+            // round-trips, and without the generation guard below two
+            // overlapping opens (a library switch while the first is still
+            // loading) interleave two libraries' nights.
+            let loadedNights = try await NightsQuery(metadata: metadata).nights().map(NightRow.init)
+            let calendar = (try? await calendarProvider(rootURL.standardizedFileURL)) ?? []
             // W4-2: weather is opt-in side data (same posture as V1's
             // `AppState.loadWeather`) -- a disabled toggle, no site, or an
             // outright fetch failure all fall back to `[:]` rather than
             // failing `open(rootURL:)` itself, so a flaky Open-Meteo call
             // never blocks the calendar the rest of this method just loaded.
-            nightWeather = (try? await weatherProvider(rootURL.standardizedFileURL)) ?? [:]
+            let weather = (try? await weatherProvider(rootURL.standardizedFileURL)) ?? [:]
+            guard generation == openGeneration else { return }
+            nights = loadedNights
+            planningNights = calendar
+            nightWeather = weather
             recomputeVisibleNights()
             recomputePlanningRows()
         } catch {
+            guard generation == openGeneration else { throw error }
+            // A library that failed to open shows NOTHING rather than the
+            // previous library's nights under the new root.
+            clearLoadedLibrary()
             errorMessage = error.localizedDescription
             throw error
         }
+    }
+
+    private func clearLoadedLibrary() {
+        rootURL = nil
+        nights = []
+        planningNights = []
+        nightWeather = [:]
+        selectedNightID = nil
+        visibleNights = []
+        planningRows = []
     }
 
     public static func productionCalendar(rootURL: URL) async throws -> [NightSummary] {

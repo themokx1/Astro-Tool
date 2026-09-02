@@ -356,7 +356,75 @@ struct ProjectsStoreTests {
         #expect(try await store.search("processing").map(\.id) == [orion.id])
         #expect(try await store.search("IC1396").map(\.id) == [elephant.id])
     }
+
+    // MARK: - Overlapping library opens
+
+    @Test("A slower, earlier open(A) never publishes its rows over a later open(B) that already finished")
+    func openGuardsAgainstStaleOutOfOrderCompletion() async throws {
+        // `open` used to assign `metadata`/`rootURL` synchronously and then
+        // assign every awaited query result with no guard at all -- the same
+        // disease `selectProject` above was already fixed for. Switching
+        // libraries while the first one is still loading therefore ended with
+        // library A's projects listed under library B's root, whichever way
+        // the two loads happened to interleave.
+        let metadataA = try MetadataStore.temporary()
+        let metadataB = try MetadataStore.temporary()
+        let projectA = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "A", phase: .collecting)
+        let projectB = ProjectRecord(id: UUID(), catalogID: "M 42", displayName: "B", phase: .collecting)
+        try await metadataA.save(projectA)
+        try await metadataB.save(projectB)
+        let rootA = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("libraryA", isDirectory: true)
+        let rootB = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("libraryB", isDirectory: true)
+        let store = ProjectsStore(metadataFactory: { url in
+            url.lastPathComponent == "libraryB" ? metadataB : metadataA
+        })
+
+        let race = SelectionRace()
+        store.testOnlyOpenDelay = { url in
+            if url.lastPathComponent == "libraryA" { await race.enterAndWaitToProceed() }
+        }
+
+        let staleOpen = Task { try await store.open(rootURL: rootA) }
+        await race.waitForEntry()
+        try await store.open(rootURL: rootB)
+        await race.proceed()
+        try await staleOpen.value
+
+        #expect(store.rootURL == rootB.standardizedFileURL)
+        #expect(store.projects.map(\.id) == [projectB.id], "the newest open owns every published row")
+        #expect(store.workspaceRows.map(\.project.id) == [projectB.id])
+        #expect(try await store.search("M 42").map(\.id) == [projectB.id])
+        #expect(try await store.search("IC 1396").isEmpty, "the stale library's search index must be gone too")
+    }
+
+    @Test("A failed open clears the previous library's rows instead of leaving them under the new root")
+    func failedOpenLeavesNoStaleRows() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "A", phase: .collecting)
+        try await metadata.save(project)
+        let good = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("good", isDirectory: true)
+        let broken = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("broken", isDirectory: true)
+        let store = ProjectsStore(metadataFactory: { url in
+            if url.lastPathComponent == "broken" { throw StoreOpenFailure() }
+            return metadata
+        })
+
+        try await store.open(rootURL: good)
+        try await store.selectProject(project.id)
+        #expect(store.projects.count == 1)
+
+        await #expect(throws: StoreOpenFailure.self) { try await store.open(rootURL: broken) }
+
+        #expect(store.projects.isEmpty, "a library that failed to open must not show the previous one's projects")
+        #expect(store.workspaceRows.isEmpty)
+        #expect(store.selectedProject == nil)
+        #expect(store.selectedProjectID == nil)
+        #expect(store.hasAnyGoal == false)
+        #expect(store.errorMessage != nil)
+    }
 }
+
+private struct StoreOpenFailure: Error {}
 
 /// A two-step rendezvous for `selectProjectGuardsAgainstStaleOutOfOrderCompletion`
 /// above: lets the test deterministically pause `ProjectsStore`'s slow call

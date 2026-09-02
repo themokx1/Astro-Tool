@@ -1001,6 +1001,92 @@ struct HomeStoreTests {
     }
 }
 
+/// `configure` awaits nine providers in a row and then publishes
+/// `tonightPlans`/`calibShoppingItems`/`flatShoppingItems`/`snapshot`. It
+/// used to do so with no generation guard, so switching libraries while the
+/// first dashboard was still loading let the slower, older load publish its
+/// numbers under the newer library's name -- the same race
+/// `ProjectsStore.selectProject`'s own generation token already covered.
+@MainActor
+struct HomeStoreOverlappingConfigureTests {
+    @Test("A slower, earlier configure(A) never publishes over a later configure(B) that already finished")
+    func configureGuardsAgainstStaleOutOfOrderCompletion() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "A", phase: .collecting)
+        try await metadata.save(project)
+        let projects = ProjectsStore(metadataFactory: { _ in metadata })
+        let rootA = URL(fileURLWithPath: "/Volumes/Test/libraryA", isDirectory: true)
+        let rootB = URL(fileURLWithPath: "/Volumes/Test/libraryB", isDirectory: true)
+        try await projects.open(rootURL: rootA)
+
+        let race = ConfigureRace()
+        let planA = TargetPlan(
+            target: "STALE", displayName: "Stale", usableIntegrationSeconds: 0, goalSeconds: nil,
+            culminationLocal: "01:14", maxAltitudeDeg: 79, visibleWindowLocal: "22:10–03:36",
+            visibleHours: 5.5, moonIlluminationPercent: 11, moonSeparationDeg: 87,
+            verdict: "ma jó", score: 0.92
+        )
+        let planB = TargetPlan(
+            target: "CURRENT", displayName: "Current", usableIntegrationSeconds: 0, goalSeconds: nil,
+            culminationLocal: "02:14", maxAltitudeDeg: 60, visibleWindowLocal: "23:10–03:36",
+            visibleHours: 4.5, moonIlluminationPercent: 11, moonSeparationDeg: 87,
+            verdict: "ma jó", score: 0.5
+        )
+        // `tonightProvider` is `configure`'s own first `await`, so holding
+        // library A's there reproduces the real "switch library while the
+        // dashboard is still loading" order.
+        let store = HomeStore(tonightProvider: { url in
+            if url.lastPathComponent == "libraryA" {
+                await race.enterAndWaitToProceed()
+                return [planA]
+            }
+            return [planB]
+        })
+
+        let staleConfigure = Task {
+            await store.configure(libraryName: "A", rootURL: rootA, projectsStore: projects, nightCount: 1)
+        }
+        await race.waitForEntry()
+        await store.configure(libraryName: "B", rootURL: rootB, projectsStore: projects, nightCount: 7)
+        await race.proceed()
+        await staleConfigure.value
+
+        #expect(store.snapshot.libraryName == "B", "the newest configure owns the published dashboard")
+        #expect(store.snapshot.nightCount == 7)
+        #expect(store.tonightPlans.map(\.target) == ["CURRENT"])
+        #expect(store.snapshot.tonightRecommendations.map(\.target) == ["CURRENT"])
+    }
+}
+
+/// Same continuation-based rendezvous as `ProjectsStoreTests`' own
+/// `SelectionRace`: hold one `configure` paused inside an injected provider,
+/// run a second to completion, then release the first.
+private actor ConfigureRace {
+    private var hasEntered = false
+    private var canProceed = false
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+    private var proceedContinuation: CheckedContinuation<Void, Never>?
+
+    func waitForEntry() async {
+        if hasEntered { return }
+        await withCheckedContinuation { enteredContinuation = $0 }
+    }
+
+    func enterAndWaitToProceed() async {
+        hasEntered = true
+        enteredContinuation?.resume()
+        enteredContinuation = nil
+        if canProceed { return }
+        await withCheckedContinuation { proceedContinuation = $0 }
+    }
+
+    func proceed() {
+        canProceed = true
+        proceedContinuation?.resume()
+        proceedContinuation = nil
+    }
+}
+
 /// W5-2 finding 5 (owner pixel review): cold start on a spun-down SSD spent
 /// ~10-20s with Home showing "No library open"/"Site not set" while the
 /// library was already known and opening -- the empty state lied during

@@ -287,10 +287,127 @@ struct NightsStoreTests {
         #expect(store.nightWeather.isEmpty)
     }
 
+    // MARK: - Overlapping library opens
+
+    @Test("A slower, earlier open(A) never publishes its nights over a later open(B) that already finished")
+    func openGuardsAgainstStaleOutOfOrderCompletion() async throws {
+        // `open` used to assign every awaited result with no generation
+        // guard, so switching libraries mid-load ended with library A's
+        // nights and planning calendar listed under library B's root.
+        let metadataA = try MetadataStore.temporary()
+        let metadataB = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "A", phase: .collecting)
+        let nightA = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        let nightB = NightRecord(id: UUID(), localDate: "2026-09-01", timeZoneID: "Europe/Budapest")
+        try await metadataA.save(MetadataWriteBatch(
+            projects: [project], nights: [nightA],
+            series: [makeSeries(project: project.id, night: nightA.id, exposure: 30)]
+        ))
+        try await metadataB.save(MetadataWriteBatch(
+            projects: [project], nights: [nightB],
+            series: [makeSeries(project: project.id, night: nightB.id, exposure: 300)]
+        ))
+        let rootA = URL(fileURLWithPath: "/Volumes/Test/libraryA", isDirectory: true)
+        let rootB = URL(fileURLWithPath: "/Volumes/Test/libraryB", isDirectory: true)
+        let forecastB = [NightSummary(date: "2026-09-02", astroDarkHours: 5.2, moonIlluminationPercent: 8, bestTargets: [])]
+        let race = OpenRace()
+        let store = NightsStore(
+            metadataFactory: { url in url.lastPathComponent == "libraryB" ? metadataB : metadataA },
+            // The calendar provider is this store's own first `await` after
+            // the nights query, so holding library A's here reproduces the
+            // real "library switch while the first load is in flight" order.
+            calendarProvider: { url in
+                if url.lastPathComponent == "libraryA" {
+                    await race.enterAndWaitToProceed()
+                    return [NightSummary(date: "2026-08-09", astroDarkHours: 4, moonIlluminationPercent: 50, bestTargets: [])]
+                }
+                return forecastB
+            },
+            weatherProvider: { _ in nil }
+        )
+
+        let staleOpen = Task { try await store.open(rootURL: rootA) }
+        await race.waitForEntry()
+        try await store.open(rootURL: rootB)
+        await race.proceed()
+        try await staleOpen.value
+
+        #expect(store.rootURL == rootB.standardizedFileURL)
+        #expect(store.nights.map(\.date) == ["2026-09-01"], "the newest open owns every published row")
+        #expect(store.visibleNights.map(\.date) == ["2026-09-01"])
+        #expect(store.planningNights == forecastB)
+    }
+
+    @Test("A failed open clears the previous library's nights instead of leaving them under the new root")
+    func failedOpenLeavesNoStaleRows() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = ProjectRecord(id: UUID(), catalogID: "IC 1396", displayName: "A", phase: .collecting)
+        let night = NightRecord(id: UUID(), localDate: "2026-08-08", timeZoneID: "Europe/Budapest")
+        try await metadata.save(MetadataWriteBatch(
+            projects: [project], nights: [night],
+            series: [makeSeries(project: project.id, night: night.id, exposure: 30)]
+        ))
+        let good = URL(fileURLWithPath: "/Volumes/Test/good", isDirectory: true)
+        let broken = URL(fileURLWithPath: "/Volumes/Test/broken", isDirectory: true)
+        let store = NightsStore(
+            metadataFactory: { url in
+                if url.lastPathComponent == "broken" { throw NightsOpenFailure() }
+                return metadata
+            },
+            calendarProvider: { _ in [NightSummary(date: "2026-08-09", astroDarkHours: 4, moonIlluminationPercent: 50, bestTargets: [])] },
+            weatherProvider: { _ in nil }
+        )
+
+        try await store.open(rootURL: good)
+        #expect(store.nights.count == 1)
+
+        await #expect(throws: NightsOpenFailure.self) { try await store.open(rootURL: broken) }
+
+        #expect(store.nights.isEmpty, "a library that failed to open must not show the previous one's nights")
+        #expect(store.visibleNights.isEmpty)
+        #expect(store.planningNights.isEmpty)
+        #expect(store.planningRows.isEmpty)
+        #expect(store.selectedNightID == nil)
+        #expect(store.errorMessage != nil)
+    }
+
     private func makeSeries(project: UUID, night: UUID, exposure: Double) -> SeriesRecord {
         SeriesRecord(id: UUID(), projectID: project, nightID: night, setupID: nil,
             setupDescriptor: "ASI2600MC", sensorMode: .osc, passband: .dualBand,
             exposureSeconds: exposure, filterName: "SV220", filterID: nil,
             gain: 100, offset: 50, binning: "1x1")
+    }
+}
+
+private struct NightsOpenFailure: Error {}
+
+/// A two-step rendezvous that lets a test hold one `open` paused inside an
+/// injected provider, run a second `open` to completion, and only then
+/// release the first -- proving the generation guard, not lucky scheduling,
+/// decides which library's rows end up published. Same continuation-based
+/// gate shape as `ProjectsStoreTests`' own `SelectionRace`.
+private actor OpenRace {
+    private var hasEntered = false
+    private var canProceed = false
+    private var enteredContinuation: CheckedContinuation<Void, Never>?
+    private var proceedContinuation: CheckedContinuation<Void, Never>?
+
+    func waitForEntry() async {
+        if hasEntered { return }
+        await withCheckedContinuation { enteredContinuation = $0 }
+    }
+
+    func enterAndWaitToProceed() async {
+        hasEntered = true
+        enteredContinuation?.resume()
+        enteredContinuation = nil
+        if canProceed { return }
+        await withCheckedContinuation { proceedContinuation = $0 }
+    }
+
+    func proceed() {
+        canProceed = true
+        proceedContinuation?.resume()
+        proceedContinuation = nil
     }
 }

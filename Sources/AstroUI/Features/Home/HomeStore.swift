@@ -479,6 +479,14 @@ public final class HomeStore {
     /// second library open before the first fetch lands must not let the
     /// stale one win. Same guard shape as `PlanningStore.recomputeGeneration`.
     private var weatherGeneration = 0
+    /// Bumped at the start of every
+    /// `configure(libraryName:rootURL:projectsStore:nightCount:)` call, for
+    /// the same reason `weatherGeneration` exists one line up: that method
+    /// awaits nine providers before it publishes anything, so a library
+    /// switch while the first dashboard is still loading used to let the
+    /// slower, older load publish its plans and counts under the newer
+    /// library's name.
+    private var configureGeneration = 0
     /// Test-only handle to the in-flight weather fetch, mirroring
     /// `PlanningStore.pendingRefresh`'s own contract -- `configure` doesn't
     /// await this `Task` itself (weather must never delay the dashboard), so
@@ -599,12 +607,13 @@ public final class HomeStore {
         projectsStore: ProjectsStore,
         nightCount: Int
     ) async {
+        configureGeneration += 1
+        let generation = configureGeneration
         let plans: [TargetPlan] = if let rootURL {
             (try? await tonightProvider(rootURL)) ?? []
         } else {
             []
         }
-        tonightPlans = plans
 
         // Task 1 (owner feedback wave 3): `Planner.plan` -- this store's own
         // `tonightProvider` -- already stamps every plan with a `SkyVerdict`
@@ -658,14 +667,14 @@ public final class HomeStore {
         } else {
             []
         }
-        calibShoppingItems = CalibShoppingList.build(coverage: coverage, plans: plans)
+        let calibItems = CalibShoppingList.build(coverage: coverage, plans: plans)
 
         let flatCoverage: [CalibNeed] = if let rootURL {
             (try? await flatCoverageProvider(rootURL)) ?? []
         } else {
             []
         }
-        flatShoppingItems = CalibShoppingList.build(coverage: flatCoverage, plans: plans)
+        let flatItems = CalibShoppingList.build(coverage: flatCoverage, plans: plans)
 
         // Task 1: a plan the shared `SkyVerdict` engine already flagged as
         // unshootable tonight (comet stale coordinate, no coordinate, low
@@ -746,6 +755,15 @@ public final class HomeStore {
         } else {
             nil
         }
+        // Nothing above published anything: every provider result waited in a
+        // local so the whole dashboard lands in ONE synchronous block, and
+        // only if a newer `configure` has not started meanwhile. A stale
+        // completion returning here also leaves `loadWeather` alone -- the
+        // newer call owns that fetch's own generation too.
+        guard generation == configureGeneration else { return }
+        tonightPlans = plans
+        calibShoppingItems = calibItems
+        flatShoppingItems = flatItems
         snapshot = HomeSnapshot(
             libraryName: libraryName,
             nightContext: nightContext,

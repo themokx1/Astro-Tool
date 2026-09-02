@@ -115,6 +115,21 @@ public final class ProjectsStore {
     /// above without needing a genuinely slow query. `nil` (the default, and
     /// the only value ever set in production) is a complete no-op.
     var testOnlySelectionDelay: ((UUID) async -> Void)?
+    /// Bumped at the start of EVERY `open(rootURL:)` call, exactly like
+    /// `selectionGeneration` is for `selectProject`. `open` sets `metadata`/
+    /// `rootURL` synchronously and then awaits four query round-trips, so
+    /// switching libraries while the first one is still loading used to
+    /// interleave two libraries' results -- the older load's rows would
+    /// publish last and sit under the newer library's root, with no way for
+    /// the user to tell.
+    private var openGeneration = 0
+    /// Test-only hook, same contract as `testOnlySelectionDelay` above:
+    /// `open` awaits this (keyed by the root about to be loaded) right
+    /// before its queries, so `ProjectsStoreTests` can hold one open paused
+    /// behind another and exercise the generation guard deterministically.
+    /// `metadataFactory` itself is synchronous, so there is no other seam to
+    /// pause. `nil` in production, a complete no-op.
+    var testOnlyOpenDelay: ((URL) async -> Void)?
     /// Exposes the already-open store for the current root so other V2
     /// surfaces (Settings' Support tab diagnostics) can query it directly
     /// instead of opening a second confined connection to the same
@@ -127,30 +142,70 @@ public final class ProjectsStore {
     }
 
     public func open(rootURL: URL) async throws {
+        openGeneration += 1
+        let generation = openGeneration
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        // A superseded open must not clear the spinner a newer one is still
+        // earning.
+        defer { if generation == openGeneration { isLoading = false } }
         do {
             let metadata = try metadataFactory(rootURL.standardizedFileURL)
             self.metadata = metadata
             self.rootURL = rootURL.standardizedFileURL
-            projects = try await metadata.projects()
-            workspaceRows = try await Self.makeWorkspaceRows(projects: projects, metadata: metadata)
+            if let testOnlyOpenDelay { await testOnlyOpenDelay(rootURL.standardizedFileURL) }
+            // Every query result lands in a local first; nothing is published
+            // until the generation guard below confirms this open is still
+            // the current one -- otherwise two overlapping opens interleave
+            // two libraries' rows.
+            let loadedProjects = try await metadata.projects()
+            let rows = try await Self.makeWorkspaceRows(projects: loadedProjects, metadata: metadata)
+            let index = try await Self.makeSearchIndex(projects: loadedProjects, metadata: metadata)
+            var selection: (snapshot: ProjectSnapshot?, annotation: ProjectAnnotationRecord?)?
+            if let selectedProjectID, loadedProjects.contains(where: { $0.id == selectedProjectID }) {
+                selection = (
+                    try await ProjectsQuery(metadata: metadata).project(id: selectedProjectID),
+                    try await metadata.projectAnnotation(projectID: selectedProjectID)
+                )
+            }
+            guard generation == openGeneration else { return }
+            projects = loadedProjects
+            workspaceRows = rows
             sortWorkspaceRows()
             updateHasAnyGoal()
-            searchIndex = try await Self.makeSearchIndex(projects: projects, metadata: metadata)
-            if let selectedProjectID, projects.contains(where: { $0.id == selectedProjectID }) {
-                selectedProject = try await ProjectsQuery(metadata: metadata).project(id: selectedProjectID)
-                selectedProjectAnnotation = try await metadata.projectAnnotation(projectID: selectedProjectID)
+            searchIndex = index
+            if let selection {
+                selectedProject = selection.snapshot
+                selectedProjectAnnotation = selection.annotation
             } else {
                 selectedProjectID = nil
                 selectedProject = nil
                 selectedProjectAnnotation = nil
             }
         } catch {
+            guard generation == openGeneration else { throw error }
+            // A library that failed to open shows NOTHING rather than the
+            // previous library's rows under the new root -- those rows would
+            // look real and answer for a library that is not open.
+            clearLoadedLibrary()
             errorMessage = error.localizedDescription
             throw error
         }
+    }
+
+    private func clearLoadedLibrary() {
+        // `rootURL`/`metadata` go too: they are what "a library is open"
+        // means here (`ProjectsView.rateAllProjects` runs against `rootURL`),
+        // and after a failed open none is.
+        metadata = nil
+        rootURL = nil
+        projects = []
+        workspaceRows = []
+        searchIndex = [:]
+        hasAnyGoal = false
+        selectedProjectID = nil
+        selectedProject = nil
+        selectedProjectAnnotation = nil
     }
 
     public func setSortOrder(_ newValue: [KeyPathComparator<ProjectWorkspaceRow>]) {
