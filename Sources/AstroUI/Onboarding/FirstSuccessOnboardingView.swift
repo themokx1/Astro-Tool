@@ -410,7 +410,18 @@ public struct FirstSuccessOnboardingView: View {
                 try await libraryStore.openAndScan(root)
                 libraryReady()
             } catch {
-                coordinator.reportError(error.localizedDescription)
+                // W-fix (item 6): `error.localizedDescription` on an
+                // `AstroError` resolves `AstroError.errorDescription`, which
+                // is DELIBERATELY plain, untranslated English (see that
+                // property's own doc comment in `AstroCore/Model/Types.swift`)
+                // -- showing it directly here leaked English into this
+                // otherwise-Hungarian alert. `LibraryWelcomeView
+                // .accessProblemMessage(for:)` resolves the exact same
+                // classification (`LibraryAccessProblem`) and hu.lproj keys
+                // `LibraryWelcomeView`'s own scan-failure screen already
+                // uses, as a `String` this store's tested `String` contract
+                // can hold.
+                coordinator.reportError(LibraryWelcomeView.accessProblemMessage(for: LibraryAccessProblem(catching: error)))
             }
         }
     }

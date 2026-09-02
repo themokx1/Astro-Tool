@@ -242,6 +242,36 @@ struct CaptureImportCommandTests {
         #expect(receipt.copied.count == 1)
     }
 
+    @Test("A failure caused by an AstroError carries it alongside a real English reason, not a raw enum dump")
+    func failureCarriesAstroErrorAlongsideReadableReason() throws {
+        let root = try captureImportTempRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try makeDestinationCaptureTree(root: root, target: "IC1396", date: "2026-08-16", slug: "r8-osc")
+
+        // A source URL that was never created -- `WriteGuard.copyCaptureFile`
+        // throws `AstroError.pathNotFound(path:)` for exactly this shape,
+        // the deterministic way to reach `copy(...)`'s generic `catch`
+        // block with a real `AstroError` without racing a real file delete.
+        let missingSource = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString).cr3")
+        let items = [
+            CaptureImportItem(sourceURL: missingSource, relativeSourcePath: "missing.cr3", fileName: "missing.cr3", role: .light, sizeBytes: 9),
+        ]
+
+        let receipt = try CaptureImportCommand.copy(
+            items: items, root: root, accessMode: .mutationEnabled, target: "IC1396", date: "2026-08-16", slug: "r8-osc"
+        )
+
+        #expect(receipt.failed.count == 1)
+        let failure = try #require(receipt.failed.first)
+        #expect(failure.astroError == .pathNotFound(path: missingSource.path))
+        #expect(failure.reason.contains(missingSource.path))
+        // W6 fix (item 6) regression: this used to be `String(describing:
+        // AstroError.pathNotFound(path: "..."))`, i.e. the raw case name
+        // reaching the receipt UI verbatim.
+        #expect(!failure.reason.contains("pathNotFound"), "reason must be a readable sentence, not a raw enum dump")
+    }
+
     @Test("A non-copyable role's rejection message is English source text, not the hardcoded Hungarian sentence it used to be")
     func nonCopyableRoleRejectionIsEnglish() {
         do {

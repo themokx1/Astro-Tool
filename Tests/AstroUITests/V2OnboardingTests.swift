@@ -425,6 +425,33 @@ struct V2OnboardingTests {
         #expect(LibraryAccessProblem(catching: AppStoragePathsError.libraryIdentityMismatch) != .storageInsideLibrary)
     }
 
+    // MARK: - v5 flow fixes, item 6: `FirstSuccessOnboardingView.makeLibrary()`
+    // used to pass `error.localizedDescription` straight into `coordinator
+    // .reportError(_:)` -- for an `AstroError`, that resolves `errorDescription`,
+    // which is DELIBERATELY plain, untranslated English (its own doc
+    // comment in `AstroCore/Model/Types.swift`), leaking English into an
+    // otherwise-Hungarian alert. `accessProblemMessage(for:)` is the
+    // `String`-typed sibling of `accessProblemText(for:)` this view now
+    // calls instead, resolving the exact same `hu.lproj` keys.
+
+    @Test("accessProblemMessage(for:) resolves the same fixed English fallback phrase accessProblemText(for:) does, substituting dynamic data via %@")
+    func accessProblemMessageMatchesAccessProblemTextPhrasing() {
+        let path = "/Volumes/SDCard/IMG_0001.CR3"
+        let message = LibraryWelcomeView.accessProblemMessage(for: AstroError.accessDenied(path: path))
+        #expect(message.contains(path))
+        #expect(message.contains("not allowed to read"))
+        // The old bug's exact shape: a raw Swift enum dump, never this.
+        #expect(!message.contains("accessDenied"))
+        #expect(!message.contains("AstroError"))
+    }
+
+    @Test("accessProblemMessage(for:) covers the LibraryAccessProblem cases, not only .astro")
+    func accessProblemMessageCoversEveryProblemCase() {
+        #expect(LibraryWelcomeView.accessProblemMessage(for: .notDirectory).contains("Individual files cannot be scanned"))
+        #expect(LibraryWelcomeView.accessProblemMessage(for: .storageInsideLibrary).contains("only holds your photos"))
+        #expect(LibraryWelcomeView.accessProblemMessage(for: .other).contains("could not complete this action"))
+    }
+
     @Test("Summary continuation and preference setup remain separate optional choices")
     func summaryChoicesAreExplicit() async throws {
         let fixture = try OnboardingFixture.make()

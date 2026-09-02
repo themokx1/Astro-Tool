@@ -51,6 +51,20 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(view.contains(".onChange(of: libraryName)"))
     }
 
+    // MARK: - v5 flow fixes, item 6: makeLibrary()'s catch block used to
+    // pass error.localizedDescription (AstroError.errorDescription,
+    // deliberately untranslated English) straight into coordinator
+    // .reportError(_:), leaking English into an otherwise-Hungarian alert.
+
+    @Test("A failed library creation routes through the same translated classification LibraryWelcomeView uses")
+    func failedLibraryCreationRoutesThroughAccessProblemMessage() throws {
+        let view = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")
+        #expect(view.contains(
+            "coordinator.reportError(LibraryWelcomeView.accessProblemMessage(for: LibraryAccessProblem(catching: error)))"
+        ))
+        #expect(!view.contains("coordinator.reportError(error.localizedDescription)"))
+    }
+
     @Test("The Create Library button states plainly that it also enables writing")
     func createLibraryButtonStatesItEnablesWriting() throws {
         let view = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")

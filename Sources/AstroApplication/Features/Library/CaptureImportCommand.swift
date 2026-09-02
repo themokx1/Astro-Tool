@@ -124,10 +124,25 @@ public struct CaptureImportReceipt: Equatable, Sendable {
     public struct FailedFile: Equatable, Sendable {
         public let sourceURL: URL
         public let reason: String
+        /// The causing `AstroError`, when the failure was one -- `nil` for
+        /// the checksum-mismatch failure above (already a fixed, localized
+        /// `reason` sentence) and for any other error type. W-fix (item 6):
+        /// `reason` alone used to be built via `String(describing:)` for an
+        /// `AstroError` -- a raw Swift enum dump (`accessDenied(path:
+        /// "/…")`) reaching the receipt UI verbatim, in neither English nor
+        /// Hungarian. `reason` is now always a real, readable English
+        /// sentence (`error.localizedDescription`, which resolves
+        /// `AstroError.errorDescription` for an `AstroError`) as an honest
+        /// fallback; carrying the error itself alongside it lets a caller
+        /// IN `AstroUI` (this module cannot import it) render a properly
+        /// TRANSLATED sentence instead, via `LibraryWelcomeView
+        /// .accessProblemText(for:)`.
+        public let astroError: AstroError?
 
-        public init(sourceURL: URL, reason: String) {
+        public init(sourceURL: URL, reason: String, astroError: AstroError? = nil) {
             self.sourceURL = sourceURL
             self.reason = reason
+            self.astroError = astroError
         }
     }
 
@@ -378,9 +393,18 @@ public enum CaptureImportCommand {
                     sha256: destinationHash
                 ))
             } catch {
+                // W-fix (item 6): this used to render an `AstroError` via
+                // `String(describing:)` -- a raw Swift enum dump
+                // (`accessDenied(path: "/…")`) reaching the receipt UI
+                // verbatim. `error.localizedDescription` resolves
+                // `AstroError.errorDescription` for an `AstroError` (a real,
+                // readable English sentence) and is already the general
+                // fallback for anything else; `astroError` carries the
+                // typed error alongside it so `AstroUI` can translate it.
                 failed.append(CaptureImportReceipt.FailedFile(
                     sourceURL: item.sourceURL,
-                    reason: (error as? AstroError).map(String.init(describing:)) ?? error.localizedDescription
+                    reason: error.localizedDescription,
+                    astroError: error as? AstroError
                 ))
             }
             progress?(index + 1, total)

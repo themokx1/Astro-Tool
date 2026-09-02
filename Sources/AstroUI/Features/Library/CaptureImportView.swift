@@ -1089,8 +1089,11 @@ public struct CaptureImportView: View {
                         Text("\(receipt.failed.count) files failed to copy:")
                             .font(.caption.weight(.semibold)).foregroundStyle(AstroTokens.Color.critical)
                         ForEach(receipt.failed, id: \.sourceURL) { failure in
-                            Text(verbatim: "\(failure.sourceURL.lastPathComponent): \(failure.reason)")
-                                .font(.caption).foregroundStyle(.secondary)
+                            HStack(spacing: 0) {
+                                Text(verbatim: "\(failure.sourceURL.lastPathComponent): ")
+                                failureReasonText(failure)
+                            }
+                            .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -1131,6 +1134,24 @@ public struct CaptureImportView: View {
             }
         }
         .accessibilityIdentifier("v2.capture-import.receipt")
+    }
+
+    /// W-fix (item 6): a failed copy's reason used to always render
+    /// `failure.reason` verbatim -- for an `AstroError`-caused failure,
+    /// that is `error.localizedDescription`, a real English sentence but
+    /// still English no matter the app's own language, since `AstroError
+    /// .errorDescription` deliberately never translates (see its own doc
+    /// comment). When `failure.astroError` is set, this renders the SAME
+    /// translated sentence `LibraryWelcomeView`'s own access-problem screen
+    /// shows for that error, via its `accessProblemText(for:)`; otherwise
+    /// it falls back to the plain English `reason` (already a fixed,
+    /// localized sentence for the one non-`AstroError` failure this engine
+    /// produces -- the checksum mismatch).
+    private func failureReasonText(_ failure: CaptureImportReceipt.FailedFile) -> Text {
+        if let astroError = failure.astroError {
+            return LibraryWelcomeView.accessProblemText(for: astroError)
+        }
+        return Text(verbatim: failure.reason)
     }
 
     /// How many of the items submitted to `CaptureImportCommand.copy` never

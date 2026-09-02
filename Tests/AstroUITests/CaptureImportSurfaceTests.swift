@@ -83,6 +83,25 @@ struct CaptureImportSurfaceTests {
         #expect(view.contains("if store.destinationStore.isUndone { structureUndone() }"))
     }
 
+    // MARK: - v5 flow fixes, item 6: a failed copy's reason used to render
+    // a raw `String(describing: AstroError)` dump into the receipt (e.g.
+    // `accessDenied(path: "/…")`), in neither English nor Hungarian.
+
+    @Test("A failure's AstroError is carried alongside a readable English reason, not rendered via String(describing:)")
+    func failedFileCarriesAstroErrorInsteadOfARawDump() throws {
+        let command = try source("Sources/AstroApplication/Features/Library/CaptureImportCommand.swift")
+        #expect(!command.contains("String.init(describing:)"))
+        #expect(command.contains("public let astroError: AstroError?"))
+        #expect(command.contains("astroError: error as? AstroError"))
+    }
+
+    @Test("The receipt step renders a translated reason when the failure's AstroError is known")
+    func receiptStepTranslatesKnownFailureReasons() throws {
+        let view = try source("Sources/AstroUI/Features/Library/CaptureImportView.swift")
+        #expect(view.contains("private func failureReasonText(_ failure: CaptureImportReceipt.FailedFile) -> Text"))
+        #expect(view.contains("LibraryWelcomeView.accessProblemText(for: astroError)"))
+    }
+
     @Test("The onboarding journey wires structureCreated/structureUndone to the coordinator's own honest-completion facts")
     func onboardingWiresStructureCallbacksToTheCoordinator() throws {
         let onboarding = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")

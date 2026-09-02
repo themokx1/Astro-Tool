@@ -981,6 +981,54 @@ public struct LibraryWelcomeView: View {
         }
     }
 
+    /// W-fix (item 6): a `String`-typed sibling of `accessProblemText(for:)`
+    /// above, for a caller that needs a translated plain `String` rather
+    /// than a `Text` -- `FirstSuccessOnboardingStore.errorMessage` is
+    /// deliberately a plain `String` (tested directly against an
+    /// already-localized Hungarian string), not a `Text`/`LocalizedStringKey`,
+    /// so it cannot render a `Text` and there is no supported way to pull an
+    /// already-resolved string back out of one. Uses `String(localized:)`
+    /// with the SAME string-interpolation shape `accessProblemText(for:)`
+    /// gives `Text` (so both resolve the identical `hu.lproj` keys already
+    /// covered for that sibling) -- deliberately NOT `String(format:)`,
+    /// which `V2PolishSurfaceTests.noHandRolledFormatting` forbids anywhere
+    /// under `Sources/AstroUI`. `MobileSyncStore.swift` already establishes
+    /// this exact `String(localized: "... \(value) ...")` pattern for
+    /// dynamic content in this module.
+    static func accessProblemMessage(for problem: LibraryAccessProblem) -> String {
+        switch problem {
+        case .notDirectory:
+            String(localized: "Choose a folder that contains your image library. Individual files cannot be scanned as a library.")
+        case .storageInsideLibrary:
+            String(localized: "This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures.")
+        case .astro(let error):
+            accessProblemMessage(for: error)
+        case .other:
+            String(localized: "AstroTool could not complete this action. Try again, or choose a different library.")
+        }
+    }
+
+    static func accessProblemMessage(for error: AstroError) -> String {
+        switch error {
+        case .accessDenied(let path):
+            String(localized: "AstroTool is not allowed to read \(path).")
+        case .volumeNotMounted(let path):
+            String(localized: "The volume holding \(path) is not mounted.")
+        case .pathNotFound(let path):
+            String(localized: "\(path) no longer exists.")
+        case .corruptFITS(let path, let reason):
+            String(localized: "\(path) could not be read as a FITS file: \(reason)")
+        case .databaseError(let detail):
+            String(localized: "AstroTool's own index could not be read: \(detail)")
+        case .writeForbidden(let path):
+            String(localized: "Writing to \(path) is not permitted.")
+        case .sirilNotFound(let path):
+            String(localized: "Siril was not found at \(path).")
+        case .invalidInput(let detail):
+            detail
+        }
+    }
+
     private func beginScan(_ root: URL) {
         cancelScan()
         let operationID = UUID()
