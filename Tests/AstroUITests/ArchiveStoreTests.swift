@@ -178,6 +178,35 @@ struct ArchiveStoreTests {
 
         #expect(host.toasts.contains { $0.level == .success })
     }
+
+    // MARK: - v5 library-switch fixes, item 2 (follow-up): nothing reset
+    // this store's map/tasks/filter on a library switch, the same
+    // staleness `ReviewStore.reset()`/`LibraryHealthStore.reset()` already
+    // fix for their own state.
+
+    @Test("reset forgets the previous library's map, tasks, and class filter")
+    func resetClearsEverything() async throws {
+        let store = ArchiveStore(
+            mapFactory: { _ in .stub(totalBytes: 1000) },
+            taskFactory: { _ in
+                ArchiveTaskSummary(
+                    tasks: [.stub(kind: .intermediateFiles, bytes: 400)],
+                    uncovered: UncoveredFindings(count: 3, bytes: 900, categories: ["tool-output": 3])
+                )
+            }
+        )
+        await store.load(rootURL: URL(fileURLWithPath: "/tmp/lib"))
+        store.selectedClass = .light
+
+        store.reset()
+
+        #expect(store.snapshot == nil)
+        #expect(store.tasks.isEmpty)
+        #expect(store.uncovered == .none)
+        #expect(store.visibleRows.isEmpty)
+        #expect(store.errorMessage == nil)
+        #expect(store.selectedClass == nil)
+    }
 }
 
 private enum ArchiveStoreTestFailure: Error, Equatable {

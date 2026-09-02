@@ -108,6 +108,20 @@ public final class ArchiveStore {
         }
     }
 
+    /// v5 library-switch fixes (item 2, follow-up): forgets the library this
+    /// store had loaded. Nothing reset it on a library switch, so it kept
+    /// showing the PREVIOUS library's map/tasks/filter until the next scan
+    /// happened to run -- the same staleness `ReviewStore.reset()`/
+    /// `LibraryHealthStore.reset()` already fix for their own state.
+    public func reset() {
+        snapshot = nil
+        tasks = []
+        uncovered = .none
+        errorMessage = nil
+        selectedClass = nil
+        visibleRows = []
+    }
+
     /// Marks one archive task's finding group as acknowledged, then reloads
     /// so the card actually disappears. Routed through `OperationHost`
     /// rather than this store's own `errorMessage` -- `errorState`/

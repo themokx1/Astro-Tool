@@ -149,6 +149,13 @@ struct LibrarySwitchRobustnessSurfaceTests {
         #expect(source.contains("archiveStore.sharedMetadataProvider = projectsStore.sharedMetadataStore(for:)"))
     }
 
+    @Test("A library switch resets ArchiveStore too, the same as ReviewStore/LibraryHealthStore")
+    func libraryRootChangeResetsArchiveStore() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains(".onChange(of: onboardingStore.selectedRoot) { previous, current in"))
+        #expect(source.contains("archiveStore.reset()"))
+    }
+
     @Test("HomeStore.configure forwards its shared metadata store into productionHighlights")
     func homeStoreConfigureForwardsSharedMetadata() throws {
         let store = try contents("Sources/AstroUI/Features/Home/HomeStore.swift")

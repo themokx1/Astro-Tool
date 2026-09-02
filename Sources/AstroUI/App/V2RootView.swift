@@ -1063,6 +1063,11 @@ private struct V2Shell: View {
             router.resetForLibraryChange()
             reviewStore.reset()
             libraryHealthStore.reset()
+            // v5 library-switch fixes (item 2, follow-up): `ArchiveStore`
+            // has the identical staleness `ReviewStore` had -- its
+            // `snapshot`/`tasks`/`visibleRows` are keyed by library but
+            // nothing reset them on a switch either.
+            archiveStore.reset()
             guard let current else { return }
             // Re-loaded rather than just cleared, so whoever reads the
             // snapshot next (the Health page, the sidebar badge) sees the
