@@ -222,6 +222,15 @@ struct ReviewWorkspaceSurfaceTests {
         )
     }
 
+    @Test("The review load is keyed on the library root as well as the project")
+    func loadIsKeyedOnRootAndProject() throws {
+        let source = try Self.source()
+        #expect(
+            source.contains(#".task(id: "\(rootURL.path)|\(projectID)")"#),
+            "keyed on projectID alone, a library switch with the same project open never reloads"
+        )
+    }
+
     @Test("The frame table reads stored rows, never re-derives them in body")
     func frameRowsAreRecomputedOutsideBody() throws {
         let source = try Self.source()

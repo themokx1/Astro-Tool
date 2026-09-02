@@ -99,7 +99,12 @@ public struct ReviewWorkspace: View {
         // three nested cards.
         .astroRaisedSurface(.flush)
         .padding(AstroTokens.Spacing.spacious)
-        .task(id: projectID) {
+        // Keyed on the ROOT as well as the project: two libraries can hold
+        // the same project id (a copied/restored library), and this used to
+        // key on `projectID` alone -- so switching libraries with the same
+        // project open never re-ran the load, leaving the previous
+        // library's frames on screen under the new root.
+        .task(id: "\(rootURL.path)|\(projectID)") {
             try? await store.open(rootURL: rootURL, projectID: projectID)
         }
         // Wave 3 Task 7: the Actions menu's "Rate Frames in Review" --
