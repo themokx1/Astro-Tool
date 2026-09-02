@@ -18,7 +18,7 @@ public struct IntentionalPatterns: Codable, Equatable, Sendable {
     public init() {
         self.runSuffix = true
         self.dateRange = true
-        self.labels = ["hibas", "OSC"]
+        self.labels = ["hibas", "bad", "reject", "rejected", "schlecht", "OSC"]
     }
 }
 

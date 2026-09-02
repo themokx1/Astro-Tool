@@ -218,9 +218,10 @@ public struct StatsRule: Codable, Equatable, Sendable {
     /// Session date-dir labels (`SessionDateKind.labeled`'s `label`,
     /// case-insensitive) whose entire night is excluded from a target's
     /// usable integration/frame totals -- the user's own "this night was
-    /// bad" marker (`_hibas` = "faulty" in Hungarian). The session still
-    /// shows up in per-session details, just flagged
-    /// `isExcludedFromTotals`.
+    /// bad" marker. Defaults cover both Hungarian (`_hibas` = "faulty") and
+    /// English/German markers so the folder-name convention isn't
+    /// Hungarian-only. The session still shows up in per-session details,
+    /// just flagged `isExcludedFromTotals`.
     public var excludeLabels: [String]
     /// Reserved for R4-2 (gap-based sub-session splitting): the minimum
     /// silent gap, in seconds, between two consecutive lights before they're
@@ -236,7 +237,7 @@ public struct StatsRule: Codable, Equatable, Sendable {
     public var collectingThresholdSeconds: Double
 
     public init(
-        excludeLabels: [String] = ["hibas"],
+        excludeLabels: [String] = ["hibas", "bad", "reject", "rejected", "schlecht"],
         gapThresholdSeconds: Double = 0,
         collectingThresholdSeconds: Double = 7200
     ) {
@@ -593,6 +594,14 @@ public struct AstroBinRule: Codable, Equatable, Sendable {
 /// the JSON are silently ignored rather than causing a decode error.
 public struct AstroConfig: Codable, Equatable, Sendable {
     public var rootPath: String
+    /// Bare directory names (no `/`) excluded from scanning, matched
+    /// case-insensitively, but ONLY at the library root -- a target,
+    /// capture, or filter folder several levels down that happens to share
+    /// the name (e.g. a target literally called "Tools") is never affected.
+    /// An entry that itself contains `/` is instead matched against the
+    /// full root-relative path at any depth, the same way `excludedPaths`
+    /// works, for a user who wants to hide one specific deeper folder by
+    /// name. See `ExclusionRules.isExcludedDir`.
     public var excludedDirNames: [String]
     /// Root-relative paths to exclude from scanning, beyond `excludedDirNames`.
     public var excludedPaths: [String]

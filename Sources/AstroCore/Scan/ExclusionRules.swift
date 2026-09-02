@@ -15,8 +15,29 @@ struct ExclusionRules {
         // `.Trashes` and `.fseventsd`. `.DS_Store` the *file* is deliberately
         // NOT covered by this (it's still recorded, see `isExcludedFile`).
         if name.hasPrefix(".") { return true }
-        if config.excludedDirNames.contains(where: { $0.caseInsensitiveCompare(name) == .orderedSame }) { return true }
+        if isExcludedDirName(name: name, relativePath: relativePath) { return true }
         return isExcludedPath(relativePath)
+    }
+
+    // A bare name (no "/") in `excludedDirNames` only hides a directory at
+    // the library root -- matching it at every depth would make a
+    // target/capture/filter folder that happens to share the name (e.g. a
+    // target literally called "Tools") vanish silently from every session,
+    // not just the root housekeeping folder the default ("tools") is meant
+    // to hide. An entry that contains "/" is a path, honored at any depth by
+    // comparing it against the directory's own full relative path -- the
+    // escape hatch for a user who really does want one specific deeper
+    // folder hidden by name.
+    private func isExcludedDirName(name: String, relativePath: String) -> Bool {
+        let isTopLevel = !relativePath.contains("/")
+        for excluded in config.excludedDirNames {
+            if excluded.contains("/") {
+                if relativePath.caseInsensitiveCompare(excluded) == .orderedSame { return true }
+            } else if isTopLevel, excluded.caseInsensitiveCompare(name) == .orderedSame {
+                return true
+            }
+        }
+        return false
     }
 
     func isExcludedPath(_ relativePath: String) -> Bool {

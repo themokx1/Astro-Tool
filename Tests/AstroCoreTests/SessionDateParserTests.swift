@@ -92,5 +92,5 @@ import Testing
     let patterns = IntentionalPatterns()
     #expect(patterns.runSuffix == true)
     #expect(patterns.dateRange == true)
-    #expect(patterns.labels == ["hibas", "OSC"])
+    #expect(patterns.labels == ["hibas", "bad", "reject", "rejected", "schlecht", "OSC"])
 }

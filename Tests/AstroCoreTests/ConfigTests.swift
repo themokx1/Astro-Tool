@@ -43,7 +43,7 @@ import Testing
     #expect(config.rating.sirilPath == "/Applications/Siril.app/Contents/MacOS/siril-cli")
     #expect(config.rating.weights == ["fwhm": 0.4, "roundness": 0.2, "starCount": 0.2, "background": 0.2])
 
-    #expect(config.stats.excludeLabels == ["hibas"])
+    #expect(config.stats.excludeLabels == ["hibas", "bad", "reject", "rejected", "schlecht"])
     #expect(config.stats.gapThresholdSeconds == 0)
     #expect(config.stats.collectingThresholdSeconds == 7200)
 
@@ -477,7 +477,7 @@ import Testing
 
 @Test func defaultStatsRuleHasExpectedValues() {
     let rule = StatsRule()
-    #expect(rule.excludeLabels == ["hibas"])
+    #expect(rule.excludeLabels == ["hibas", "bad", "reject", "rejected", "schlecht"])
     #expect(rule.gapThresholdSeconds == 0)
     #expect(rule.collectingThresholdSeconds == 7200)
 }

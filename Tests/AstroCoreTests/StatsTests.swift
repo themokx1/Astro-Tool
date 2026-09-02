@@ -356,6 +356,28 @@ private struct StatsFixture {
     #expect(stats.grossIntegrationSeconds == 360.0)
 }
 
+/// `excludeLabels`' default is no longer Hungarian-only ("hibas") -- an
+/// English "_bad" folder marker must be recognized out of the box too, since
+/// the folder-name convention this feature builds on isn't limited to
+/// Hungarian users.
+@Test func statsExcludesEnglishBadLabeledSessionFromTargetTotalByDefault() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10_bad/lights/l1.fit", exptime: 300.0, instrume: "Cam", filter: "L"
+    )
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-11/lights/l2.fit", exptime: 60.0, instrume: "Cam", filter: "L"
+    )
+
+    try fixture.scan()
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.totalIntegrationSeconds == 60.0)
+    #expect(stats.excludedSessionDates == ["2026-01-10_bad"])
+}
+
 @Test func statsRespectsCustomExcludeLabelsFromConfig() throws {
     let fixture = try StatsFixture.make()
     defer { fixture.cleanup() }
