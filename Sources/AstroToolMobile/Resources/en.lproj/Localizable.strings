@@ -176,6 +176,9 @@
 "Done" = "Done";
 "Open Settings" = "Open Settings";
 "Try again" = "Try again";
+"This Mac could not be forgotten." = "This Mac could not be forgotten.";
+"This Mac has been forgotten on this iPhone." = "This Mac has been forgotten on this iPhone.";
+"Now do the same on your Mac — iPhone Sync ▸ Forget this iPhone and pair again — then tap Try again here." = "Now do the same on your Mac — iPhone Sync ▸ Forget this iPhone and pair again — then tap Try again here.";
 "Forget this Mac and pair again" = "Forget this Mac and pair again";
 "Send with AirDrop instead" = "Send with AirDrop instead";
 "AstroTool could not find your Mac on this network. Check that Local Network access is allowed for AstroTool in Settings, and that iPhone Sync is open on your Mac." = "AstroTool could not find your Mac on this network. Check that Local Network access is allowed for AstroTool in Settings, and that iPhone Sync is open on your Mac.";

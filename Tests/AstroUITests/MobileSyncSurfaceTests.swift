@@ -149,6 +149,56 @@ struct MobileSyncSurfaceTests {
         #expect(coordinator.contains("func trustedPeerDisplayName(deviceID: UUID) -> String?"))
     }
 
+    // MARK: - v5 flow review, I9: the forget was `try?`-swallowed and
+    // auto-retried, so both a Keychain refusal and the one-sided nature of
+    // forgetting showed up as an unrelated timeout.
+
+    @Test("Both sides surface a failed forget and wait for the peer's own forget instead of auto-retrying")
+    func forgetHasItsOwnFailureAndInstructionalStates() throws {
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncStore.swift"), encoding: .utf8)
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let rootView = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileRootView.swift"), encoding: .utf8)
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+
+        // No side may swallow the forget's error any more.
+        #expect(!store.contains("try? await forget("))
+        #expect(!rootView.contains("try? KeychainDeviceIdentityStore().removeTrustedPeer"))
+
+        #expect(store.contains("case forgetFailed(deviceID: UUID, message: String)"))
+        #expect(store.contains("case forgottenAwaitingPeer"))
+        #expect(view.contains("v5.nearby.forget-error"))
+        #expect(view.contains("This iPhone could not be forgotten."))
+        #expect(view.contains("Now do the same on your iPhone"))
+
+        #expect(rootView.contains("case forgetFailed(deviceID: UUID, message: String)"))
+        #expect(rootView.contains("case forgottenAwaitingPeer"))
+        #expect(screen.contains("v5.mobile.nearby.forget-error"))
+        #expect(screen.contains("This Mac could not be forgotten."))
+        #expect(screen.contains("Now do the same on your Mac"))
+
+        // Each instructional state offers a Try again the user presses --
+        // never an automatic retry into the same failure.
+        #expect(screen.contains("v5.mobile.nearby.forgotten-awaiting-peer"))
+        #expect(view.contains("case .forgottenAwaitingPeer:"))
+        #expect(view.contains("v5.nearby.pair-again"))
+
+        for table in [
+            "Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings",
+        ] {
+            let strings = try String(contentsOf: root.appendingPathComponent(table), encoding: .utf8)
+            #expect(strings.contains(#""This iPhone could not be forgotten." = "#))
+            #expect(strings.contains(#""This iPhone has been forgotten on this Mac." = "#))
+        }
+        for table in [
+            "Sources/AstroToolMobile/Resources/en.lproj/Localizable.strings",
+            "Sources/AstroToolMobile/Resources/hu.lproj/Localizable.strings",
+        ] {
+            let strings = try String(contentsOf: root.appendingPathComponent(table), encoding: .utf8)
+            #expect(strings.contains(#""This Mac could not be forgotten." = "#))
+            #expect(strings.contains(#""This Mac has been forgotten on this iPhone." = "#))
+        }
+    }
+
     @Test("iPhone Sync settings lists trusted peers with a per-peer forget action")
     func settingsListsPairedDevicesWithForget() throws {
         let settings = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)

@@ -45,6 +45,10 @@ struct MobileNearbySyncScreen: View {
                     finishedView
                 case .failed(let failure):
                     failedView(failure)
+                case .forgetFailed(_, let message):
+                    forgetFailedView(message)
+                case .forgottenAwaitingPeer:
+                    forgottenAwaitingPeerView
                 }
             }
             .padding(24)
@@ -64,7 +68,7 @@ struct MobileNearbySyncScreen: View {
 
     private var isCancellable: Bool {
         switch state {
-        case .finished, .failed: return false
+        case .finished, .failed, .forgetFailed, .forgottenAwaitingPeer: return false
         default: return true
         }
     }
@@ -171,6 +175,60 @@ struct MobileNearbySyncScreen: View {
                 .accessibilityIdentifier("v5.mobile.nearby.use-airdrop")
         }
         .accessibilityIdentifier("v5.mobile.nearby.failed")
+    }
+
+    /// The forget itself failed (a Keychain refusal): shown with its own
+    /// reason, and a Try again that repeats the FORGET rather than the
+    /// pairing -- retrying the pairing would only reproduce the same
+    /// identityChanged failure (fix I9).
+    private func forgetFailedView(_ message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 36))
+                .foregroundStyle(.orange)
+                .accessibilityHidden(true)
+            Text("This Mac could not be forgotten.")
+                .font(.body.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text(verbatim: message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .accessibilityIdentifier("v5.mobile.nearby.forget-error")
+            Button("Try again", action: onForgetAndRetry)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v5.mobile.nearby.forget-and-retry")
+            Button("Send with AirDrop instead", action: onUseAirDropInstead)
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("v5.mobile.nearby.use-airdrop")
+        }
+        .accessibilityIdentifier("v5.mobile.nearby.forget-failed")
+    }
+
+    /// Forgetting is one-sided, so a retry before the Mac has forgotten this
+    /// iPhone too can only time out. Ask for that first, then let the user
+    /// start the fresh pairing themselves.
+    private var forgottenAwaitingPeerView: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "checkmark.circle")
+                .font(.system(size: 36))
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text("This Mac has been forgotten on this iPhone.")
+                .font(.body.weight(.semibold))
+                .multilineTextAlignment(.center)
+            Text("Now do the same on your Mac — iPhone Sync ▸ Forget this iPhone and pair again — then tap Try again here.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Try again", action: onRetry)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v5.mobile.nearby.retry")
+            Button("Send with AirDrop instead", action: onUseAirDropInstead)
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier("v5.mobile.nearby.use-airdrop")
+        }
+        .accessibilityIdentifier("v5.mobile.nearby.forgotten-awaiting-peer")
     }
 
     private func message(for failure: MobileNearbySyncUIFailure) -> String {

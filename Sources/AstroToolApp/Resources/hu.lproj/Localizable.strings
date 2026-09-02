@@ -2872,6 +2872,10 @@
 "Waiting for iPhone" = "Várakozás az iPhone-ra";
 "Confirm the pairing code" = "Erősítsd meg a párosítási kódot";
 "Pairing with a device calling itself “%@” — confirm the code matches" = "Egy magát „%@” néven mutató eszközzel párosítasz — ellenőrizd, hogy a kód egyezik";
+/* v5 flow review, I9: the forget half of "Forget this iPhone and pair again" now has its own states. */
+"This iPhone could not be forgotten." = "Ezt az iPhone-t nem sikerült elfelejteni.";
+"This iPhone has been forgotten on this Mac." = "Ez a Mac elfelejtette ezt az iPhone-t.";
+"Now do the same on your iPhone — Connect to my Mac ▸ Forget this Mac and pair again — then press Try again here." = "Most tedd meg ugyanezt az iPhone-on: Kapcsolódás a Machez ▸ Mac elfelejtése és új párosítás — utána nyomd meg itt az Újrapróbálást.";
 "Confirm" = "Megerősítés";
 "Preparing data" = "Adatok előkészítése";
 "Transferring" = "Átvitel";

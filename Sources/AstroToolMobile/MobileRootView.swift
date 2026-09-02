@@ -27,6 +27,16 @@ enum MobileNearbySyncUIState: Equatable {
     case sendingReturn
     case finished
     case failed(MobileNearbySyncUIFailure)
+    /// UI-only: "Forget this Mac and pair again" could not remove the stale
+    /// peer from the Keychain. Never produced by `NearbyPhoneSyncState` --
+    /// `MobileRootView.forgetNearbySyncPeerAndRetry` sets it directly,
+    /// carrying the reason, instead of swallowing the error and retrying
+    /// into the same identityChanged dead end (fix I9).
+    case forgetFailed(deviceID: UUID, message: String)
+    /// UI-only: this iPhone has forgotten the Mac. Forgetting is one-sided,
+    /// so the Mac must forget this iPhone too before a retry can do
+    /// anything but time out — this state says so and waits for a tap.
+    case forgottenAwaitingPeer
 
     init(_ state: NearbyPhoneSyncState) {
         switch state {
@@ -643,10 +653,22 @@ struct MobileRootView: View {
     /// its own side (its own "Forget this iPhone and pair again" action) for
     /// the retry to actually succeed rather than time out.
     private func forgetNearbySyncPeerAndRetry() {
-        guard case .failed(.identityChanged(let deviceID)) = nearbySyncState else { return }
-        try? KeychainDeviceIdentityStore().removeTrustedPeer(deviceID: deviceID)
-        nearbySyncState = .idle
-        startNearbySync()
+        let peerDeviceID: UUID
+        switch nearbySyncState {
+        case .failed(.identityChanged(let deviceID)): peerDeviceID = deviceID
+        case .forgetFailed(let deviceID, _): peerDeviceID = deviceID // the same forget, tried again
+        default: return
+        }
+        do {
+            try KeychainDeviceIdentityStore().removeTrustedPeer(deviceID: peerDeviceID)
+        } catch {
+            // A Keychain refusal used to be swallowed by `try?`, after which
+            // the automatic retry hit the identical identityChanged failure
+            // with no hint that the forget itself never happened.
+            nearbySyncState = .forgetFailed(deviceID: peerDeviceID, message: error.localizedDescription)
+            return
+        }
+        nearbySyncState = .forgottenAwaitingPeer
     }
 
     /// Builds the phone's reply from its own queued checklist/note changes,
