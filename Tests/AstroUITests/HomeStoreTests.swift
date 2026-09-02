@@ -45,7 +45,7 @@ struct HomeStoreTests {
 
         await store.configure(
             libraryName: "Astro", rootURL: root,
-            projectsStore: projects, nightCount: 1
+            projectsStore: projects, sharedMetadata: nil, nightCount: 1
         )
 
         #expect(store.snapshot.tonightRecommendations.count == 1)
@@ -76,7 +76,7 @@ struct HomeStoreTests {
             )]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 1)
 
         #expect(store.snapshot.tonightRecommendations.first?.culminationDisplay == .genuine(localTime: "01:14"))
     }
@@ -99,7 +99,7 @@ struct HomeStoreTests {
             )]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 1)
 
         #expect(store.snapshot.tonightRecommendations.first?.culminationDisplay == .afterWindow)
     }
@@ -123,7 +123,7 @@ struct HomeStoreTests {
             )]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 1)
 
         #expect(store.snapshot.tonightRecommendations.first?.culminationDisplay == .pastPeakAtWindowStart(windowEndLocal: "03:36"))
     }
@@ -145,7 +145,7 @@ struct HomeStoreTests {
         try await projects.open(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()))
         let store = HomeStore()
 
-        await store.configure(libraryName: "Astro", projectsStore: projects, nightCount: 1)
+        await store.configure(libraryName: "Astro", projectsStore: projects, sharedMetadata: nil, nightCount: 1)
 
         #expect(store.snapshot.nextProject == lean)
         #expect(store.snapshot.nextProjectIntegrationSeconds == 30)
@@ -189,7 +189,7 @@ struct HomeStoreTests {
             ]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 1)
 
         #expect(store.snapshot.tonightRecommendations.count == 1)
         #expect(store.snapshot.tonightRecommendations.first?.target == "IC_1396")
@@ -211,7 +211,7 @@ struct HomeStoreTests {
             ]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 1)
 
         #expect(store.snapshot.tonightRecommendations.isEmpty)
     }
@@ -253,7 +253,7 @@ struct HomeStoreTests {
             ]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 1)
 
         #expect(store.snapshot.nextProject == good)
     }
@@ -278,7 +278,7 @@ struct HomeStoreTests {
             ]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 1)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 1)
 
         #expect(store.snapshot.nextProject == nil)
         #expect(store.snapshot.hasActiveProjectsExcludedTonight == true)
@@ -311,7 +311,7 @@ struct HomeStoreTests {
             }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         #expect(store.snapshot.nightContext == expected)
     }
@@ -322,7 +322,7 @@ struct HomeStoreTests {
         let projects = ProjectsStore(metadataFactory: { _ in metadata })
         let store = HomeStore()
 
-        await store.configure(libraryName: "Astro", projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         #expect(store.snapshot.nightContext == .unconfigured)
         #expect(store.snapshot.nightContext.isConfigured == false)
@@ -342,7 +342,7 @@ struct HomeStoreTests {
             weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: 20, dawnPercent: 55, fetchedAt: fetchedAt) }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.snapshot.nightCloud?.duskPercent == 20)
@@ -366,7 +366,7 @@ struct HomeStoreTests {
             weatherProvider: { _ in nil }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.snapshot.nightCloud == nil)
@@ -384,7 +384,7 @@ struct HomeStoreTests {
             weatherProvider: { _ in throw WeatherError.decode }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.snapshot.nightCloud == nil)
@@ -402,7 +402,7 @@ struct HomeStoreTests {
             weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: nil, dawnPercent: nil, fetchedAt: Date()) }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.snapshot.nightCloud?.duskPercent == nil)
@@ -422,7 +422,7 @@ struct HomeStoreTests {
             ratingGateProvider: { _ in HomeSnapshot.RatingGate(unratedNightCount: 3, sensorProfileMeasured: false) }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         #expect(store.snapshot.ratingGate.unratedNightCount == 3)
         #expect(store.snapshot.ratingGate.sensorProfileMeasured == false)
@@ -439,7 +439,7 @@ struct HomeStoreTests {
             ratingGateProvider: { _ in .clear }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         #expect(store.snapshot.ratingGate.unratedNightCount == 0)
         #expect(store.snapshot.ratingGate == .clear)
@@ -462,7 +462,7 @@ struct HomeStoreTests {
             }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         #expect(store.snapshot.ratingGate.unmeasurableFrameCount == 1550)
     }
@@ -473,7 +473,7 @@ struct HomeStoreTests {
         let projects = ProjectsStore(metadataFactory: { _ in metadata })
         let store = HomeStore()
 
-        await store.configure(libraryName: "Astro", projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         #expect(store.snapshot.ratingGate == .clear)
     }
@@ -556,7 +556,7 @@ struct HomeStoreTests {
             }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.snapshot.nightCloud?.isCloudyTonight == true)
@@ -586,7 +586,7 @@ struct HomeStoreTests {
             }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.snapshot.nightCloud?.isCloudyTonight == false)
@@ -728,7 +728,7 @@ struct HomeStoreTests {
             }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         #expect(store.snapshot.featuredCompletionForecast == estimate)
     }
@@ -747,7 +747,7 @@ struct HomeStoreTests {
             }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         #expect(store.snapshot.featuredCompletionForecast == nil)
     }
@@ -769,7 +769,7 @@ struct HomeStoreTests {
             completionOutlookProvider: { _, _ in estimate }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.snapshot.featuredCompletionForecast == estimate)
@@ -787,7 +787,7 @@ struct HomeStoreTests {
             weatherProvider: { _ in nil }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.snapshot.nightCloud == nil)
@@ -820,7 +820,7 @@ struct HomeStoreTests {
             weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: 10, dawnPercent: 15, fetchedAt: Date(), isCloudyTonight: false) }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         #expect(store.preflightChecklist.allClear)
@@ -845,7 +845,7 @@ struct HomeStoreTests {
             }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         let calibItem = store.preflightChecklist.items.first {
             if case .calibrationCurrent = $0.kind { true } else { false }
@@ -876,7 +876,7 @@ struct HomeStoreTests {
             }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         let checklist = store.preflightChecklist
         let flatItem = checklist.items.first { if case .flatNeeded = $0.kind { true } else { false } }
@@ -907,7 +907,7 @@ struct HomeStoreTests {
             flatCoverageProvider: { _ in [] }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         let flatItem = store.preflightChecklist.items.first { if case .flatNeeded = $0.kind { true } else { false } }
         #expect(flatItem?.status == .ready)
@@ -919,7 +919,7 @@ struct HomeStoreTests {
         let projects = ProjectsStore(metadataFactory: { _ in metadata })
         let store = HomeStore()
 
-        await store.configure(libraryName: "Astro", projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         let checklist = store.preflightChecklist
         let skyItem = checklist.items.first { $0.kind == .skyClear }
@@ -942,7 +942,7 @@ struct HomeStoreTests {
             weatherProvider: { _ in HomeSnapshot.NightCloud(duskPercent: 92, dawnPercent: 97, fetchedAt: Date(), isCloudyTonight: true) }
         )
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
         await store.pendingWeatherLoad?.value
 
         let skyItem = store.preflightChecklist.items.first { $0.kind == .skyClear }
@@ -963,7 +963,7 @@ struct HomeStoreTests {
             )]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         let moonItem = store.preflightChecklist.items.first { if case .moonImpact = $0.kind { true } else { false } }
         #expect(moonItem?.status == .attention)
@@ -988,7 +988,7 @@ struct HomeStoreTests {
             )]
         })
 
-        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, nightCount: 0)
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: nil, nightCount: 0)
 
         let altitudeItem = store.preflightChecklist.items.first { if case .altitudeWindow = $0.kind { true } else { false } }
         #expect(altitudeItem?.status == .ready)
@@ -998,6 +998,31 @@ struct HomeStoreTests {
         } else {
             Issue.record("Expected a .altitudeWindow item")
         }
+    }
+
+    // MARK: - v5 library-switch fixes, item 3 (follow-up): `productionHighlights`
+    // used to open its own confined `MetadataStore` connection through
+    // `ProjectsStore.productionMetadata` on every call, competing with
+    // `ProjectsStore`'s already-open one for the same file. `configure` now
+    // takes a required `sharedMetadata` and forwards it straight into
+    // `highlightsProvider`.
+
+    @Test("configure forwards its shared metadata store into highlightsProvider instead of leaving it stranded")
+    func configureForwardsSharedMetadataToHighlightsProvider() async throws {
+        let projects = ProjectsStore(metadataFactory: { _ in try MetadataStore.temporary() })
+        let root = URL(fileURLWithPath: "/Volumes/Test/Astro", isDirectory: true)
+        try await projects.open(rootURL: root)
+        let shared = try MetadataStore.temporary()
+        let received = HighlightsProviderCallRecorder()
+        let store = HomeStore(highlightsProvider: { _, sharedMetadata in
+            await received.record(sharedMetadata)
+            return []
+        })
+
+        await store.configure(libraryName: "Astro", rootURL: root, projectsStore: projects, sharedMetadata: shared, nightCount: 0)
+
+        let capturedIdentical = await received.value.map { $0 === shared }
+        #expect(capturedIdentical == true, "highlightsProvider must receive the exact shared store, not a fresh one")
     }
 }
 
@@ -1044,10 +1069,10 @@ struct HomeStoreOverlappingConfigureTests {
         })
 
         let staleConfigure = Task {
-            await store.configure(libraryName: "A", rootURL: rootA, projectsStore: projects, nightCount: 1)
+            await store.configure(libraryName: "A", rootURL: rootA, projectsStore: projects, sharedMetadata: nil, nightCount: 1)
         }
         await race.waitForEntry()
-        await store.configure(libraryName: "B", rootURL: rootB, projectsStore: projects, nightCount: 7)
+        await store.configure(libraryName: "B", rootURL: rootB, projectsStore: projects, sharedMetadata: nil, nightCount: 7)
         await race.proceed()
         await staleConfigure.value
 
@@ -1056,6 +1081,14 @@ struct HomeStoreOverlappingConfigureTests {
         #expect(store.tonightPlans.map(\.target) == ["CURRENT"])
         #expect(store.snapshot.tonightRecommendations.map(\.target) == ["CURRENT"])
     }
+}
+
+/// Records the `MetadataStore?` a test's own `highlightsProvider` closure
+/// received -- a plain `var` would not do, since that closure is
+/// `@Sendable`, not `@MainActor`.
+private actor HighlightsProviderCallRecorder {
+    private(set) var value: MetadataStore?
+    func record(_ value: MetadataStore?) { self.value = value }
 }
 
 /// Same continuation-based rendezvous as `ProjectsStoreTests`' own

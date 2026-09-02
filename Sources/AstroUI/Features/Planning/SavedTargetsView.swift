@@ -58,6 +58,15 @@ public final class SavedTargetsStore {
     private let siteResolver: SiteResolver
     private let targetCatalogProvider: TargetCatalogProvider
     private var metadata: MetadataStore?
+    /// v5 library-switch fixes (item 3, follow-up): hands back the window's
+    /// ALREADY-OPEN `MetadataStore` for the asked-for root, or `nil` when
+    /// there is none for that library -- same contract as
+    /// `LibraryHealthStore.sharedMetadataProvider`. `resolveMetadata` used
+    /// to open its OWN confined connection through `metadataFactory` the
+    /// first time any of save/note/remove/reload ran, one more SQLite
+    /// connection competing with `ProjectsStore`'s over the same file.
+    /// `metadataFactory` stays as the fallback (and is what tests inject).
+    public var sharedMetadataProvider: (@MainActor (URL) -> MetadataStore?)?
 
     public init(
         metadataFactory: @escaping MetadataFactory = SavedTargetsStore.productionMetadata,
@@ -229,9 +238,13 @@ public final class SavedTargetsStore {
     private func resolveMetadata() throws -> MetadataStore {
         if let metadata { return metadata }
         guard let rootURL else { throw SavedTargetsStoreError.libraryNotOpen }
-        let metadata = try metadataFactory(rootURL)
-        self.metadata = metadata
-        return metadata
+        if let shared = sharedMetadataProvider?(rootURL) {
+            metadata = shared
+            return shared
+        }
+        let resolved = try metadataFactory(rootURL)
+        metadata = resolved
+        return resolved
     }
 
     public static func productionMetadata(rootURL: URL) throws -> MetadataStore {
@@ -248,6 +261,13 @@ public final class SavedTargetsStore {
 public struct SavedTargetsView: View {
     let rootURL: URL?
     let chooseLibrary: () -> Void
+    /// v5 library-switch fixes (item 3, follow-up): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost` so this
+    /// store reuses that one connection instead of opening a competing
+    /// second one -- see `SavedTargetsStore.sharedMetadataProvider`'s own
+    /// doc comment. `nil` when nothing is open for this root (yet), which
+    /// falls back to the store's own factory.
+    let sharedMetadataStore: MetadataStore?
     @State private var store: SavedTargetsStore
     @State private var pendingRemoval: SavedTargetRecord?
     @State private var editingTarget: SavedTargetRecord?
@@ -255,10 +275,12 @@ public struct SavedTargetsView: View {
     public init(
         rootURL: URL?,
         store: SavedTargetsStore = SavedTargetsStore(),
-        chooseLibrary: @escaping () -> Void
+        chooseLibrary: @escaping () -> Void,
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         self.rootURL = rootURL
         self.chooseLibrary = chooseLibrary
+        self.sharedMetadataStore = sharedMetadataStore
         _store = State(initialValue: store)
     }
 
@@ -271,7 +293,10 @@ public struct SavedTargetsView: View {
         .navigationTitle("Saved Targets")
         .accessibilityLabel("Saved Targets")
         .accessibilityIdentifier("v2.planning.saved")
-        .task(id: rootURL) { await store.setRootURL(rootURL) }
+        .task(id: rootURL) {
+            store.sharedMetadataProvider = { _ in sharedMetadataStore }
+            await store.setRootURL(rootURL)
+        }
         .confirmationDialog(
             "Remove this saved target?",
             isPresented: Binding(

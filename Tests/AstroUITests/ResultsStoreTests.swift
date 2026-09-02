@@ -77,7 +77,7 @@ struct ResultsStoreTests {
             resultsQueryFactory: queryFactory(try discoveryFixture(folder: folder))
         )
 
-        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: project.id)
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: project.id, sharedMetadata: nil)
 
         #expect(store.errorMessage == nil)
         #expect(store.canonicalFolderName == folder)
@@ -98,7 +98,7 @@ struct ResultsStoreTests {
             resultsQueryFactory: queryFactory(try discoveryFixture(folder: folder))
         )
 
-        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: project.id)
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: project.id, sharedMetadata: nil)
 
         #expect(store.rows.count == 1)
         let family = try #require(store.rows.first)
@@ -124,7 +124,7 @@ struct ResultsStoreTests {
             resultsQueryFactory: queryFactory(try Database(path: ":memory:"))
         )
 
-        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: project.id)
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: project.id, sharedMetadata: nil)
 
         #expect(store.rows.isEmpty)
         #expect(store.fileCount == 0)
@@ -140,7 +140,7 @@ struct ResultsStoreTests {
             resultsQueryFactory: { _ in ResultsQuery(stackGroups: { _ in [] }) }
         )
 
-        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: UUID())
+        await store.load(rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: UUID(), sharedMetadata: nil)
 
         #expect(store.snapshot == nil)
         #expect(store.errorMessage != nil)
@@ -172,9 +172,9 @@ struct ResultsStoreTests {
         )
 
         let root = URL(fileURLWithPath: NSTemporaryDirectory())
-        let stale = Task { await store.load(rootURL: root, projectID: project.id) }
+        let stale = Task { await store.load(rootURL: root, projectID: project.id, sharedMetadata: nil) }
         await gate.awaitFirstCallStarted()
-        await store.load(rootURL: root, projectID: project.id)
+        await store.load(rootURL: root, projectID: project.id, sharedMetadata: nil)
         #expect(store.groupCount == 1)
 
         await gate.open()
@@ -187,6 +187,37 @@ struct ResultsStoreTests {
         #expect(!store.isLoading)
         #expect(store.errorMessage == nil)
     }
+
+    // MARK: - v5 library-switch fixes, item 3 (follow-up): this store used
+    // to open its own confined `MetadataStore` connection through
+    // `metadataFactory` on every load, competing with `ProjectsStore`'s
+    // already-open one for the same file.
+
+    @Test("An already-open metadata store is reused instead of opening a second connection")
+    func sharedMetadataStoreIsUsedInsteadOfTheFactory() async throws {
+        let metadata = try MetadataStore.temporary()
+        let project = project()
+        let folder = libraryFolder(for: project)
+        try await metadata.save(MetadataWriteBatch(projects: [project]))
+        let store = ResultsStore(
+            // Opening one here would be the bug -- the load must go through
+            // `sharedMetadata` and never touch this.
+            metadataFactory: { _ in throw ResultsStoreTestFailure.shouldNotOpenASecondConnection },
+            resultsQueryFactory: queryFactory(try discoveryFixture(folder: folder))
+        )
+
+        await store.load(
+            rootURL: URL(fileURLWithPath: NSTemporaryDirectory()), projectID: project.id, sharedMetadata: metadata
+        )
+
+        #expect(store.errorMessage == nil)
+        #expect(store.canonicalFolderName == folder)
+        #expect(store.groupCount == 1)
+    }
+}
+
+private enum ResultsStoreTestFailure: Error, Equatable {
+    case shouldNotOpenASecondConnection
 }
 
 /// Test-only coordination for `staleLoadIsDropped`.

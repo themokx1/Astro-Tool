@@ -133,6 +133,55 @@ struct ArchiveStoreTests {
         #expect(host.toasts.contains { $0.level == .failure && $0.message.contains("metadata store unavailable") })
         #expect(await loadCount.value == 0, "a failed acknowledge must not silently pretend a reload happened")
     }
+
+    // MARK: - v5 library-switch fixes, item 3 (follow-up): `acknowledge`
+    // used to open its own confined `MetadataStore` connection through
+    // `metadataFactory` on every call, competing with `ProjectsStore`'s
+    // already-open one for the same file.
+
+    @Test("An already-open metadata store is reused instead of opening a second connection")
+    func acknowledgeReusesTheSharedMetadataStore() async throws {
+        let root = URL(fileURLWithPath: "/tmp/lib")
+        let shared = try MetadataStore.temporary()
+        let store = ArchiveStore(
+            mapFactory: { _ in .stub(totalBytes: 500) },
+            taskFactory: { _ in ArchiveTaskSummary(tasks: [], uncovered: .none) },
+            // Opening one here would be the bug -- `acknowledge` must go
+            // through `sharedMetadataProvider` and never touch this.
+            metadataFactory: { _ in throw ArchiveStoreTestFailure.shouldNotOpenASecondConnection }
+        )
+        store.sharedMetadataProvider = { asked in asked == root ? shared : nil }
+        let host = OperationHost(center: OperationCenter())
+        let task = ArchiveTask.stub(kind: .intermediateFiles, bytes: 400)
+
+        await store.acknowledge(task, note: "known", rootURL: root, operationHost: host)
+        await host.settle()
+
+        #expect(host.toasts.contains { $0.level == .success })
+    }
+
+    @Test("A root the shared provider does not own still falls back to this store's own factory")
+    func acknowledgeFallsBackWhenNoSharedStoreIsOpenForThisRoot() async throws {
+        let store = ArchiveStore(
+            mapFactory: { _ in .stub(totalBytes: 500) },
+            taskFactory: { _ in ArchiveTaskSummary(tasks: [], uncovered: .none) },
+            metadataFactory: { _ in try MetadataStore.temporary() }
+        )
+        // The window's store is open for some OTHER library -- exactly the
+        // mid-switch state where reusing it would answer for the wrong root.
+        store.sharedMetadataProvider = { _ in nil }
+        let host = OperationHost(center: OperationCenter())
+        let task = ArchiveTask.stub(kind: .intermediateFiles, bytes: 400)
+
+        await store.acknowledge(task, note: "known", rootURL: URL(fileURLWithPath: "/tmp/lib"), operationHost: host)
+        await host.settle()
+
+        #expect(host.toasts.contains { $0.level == .success })
+    }
+}
+
+private enum ArchiveStoreTestFailure: Error, Equatable {
+    case shouldNotOpenASecondConnection
 }
 
 /// A plain `Sendable` counter for `mapFactory`/`taskFactory` closures (both

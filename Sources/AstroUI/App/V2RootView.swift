@@ -289,6 +289,11 @@ public struct V2RootView: View {
                 libraryName: root.lastPathComponent,
                 rootURL: root,
                 projectsStore: projectsStore,
+                // v5 library-switch fixes (item 3, follow-up): `projectsStore`
+                // just opened this exact root above, so its own metadata
+                // connection IS the shared one -- reused here instead of
+                // `productionHighlights` opening a second one.
+                sharedMetadata: projectsStore.sharedMetadataStore(for: root),
                 nightCount: nightsStore.nights.count
             )
         }
@@ -1026,6 +1031,10 @@ private struct V2Shell: View {
             // `verifyIntegrity`. It now asks for the window's already-open
             // one first -- see `sharedMetadataStore(for:)` below.
             libraryHealthStore.sharedMetadataProvider = projectsStore.sharedMetadataStore(for:)
+            // v5 library-switch fixes (item 3, follow-up): same reuse for
+            // `ArchiveStore.acknowledge`, which used to open its own
+            // confined connection on every acknowledge.
+            archiveStore.sharedMetadataProvider = projectsStore.sharedMetadataStore(for:)
         }
         .task {
             guard !didRunUITestLibraryPickerHandoff,
@@ -1250,7 +1259,14 @@ private struct V2Shell: View {
                                 rootURL: night.rootURL,
                                 editNotes: night.editNotes,
                                 openCalibration: night.openCalibration,
-                                openInsights: night.openInsights
+                                openInsights: night.openInsights,
+                                // v5 library-switch fixes (item 3, follow-up):
+                                // this toolbar lives in `V2Shell`, not
+                                // `DetailHost`, so it resolves the shared
+                                // store itself from `projectsStore` rather
+                                // than reading `DetailHost`'s own computed
+                                // property.
+                                sharedMetadataStore: night.rootURL.flatMap { projectsStore.sharedMetadataStore(for: $0) }
                             )
                         } label: {
                             Label("Night Actions", systemImage: "ellipsis.circle")
@@ -2129,7 +2145,8 @@ private struct DetailHost: View {
                     // this night's own `localDate` against the watched
                     // session's folder-name-derived night key.
                     isLiveSession: liveNightWatcher.folderURL != nil
-                        && LiveNightNightKey.forNow() == row.date
+                        && LiveNightNightKey.forNow() == row.date,
+                    sharedMetadataStore: sharedMetadataStore
                 )
             } else {
                 // V2 UI/UX audit, section 5 ("Végtelen töltő"): this branch
@@ -2199,7 +2216,8 @@ private struct DetailHost: View {
                     router.push(.night(id.uuidString))
                 },
                 openCalibration: { router.push(.calibration) },
-                openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) }
+                openInsights: { setup in router.navigateToInsights(presetSetupFilter: setup) },
+                sharedMetadataStore: sharedMetadataStore
             )
         case .planning:
             PlanningView(
@@ -2210,7 +2228,8 @@ private struct DetailHost: View {
                     briefingSeed = seed
                     router.push(.briefing)
                 },
-                chooseLibrary: chooseLibrary
+                chooseLibrary: chooseLibrary,
+                sharedMetadataStore: sharedMetadataStore
             )
         case .briefing:
             NightBriefingView(
@@ -2221,7 +2240,11 @@ private struct DetailHost: View {
                 snapshotProvider: mobileSnapshotProvider
             )
         case .savedTargets:
-            SavedTargetsView(rootURL: onboardingStore.selectedRoot, chooseLibrary: chooseLibrary)
+            SavedTargetsView(
+                rootURL: onboardingStore.selectedRoot,
+                chooseLibrary: chooseLibrary,
+                sharedMetadataStore: sharedMetadataStore
+            )
         case .library:
             archiveDestination()
         case .insights:
@@ -2290,7 +2313,11 @@ private struct DetailHost: View {
         case .resultsWorkspace(let projectID):
             if let rootURL = onboardingStore.selectedRoot ?? libraryRootFallback {
                 if let project = projectsStore.projects.first(where: { $0.id == projectID }) {
-                    ResultsView(rootURL: rootURL, project: project, review: { router.push(.review(projectID: projectID)) })
+                    ResultsView(
+                        rootURL: rootURL, project: project,
+                        review: { router.push(.review(projectID: projectID)) },
+                        sharedMetadataStore: sharedMetadataStore
+                    )
                 } else {
                     // A library IS open -- either its rows are still
                     // loading (`RoutePendingLoadView`'s own job elsewhere,

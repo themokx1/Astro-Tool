@@ -31,6 +31,12 @@ public struct NightActionMenu: View {
     let openCalibration: () -> Void
     let openInsights: (String?) -> Void
     let metadataFactory: NightsStore.MetadataFactory
+    /// v5 library-switch fixes (item 3, follow-up): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, when there is one -- see
+    /// `Self.rateFrames`'s own `sharedMetadata` doc comment. `nil` when
+    /// nothing is open for this root (yet), which falls back to
+    /// `metadataFactory`.
+    let sharedMetadataStore: MetadataStore?
 
     @Environment(OperationHost.self) private var operationHost
 
@@ -48,7 +54,8 @@ public struct NightActionMenu: View {
         editNotes: @escaping () -> Void,
         openCalibration: @escaping () -> Void,
         openInsights: @escaping (String?) -> Void,
-        metadataFactory: @escaping NightsStore.MetadataFactory = ProjectsStore.productionMetadata
+        metadataFactory: @escaping NightsStore.MetadataFactory = ProjectsStore.productionMetadata,
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         self.target = target
         self.date = date
@@ -60,6 +67,7 @@ public struct NightActionMenu: View {
         self.openCalibration = openCalibration
         self.openInsights = openInsights
         self.metadataFactory = metadataFactory
+        self.sharedMetadataStore = sharedMetadataStore
     }
 
     public var body: some View {
@@ -116,7 +124,7 @@ public struct NightActionMenu: View {
     private func rateFrames() {
         Self.rateFrames(
             target: target, date: date, nightID: nightID, rootURL: rootURL,
-            metadataFactory: metadataFactory, operationHost: operationHost
+            metadataFactory: metadataFactory, sharedMetadata: sharedMetadataStore, operationHost: operationHost
         )
     }
 
@@ -142,12 +150,21 @@ public struct NightActionMenu: View {
     /// around it -- the owner asked for the Nights page to carry both a row
     /// button AND the ability to rate a night directly, not only through this
     /// menu's own context-menu presentation.
+    ///
+    /// `sharedMetadata` is the window's ALREADY-OPEN `MetadataStore` for
+    /// `rootURL`, when there is one -- v5 library-switch fixes (item 3,
+    /// follow-up). This used to open its OWN confined connection through
+    /// `metadataFactory` on every call, competing with `ProjectsStore`'s
+    /// already-open one for the same file. `metadataFactory` stays as the
+    /// fallback for the paths that genuinely have no open store to reuse
+    /// (and for tests injecting a fixture-backed one).
     static func rateFrames(
         target: String,
         date: String,
         nightID: UUID,
         rootURL: URL?,
         metadataFactory: @escaping NightsStore.MetadataFactory,
+        sharedMetadata: MetadataStore?,
         operationHost: OperationHost
     ) {
         guard let rootURL else { return }
@@ -165,7 +182,7 @@ public struct NightActionMenu: View {
         }
         Task {
             do {
-                let metadata = try metadataFactory(rootURL)
+                let metadata = try sharedMetadata ?? metadataFactory(rootURL)
                 let seriesList = try await metadata.series(nightID: nightID)
                 var gatheredPaths: [String] = []
                 for series in seriesList {

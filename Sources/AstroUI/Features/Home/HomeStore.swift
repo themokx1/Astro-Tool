@@ -397,7 +397,11 @@ public final class HomeStore {
     /// highlights for an open library. Injectable for the same reason every
     /// other provider here is: tests supply a fixed result without a real
     /// FITS-backed library, index DB, or milestone ledger file on disk.
-    public typealias HighlightsProvider = @Sendable (URL) async throws -> [HomeSnapshot.Highlight]
+    /// v5 library-switch fixes (item 3, follow-up): the second, `MetadataStore?`
+    /// argument is the window's ALREADY-OPEN connection for that root, when
+    /// there is one -- see `productionHighlights`'s own `sharedMetadata` doc
+    /// comment.
+    public typealias HighlightsProvider = @Sendable (URL, MetadataStore?) async throws -> [HomeSnapshot.Highlight]
     /// Expert ideation reserve #5 ("Clear-Night Countdown"): resolves
     /// `CompletionForecast.nightsNeeded` for one specific project (`target`
     /// is its `ProjectSnapshot.canonicalFolderName`, the same key
@@ -601,10 +605,18 @@ public final class HomeStore {
         )
     }
 
+    /// `sharedMetadata` is the window's ALREADY-OPEN `MetadataStore` for
+    /// `rootURL`, when there is one -- v5 library-switch fixes (item 3,
+    /// follow-up), forwarded straight into `highlightsProvider` below.
+    /// Required, no default -- the same shape `ProjectRatingRunner.run`'s
+    /// own `sharedMetadata` parameter already takes, so every call site
+    /// states explicitly which connection (if any) it is reusing rather
+    /// than silently defaulting to "open a new one".
     public func configure(
         libraryName: String,
         rootURL: URL? = nil,
         projectsStore: ProjectsStore,
+        sharedMetadata: MetadataStore?,
         nightCount: Int
     ) async {
         configureGeneration += 1
@@ -724,7 +736,7 @@ public final class HomeStore {
         // synchronous read (project snapshots plus one small JSON ledger),
         // never worth `loadWeather`'s fire-and-forget dance.
         let highlights: [HomeSnapshot.Highlight] = if let rootURL {
-            (try? await highlightsProvider(rootURL)) ?? []
+            (try? await highlightsProvider(rootURL, sharedMetadata)) ?? []
         } else {
             []
         }
@@ -1152,8 +1164,13 @@ public final class HomeStore {
     /// milestone that fails to persist just risks re-firing next time,
     /// which is a far more honest failure mode than losing today's card or
     /// throwing the whole dashboard load.
-    public static func productionHighlights(rootURL: URL) async throws -> [HomeSnapshot.Highlight] {
-        let metadata = try ProjectsStore.productionMetadata(rootURL: rootURL)
+    /// `sharedMetadata` is the window's ALREADY-OPEN `MetadataStore` for
+    /// `rootURL`, when there is one -- v5 library-switch fixes (item 3,
+    /// follow-up). This used to open its OWN confined connection through
+    /// `ProjectsStore.productionMetadata` on every call, competing with
+    /// `ProjectsStore`'s already-open one for the same file.
+    public static func productionHighlights(rootURL: URL, sharedMetadata: MetadataStore?) async throws -> [HomeSnapshot.Highlight] {
+        let metadata = try sharedMetadata ?? ProjectsStore.productionMetadata(rootURL: rootURL)
         let query = ProjectsQuery(metadata: metadata)
         var snapshots: [ProjectSnapshot] = []
         for project in try await metadata.projects() {

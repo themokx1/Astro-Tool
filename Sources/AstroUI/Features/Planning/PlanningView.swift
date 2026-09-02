@@ -32,6 +32,13 @@ public struct PlanningView: View {
     /// closure down from `V2RootView`. Defaults to a no-op so existing
     /// previews/tests that never reach that branch don't need to supply one.
     let chooseLibrary: () -> Void
+    /// v5 library-switch fixes (item 3, follow-up): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost` for this
+    /// page's own `savedTargetsStore` -- see
+    /// `SavedTargetsStore.sharedMetadataProvider`'s own doc comment. `nil`
+    /// when nothing is open for this root (yet), which falls back to that
+    /// store's own factory.
+    let sharedMetadataStore: MetadataStore?
     /// Wave W6-A section B: the no-site placeholder's own escape hatch --
     /// `V2RootView`'s own `openSettings` calls use the identical
     /// `@Environment(\.openSettings)` pattern everywhere else a placeholder
@@ -43,13 +50,15 @@ public struct PlanningView: View {
         createProject: @escaping (String) -> Void,
         openSavedTargets: @escaping () -> Void = {},
         openBriefing: @escaping (NightBriefingSeed) -> Void = { _ in },
-        chooseLibrary: @escaping () -> Void = {}
+        chooseLibrary: @escaping () -> Void = {},
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         self.rootURL = rootURL
         self.createProject = createProject
         self.openSavedTargets = openSavedTargets
         self.openBriefing = openBriefing
         self.chooseLibrary = chooseLibrary
+        self.sharedMetadataStore = sharedMetadataStore
     }
 
     public var body: some View {
@@ -76,7 +85,10 @@ public struct PlanningView: View {
             if catalogUpdate.cachedTargetCount != before { store.refresh() }
         }
         .task(id: rootURL) { store.setRootURL(rootURL) }
-        .task(id: rootURL) { await savedTargetsStore.setRootURL(rootURL) }
+        .task(id: rootURL) {
+            savedTargetsStore.sharedMetadataProvider = { _ in sharedMetadataStore }
+            await savedTargetsStore.setRootURL(rootURL)
+        }
         .onChange(of: sortOrder) { _, newValue in store.setSortOrder(newValue) }
         .onChange(of: selectedTargetID) { _, newValue in
             let target = newValue.flatMap { id in store.filteredRecommendations.first(where: { $0.id == id })?.target }

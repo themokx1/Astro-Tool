@@ -20,6 +20,13 @@ public struct NightWorkspaceView: View {
     let reviewProject: (ProjectRecord) -> Void
     let openCalibration: () -> Void
     let openInsights: (String?) -> Void
+    /// v5 library-switch fixes (item 3, follow-up): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost` so this
+    /// page's own "Rate Frames" button reuses that one connection -- see
+    /// `NightActionMenu.rateFrames`'s own `sharedMetadata` doc comment.
+    /// `nil` when nothing is open for this root (yet), which falls back to
+    /// `ProjectsStore.productionMetadata`.
+    let sharedMetadataStore: MetadataStore?
     /// W6-E item 6 (live pixel review): backs the Quality section's
     /// exposure-advice "no sensor profile" reason -- see
     /// `exposureAdviceReasonText(_:)`'s own doc comment. `nil` (its
@@ -80,7 +87,8 @@ public struct NightWorkspaceView: View {
         openCalibration: @escaping () -> Void = {},
         openInsights: @escaping (String?) -> Void = { _ in },
         openSensorProfiles: (() -> Void)? = nil,
-        isLiveSession: Bool = false
+        isLiveSession: Bool = false,
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         self.row = row
         self.rootURL = rootURL
@@ -92,6 +100,7 @@ public struct NightWorkspaceView: View {
         self.openInsights = openInsights
         self.openSensorProfiles = openSensorProfiles
         self.isLiveSession = isLiveSession
+        self.sharedMetadataStore = sharedMetadataStore
     }
 
     public var body: some View {
@@ -131,6 +140,7 @@ public struct NightWorkspaceView: View {
                                 nightID: row.id,
                                 rootURL: rootURL,
                                 metadataFactory: ProjectsStore.productionMetadata,
+                                sharedMetadata: sharedMetadataStore,
                                 operationHost: operationHost
                             )
                         } label: {

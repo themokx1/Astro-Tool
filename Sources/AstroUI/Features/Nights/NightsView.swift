@@ -31,6 +31,13 @@ public struct NightsView: View {
     let openNight: (UUID) -> Void
     let openCalibration: () -> Void
     let openInsights: (String?) -> Void
+    /// v5 library-switch fixes (item 3, follow-up): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost` so each
+    /// row's "Rate Frames" action reuses that one connection -- see
+    /// `NightActionMenu.rateFrames`'s own `sharedMetadata` doc comment.
+    /// `nil` when nothing is open for this root (yet), which falls back to
+    /// `NightActionMenu`'s own default factory.
+    let sharedMetadataStore: MetadataStore?
     @State private var mode: Mode = .history
     @State private var noteEditorTarget: NightNoteEditingTarget?
     /// Mirrors `NightsStore.sortOrder`/`planningSortOrder`. The tables need
@@ -58,7 +65,8 @@ public struct NightsView: View {
         createSession: @escaping () -> Void = {},
         openNight: @escaping (UUID) -> Void,
         openCalibration: @escaping () -> Void = {},
-        openInsights: @escaping (String?) -> Void = { _ in }
+        openInsights: @escaping (String?) -> Void = { _ in },
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         self.snapshot = snapshot
         self.rootURL = rootURL
@@ -69,6 +77,7 @@ public struct NightsView: View {
         self.openNight = openNight
         self.openCalibration = openCalibration
         self.openInsights = openInsights
+        self.sharedMetadataStore = sharedMetadataStore
     }
 
     public var body: some View {
@@ -391,7 +400,8 @@ public struct NightsView: View {
                     )
                 },
                 openCalibration: openCalibration,
-                openInsights: openInsights
+                openInsights: openInsights,
+                sharedMetadataStore: sharedMetadataStore
             )
         } else {
             Button("Open Night", action: openNight)

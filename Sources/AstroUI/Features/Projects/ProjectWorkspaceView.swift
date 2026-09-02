@@ -503,7 +503,10 @@ public struct ProjectWorkspaceView: View {
     /// does.
     @ViewBuilder private var resultsContent: some View {
         if let rootURL {
-            ProjectResultsPane(rootURL: rootURL, project: snapshot.project, review: review)
+            ProjectResultsPane(
+                rootURL: rootURL, project: snapshot.project, review: review,
+                sharedMetadataStore: sharedMetadataStore
+            )
         } else {
             ContentUnavailableView(
                 "No library open",
@@ -520,7 +523,8 @@ public struct ProjectWorkspaceView: View {
         case .nights:
             ProjectNightsSummary(
                 snapshot: snapshot, rootURL: rootURL, accessMode: accessMode,
-                openNight: openNight, openCalibration: openCalibration, openInsights: openInsights
+                openNight: openNight, openCalibration: openCalibration, openInsights: openInsights,
+                sharedMetadataStore: sharedMetadataStore
             )
         case .series:
             ProjectSeriesSummary(snapshot: snapshot, openSeries: openSeries)
@@ -1228,6 +1232,10 @@ private struct ProjectNightsSummary: View {
     let openNight: (UUID) -> Void
     let openCalibration: () -> Void
     let openInsights: (String?) -> Void
+    /// v5 library-switch fixes (item 3, follow-up): forwarded straight from
+    /// `ProjectWorkspaceView`'s own `sharedMetadataStore` into
+    /// `nightActionMenu(for:)` below -- see that type's own doc comment.
+    let sharedMetadataStore: MetadataStore?
     @State private var selection: UUID?
     @State private var noteEditorTarget: NightNoteEditingTarget?
     /// V2 UI/UX audit (2026-08-14) systemic pattern S7: this table's rows
@@ -1347,7 +1355,8 @@ private struct ProjectNightsSummary: View {
                 )
             },
             openCalibration: openCalibration,
-            openInsights: openInsights
+            openInsights: openInsights,
+            sharedMetadataStore: sharedMetadataStore
         )
     }
 

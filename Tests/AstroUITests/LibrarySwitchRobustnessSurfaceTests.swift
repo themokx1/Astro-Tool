@@ -128,10 +128,46 @@ struct LibrarySwitchRobustnessSurfaceTests {
         }
     }
 
-    @Test("V2RootView supplies that store to all four rating entry points")
+    @Test("V2RootView supplies that store to every one of its entry points")
     func detailHostSuppliesSharedMetadataToTheRatingViews() throws {
         let source = try contents("Sources/AstroUI/App/V2RootView.swift")
         let occurrences = source.components(separatedBy: "sharedMetadataStore: sharedMetadataStore").count - 1
-        #expect(occurrences == 4, "Home, Projects, Project workspace and Insights each need it")
+        // Home, Projects, Project workspace, Insights (rating), plus this
+        // follow-up's Night workspace, Nights, Planning, Saved Targets,
+        // Results (each reusing the connection for its own single reader).
+        #expect(occurrences == 9)
+    }
+
+    // MARK: - Item 3, follow-up: the remaining single-owner readers
+    // (ArchiveStore, SavedTargetsStore, ResultsStore, NightActionMenu,
+    // HomeStore.productionHighlights) each used to open their own confined
+    // `MetadataStore` connection instead of reusing the window's.
+
+    @Test("V2RootView hands ArchiveStore the window's already-open metadata connection")
+    func archiveStoreGetsTheSharedMetadataProvider() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(source.contains("archiveStore.sharedMetadataProvider = projectsStore.sharedMetadataStore(for:)"))
+    }
+
+    @Test("HomeStore.configure forwards its shared metadata store into productionHighlights")
+    func homeStoreConfigureForwardsSharedMetadata() throws {
+        let store = try contents("Sources/AstroUI/Features/Home/HomeStore.swift")
+        #expect(store.contains("public func configure("))
+        #expect(store.contains("sharedMetadata: MetadataStore?"))
+        #expect(store.contains("(try? await highlightsProvider(rootURL, sharedMetadata)) ?? []"))
+
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(root.contains("sharedMetadata: projectsStore.sharedMetadataStore(for: root)"))
+    }
+
+    @Test("Every NightActionMenu.rateFrames call site passes a shared metadata store rather than only a factory")
+    func everyRateFramesCallSitePassesSharedMetadata() throws {
+        for path in [
+            "Sources/AstroUI/Features/Nights/NightWorkspaceView.swift",
+            "Sources/AstroUI/Features/Nights/NightActionMenu.swift",
+        ] {
+            let source = try contents(path)
+            #expect(source.contains("sharedMetadata:"), "\(path) must reuse the window's open connection")
+        }
     }
 }

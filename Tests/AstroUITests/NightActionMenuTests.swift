@@ -1,3 +1,5 @@
+@testable import AstroUI
+import AstroApplication
 import Foundation
 import Testing
 
@@ -98,4 +100,74 @@ struct NightActionMenuTests {
         #expect(root.contains("router.navigateToInsights(presetSetupFilter: setup)"))
         #expect(root.contains("initialSetupFilter: router.pendingInsightsSetupFilter"))
     }
+}
+
+/// v5 library-switch fixes (item 3, follow-up): `Self.rateFrames` used to
+/// open its own confined `MetadataStore` connection through `metadataFactory`
+/// on every call, competing with `ProjectsStore`'s already-open one for the
+/// same file. Unlike the rest of this file, `rateFrames` is a plain static
+/// function -- no view rendering needed -- so this drives it directly rather
+/// than through another source-string check.
+@MainActor
+@Suite("V2 Night action menu rating")
+struct NightActionMenuRatingTests {
+    @Test("An already-open metadata store is reused instead of opening a second connection")
+    func rateFramesReusesTheSharedMetadataStore() async throws {
+        let shared = try MetadataStore.temporary()
+        let host = OperationHost(center: OperationCenter())
+        let rootURL = URL(fileURLWithPath: NSTemporaryDirectory())
+
+        NightActionMenu.rateFrames(
+            target: "M 31", date: "2026-01-01", nightID: UUID(), rootURL: rootURL,
+            // Opening one here would be the bug -- `rateFrames` must go
+            // through `sharedMetadata` and never touch this.
+            metadataFactory: { _ in throw NightActionMenuTestFailure.shouldNotOpenASecondConnection },
+            sharedMetadata: shared,
+            operationHost: host
+        )
+
+        // `rateFrames` is fire-and-forget (an internal, unstructured `Task`),
+        // so this polls for its own "nothing to rate" notification -- the
+        // fresh `shared` store has no series recorded for this night -- the
+        // same honest early exit `LibraryHealthStoreTests`' own `waitUntil`
+        // helper is used for elsewhere in this suite.
+        try await waitUntil { host.toasts.contains { $0.level == .info } }
+
+        #expect(host.toasts.contains { $0.level == .info && $0.message.contains("No frames to rate") })
+    }
+
+    @Test("A root the shared provider does not own still falls back to this call's own factory")
+    func rateFramesFallsBackWhenNoSharedStoreIsGiven() async throws {
+        let host = OperationHost(center: OperationCenter())
+        let rootURL = URL(fileURLWithPath: NSTemporaryDirectory())
+
+        NightActionMenu.rateFrames(
+            target: "M 31", date: "2026-01-01", nightID: UUID(), rootURL: rootURL,
+            metadataFactory: { _ in try MetadataStore.temporary() },
+            sharedMetadata: nil,
+            operationHost: host
+        )
+
+        try await waitUntil { host.toasts.contains { $0.level == .info } }
+
+        #expect(host.toasts.contains { $0.level == .info && $0.message.contains("No frames to rate") })
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() >= deadline {
+                Issue.record("Condition not met within \(timeout)s")
+                return
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+    }
+}
+
+private enum NightActionMenuTestFailure: Error, Equatable {
+    case shouldNotOpenASecondConnection
 }

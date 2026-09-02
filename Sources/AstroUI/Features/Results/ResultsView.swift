@@ -100,13 +100,20 @@ public final class ResultsStore {
         self.resultsQueryFactory = resultsQueryFactory
     }
 
-    public func load(rootURL: URL, projectID: UUID) async {
+    /// `sharedMetadata` is the window's ALREADY-OPEN `MetadataStore` for
+    /// `rootURL`, when there is one -- v5 library-switch fixes (item 3,
+    /// follow-up). This store used to open its OWN confined connection
+    /// through `metadataFactory` on every load, competing with
+    /// `ProjectsStore`'s already-open one for the same file. `metadataFactory`
+    /// stays as the fallback for the paths that genuinely have no open store
+    /// to reuse (and for tests injecting a fixture-backed one).
+    public func load(rootURL: URL, projectID: UUID, sharedMetadata: MetadataStore?) async {
         loadGeneration += 1
         let generation = loadGeneration
         isLoading = true
         errorMessage = nil
         do {
-            let metadata = try metadataFactory(rootURL)
+            let metadata = try sharedMetadata ?? metadataFactory(rootURL)
             let project = try await ProjectsQuery(metadata: metadata).project(id: projectID)
             guard generation == loadGeneration else { return }
             latestNightDate = project?.nights.first?.night.localDate
@@ -181,15 +188,26 @@ public struct ProjectResultsPane: View {
     /// `ResultsView`'s own empty-state action -- see that type's own
     /// `review` doc comment for why it exists.
     let review: () -> Void
+    /// v5 library-switch fixes (item 3, follow-up): forwarded straight into
+    /// `ResultsView`'s own `sharedMetadataStore` -- see that type's own doc
+    /// comment.
+    let sharedMetadataStore: MetadataStore?
 
-    public init(rootURL: URL, project: ProjectRecord, review: @escaping () -> Void = {}) {
+    public init(
+        rootURL: URL, project: ProjectRecord, review: @escaping () -> Void = {},
+        sharedMetadataStore: MetadataStore? = nil
+    ) {
         self.rootURL = rootURL
         self.project = project
         self.review = review
+        self.sharedMetadataStore = sharedMetadataStore
     }
 
     public var body: some View {
-        ResultsView(rootURL: rootURL, project: project, showsHeader: false, review: review)
+        ResultsView(
+            rootURL: rootURL, project: project, showsHeader: false, review: review,
+            sharedMetadataStore: sharedMetadataStore
+        )
     }
 }
 
@@ -206,6 +224,13 @@ public struct ResultsView: View {
     /// existing previews/tests that never reach this branch don't need to
     /// supply one.
     let review: () -> Void
+    /// v5 library-switch fixes (item 3, follow-up): the window's ALREADY-OPEN
+    /// `MetadataStore` for `rootURL`, handed down by `DetailHost`/
+    /// `ProjectWorkspaceView` so `store.load` reuses that one connection
+    /// instead of opening a competing second one -- see `ResultsStore.load`'s
+    /// own `sharedMetadata` doc comment. `nil` when nothing is open for this
+    /// root (yet), which falls back to the store's own factory.
+    let sharedMetadataStore: MetadataStore?
     @State private var store: ResultsStore
     @State private var selectedRowID: String?
     @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
@@ -215,12 +240,14 @@ public struct ResultsView: View {
 
     public init(
         rootURL: URL, project: ProjectRecord, showsHeader: Bool = true,
-        review: @escaping () -> Void = {}, store: ResultsStore = ResultsStore()
+        review: @escaping () -> Void = {}, store: ResultsStore = ResultsStore(),
+        sharedMetadataStore: MetadataStore? = nil
     ) {
         self.rootURL = rootURL
         self.project = project
         self.showsHeader = showsHeader
         self.review = review
+        self.sharedMetadataStore = sharedMetadataStore
         _store = State(initialValue: store)
     }
 
@@ -280,7 +307,7 @@ public struct ResultsView: View {
                 } actions: {
                     // Wave W6-A: see `RetryButton`'s own doc comment.
                     RetryButton(identifier: "v2.results.try-again") {
-                        Task { await store.load(rootURL: rootURL, projectID: project.id) }
+                        Task { await store.load(rootURL: rootURL, projectID: project.id, sharedMetadata: sharedMetadataStore) }
                     }
                 }
             } else if !store.rows.isEmpty {
@@ -316,7 +343,7 @@ public struct ResultsView: View {
         // one screen with no margin.
         .astroRaisedSurface(.flush)
         .padding(AstroTokens.Spacing.spacious)
-        .task(id: project.id) { await store.load(rootURL: rootURL, projectID: project.id) }
+        .task(id: project.id) { await store.load(rootURL: rootURL, projectID: project.id, sharedMetadata: sharedMetadataStore) }
         // Wave 4 Task 3: a distinct identifier while embedded (no header) as
         // `ProjectWorkspaceView`'s Results tab, so UI automation can tell the
         // pushed `.resultsWorkspace(projectID:)` route apart from this same

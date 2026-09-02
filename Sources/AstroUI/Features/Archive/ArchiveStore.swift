@@ -47,6 +47,16 @@ public final class ArchiveStore {
     /// Planning).
     public private(set) var visibleRows: [ArchiveTargetRow] = []
 
+    /// v5 library-switch fixes (item 3, follow-up): hands back the window's
+    /// ALREADY-OPEN `MetadataStore` for the asked-for root, or `nil` when
+    /// there is none for that library -- same contract as
+    /// `LibraryHealthStore.sharedMetadataProvider`. `acknowledge` used to
+    /// open its OWN confined connection through `metadataFactory` on every
+    /// call, one more SQLite connection competing with `ProjectsStore`'s
+    /// over the same file. `metadataFactory` stays as the fallback (and is
+    /// what tests inject).
+    public var sharedMetadataProvider: (@MainActor (URL) -> MetadataStore?)?
+
     private let mapFactory: MapFactory
     private let taskFactory: TaskFactory
     private let metadataFactory: MetadataFactory
@@ -122,7 +132,7 @@ public final class ArchiveStore {
             return
         }
         do {
-            let metadata = try metadataFactory(standardizedRoot)
+            let metadata = try resolvedMetadata(rootURL: standardizedRoot)
             let title = OperationHost.localized("Acknowledging finding")
             _ = await operationHost.run(kind: kind, title: title, cancellation: .unavailable) { [weak self] in
                 try await metadata.acknowledgeFindingGroup(
@@ -133,6 +143,13 @@ public final class ArchiveStore {
         } catch {
             operationHost.notify(.failure, message: "\(OperationHost.localized("Could not save acknowledgement:")) \(error.localizedDescription)")
         }
+    }
+
+    /// The window's shared connection when it is really this root's, else a
+    /// freshly opened one.
+    private func resolvedMetadata(rootURL: URL) throws -> MetadataStore {
+        if let shared = sharedMetadataProvider?(rootURL) { return shared }
+        return try metadataFactory(rootURL)
     }
 
     public static func productionMetadata(rootURL: URL) throws -> MetadataStore {
