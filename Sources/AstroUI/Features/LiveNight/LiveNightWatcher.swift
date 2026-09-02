@@ -243,13 +243,21 @@ public final class LiveNightWatcher: @unchecked Sendable {
     /// scope with it here is what keeps start and stop balanced no matter
     /// which caller (Settings refresh, `startWatching`, `stopWatching`,
     /// `deinit`) drives the transition.
+    ///
+    /// The scope is started and stopped on `url` EXACTLY as handed in, never
+    /// on `standardizedFileURL`: a security-scoped access belongs to the URL
+    /// instance `URL(resolvingBookmarkData:options:.withSecurityScope,…)`
+    /// produced, and `standardizedFileURL` builds a fresh instance that
+    /// carries none of that scope -- so starting on it returns false and the
+    /// watcher then tracked (and released) nothing at all. Standardizing is
+    /// only ever for comparing and listing.
     public func configureFolder(_ url: URL?) {
         let standardized = url?.standardizedFileURL
         guard folderURL != standardized else { return }
         releaseScopedFolder()
         folderURL = standardized
-        if let standardized, securityScopedAccess.start(standardized) {
-            scopedFolderURL = standardized
+        if let url, securityScopedAccess.start(url) {
+            scopedFolderURL = url
         }
         session = LiveNightSessionModel()
         pendingSizes = [:]
@@ -350,7 +358,10 @@ public final class LiveNightWatcher: @unchecked Sendable {
             return
         }
         configuredFolderBookmark = bookmark
-        guard folder != folderURL else { return }
+        // `folder` is the raw resolved instance now (it carries the scope),
+        // so the "same folder as before?" question standardizes for the
+        // comparison only.
+        guard folder.standardizedFileURL != folderURL else { return }
         await startWatching(folder: folder, operationHost: operationHost)
     }
 
@@ -366,13 +377,19 @@ public final class LiveNightWatcher: @unchecked Sendable {
     /// caller ran on every `UserDefaults.didChangeNotification`. The scope
     /// is now started and stopped by `configureFolder(_:)`, which owns the
     /// watched folder's whole lifetime.
+    ///
+    /// Returns the resolved instance UNCHANGED. It used to return
+    /// `standardizedFileURL`, which threw away the very instance the
+    /// security scope is attached to -- so `configureFolder`'s `start` had
+    /// nothing to grant access to. Callers standardize themselves when they
+    /// need to compare.
     public static func resolveConfiguredFolder(defaults: UserDefaults = .standard) -> URL? {
         guard let data = defaults.data(forKey: LiveNightWatcherSettings.folderBookmarkDefaultsKey) else { return nil }
         var isStale = false
         guard let url = try? URL(
             resolvingBookmarkData: data, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale
         ) else { return nil }
-        return url.standardizedFileURL
+        return url
     }
 
     private func refreshGoal() {
