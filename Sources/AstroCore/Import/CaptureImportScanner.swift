@@ -157,7 +157,18 @@ public enum CaptureImportScanner {
         // still comes from Exif when available, and so do the exposure/ISO/
         // aperture values the Classify step's group rows surface.
         let meta = ImageMetaReader.read(url: fileURL)
-        if let rawDateTaken = meta?.dateTaken, let parsed = SessionTimeline.parseDateObs(rawDateTaken) {
+        // Exif `DateTimeOriginal` is camera-LOCAL wall-clock time, not UTC --
+        // `SessionTimeline.parseDateObs` parses every value (FITS or Exif
+        // shape) as UTC, so the raw Exif string must go through
+        // `ExifDateConversion` first (same conversion `LibraryScanner`
+        // applies to a scanned CR3/RAW light) or every card-import date lands
+        // off by the observer's UTC offset. Falls back to the frame's own
+        // `OffsetTimeOriginal` when the body wrote one, else the Mac's
+        // current time zone -- same documented assumption as the scanner.
+        let utcDateTaken = meta?.dateTaken.flatMap {
+            ExifDateConversion.utcDateObsString(dateTaken: $0, offsetTimeOriginal: meta?.dateTakenOffset)
+        } ?? meta?.dateTaken
+        if let rawDateTaken = utcDateTaken, let parsed = SessionTimeline.parseDateObs(rawDateTaken) {
             return Classification(
                 role: nil, date: Self.yyyyMMdd(parsed), source: .exifDateTaken, instant: parsed,
                 exposureSeconds: meta?.exposureSeconds, iso: meta?.iso, apertureFNumber: meta?.apertureFNumber

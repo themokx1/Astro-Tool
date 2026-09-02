@@ -119,7 +119,15 @@ private func makeSourceDir() throws -> URL {
     defer { try? FileManager.default.removeItem(at: root) }
 
     let url = root.appendingPathComponent("IMG_0003.cr3")
-    try writeTestTIFF(to: url, dateTimeOriginal: "2026:08:16 21:34:05", exposureSeconds: 0.0002, iso: 100, apertureFNumber: 2.0)
+    // Explicit "+00:00" offset keeps the expected hour/minute/second below
+    // independent of the machine's own time zone -- `ExifDateConversion`
+    // (W5-4 fix) now converts camera-local Exif time to UTC using the
+    // frame's own `OffsetTimeOriginal` when present, same as the library
+    // scanner already does for a scanned CR3/RAW light.
+    try writeTestTIFF(
+        to: url, dateTimeOriginal: "2026:08:16 21:34:05", offsetTimeOriginal: "+00:00",
+        exposureSeconds: 0.0002, iso: 100, apertureFNumber: 2.0
+    )
 
     let found = try CaptureImportScanner.scan(sourceRoot: root)
     let file = try #require(found.first)
@@ -137,6 +145,35 @@ private func makeSourceDir() throws -> URL {
     #expect(components.hour == 21)
     #expect(components.minute == 34)
     #expect(components.second == 5)
+}
+
+/// The card-import wizard's `captureDate`/`captureInstant` for a raw
+/// (CR3/RAW) frame come from Exif `DateTimeOriginal`, which is camera-LOCAL
+/// wall-clock time -- before this fix, `classify(fileURL:ext:kind:)` handed
+/// that string straight to `SessionTimeline.parseDateObs`, which parses
+/// every value (FITS or Exif shape) as UTC, so a card imported from a
+/// non-UTC-observing session got every date silently off by the offset. Now
+/// routed through the SAME `ExifDateConversion` the library scanner already
+/// applies when it introspects a scanned CR3/RAW light.
+@Test func scanConvertsRawExifDateTakenToUTCUsingOffsetTimeOriginal() throws {
+    let root = try makeSourceDir()
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let url = root.appendingPathComponent("IMG_0004.cr3")
+    // 04:36:24 local at UTC+2 is 02:36:24 UTC.
+    try writeTestTIFF(to: url, dateTimeOriginal: "2026:01:10 04:36:24", offsetTimeOriginal: "+02:00")
+
+    let found = try CaptureImportScanner.scan(sourceRoot: root)
+    let file = try #require(found.first)
+
+    #expect(file.captureDate == "2026-01-10")
+    #expect(file.captureDateSource == .exifDateTaken)
+    var utcCalendar = Calendar(identifier: .gregorian)
+    utcCalendar.timeZone = TimeZone(identifier: "UTC")!
+    let components = utcCalendar.dateComponents([.hour, .minute, .second], from: file.captureInstant)
+    #expect(components.hour == 2)
+    #expect(components.minute == 36)
+    #expect(components.second == 24)
 }
 
 /// W5-4 item 4: the import wizard's FITS groups used to show no exposure
