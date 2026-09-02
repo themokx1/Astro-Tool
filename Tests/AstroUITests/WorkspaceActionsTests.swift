@@ -278,3 +278,94 @@ struct WorkspaceActionsTests {
         #expect(center.actions.items.isEmpty)
     }
 }
+
+/// The five `.focusedSceneValue` commands in `FocusedAppValues.swift` are
+/// each constructed inline in a view `body`, so a fresh instance exists on
+/// every body pass. A non-`Equatable` focused value is therefore a change
+/// on every pass, and publishing one invalidates every view reading it --
+/// which re-runs the body that publishes it. Same disease, same cure as
+/// `WorkspaceAction`'s own closure-excluding `==` above (dev build 20014's
+/// invalidation storm).
+@Suite("Focused app command values")
+struct FocusedAppValueEquatableTests {
+    @Test("Rescan/audit/measure/search commands compare on availability alone, never on their closures")
+    func availabilityOnlyCommandsIgnoreClosures() {
+        var firstCalls = 0
+        var secondCalls = 0
+
+        #expect(
+            LibraryRescanCommand(isAvailable: true, action: { firstCalls += 1 })
+                == LibraryRescanCommand(isAvailable: true, action: { secondCalls += 1 })
+        )
+        #expect(
+            LibraryRescanCommand(isAvailable: true, action: {})
+                != LibraryRescanCommand(isAvailable: false, action: {})
+        )
+        #expect(
+            LibraryAuditCommand(isAvailable: true, action: { _ in firstCalls += 1 })
+                == LibraryAuditCommand(isAvailable: true, action: { _ in secondCalls += 1 })
+        )
+        #expect(
+            LibraryAuditCommand(isAvailable: true, action: { _ in })
+                != LibraryAuditCommand(isAvailable: false, action: { _ in })
+        )
+        #expect(
+            SensorMeasureCommand(isAvailable: true, action: { firstCalls += 1 })
+                == SensorMeasureCommand(isAvailable: true, action: { secondCalls += 1 })
+        )
+        #expect(
+            SensorMeasureCommand(isAvailable: true, action: {})
+                != SensorMeasureCommand(isAvailable: false, action: {})
+        )
+        #expect(
+            GlobalSearchFocusCommand(isAvailable: true, action: { firstCalls += 1 })
+                == GlobalSearchFocusCommand(isAvailable: true, action: { secondCalls += 1 })
+        )
+        #expect(
+            GlobalSearchFocusCommand(isAvailable: true, action: {})
+                != GlobalSearchFocusCommand(isAvailable: false, action: {})
+        )
+        // The closures are genuinely distinct -- `==` deliberately never
+        // looks at them, which is what lets a rebuilt-but-identical value
+        // compare equal to the one already published.
+        #expect(firstCalls == 0 && secondCalls == 0)
+    }
+
+    @Test("The review rating command also compares the series it would rate")
+    func reviewRateCommandComparesItsTargetSeries() {
+        let series = UUID()
+        let otherSeries = UUID()
+
+        #expect(
+            ReviewRateCommand(isAvailable: true, seriesID: series, action: {})
+                == ReviewRateCommand(isAvailable: true, seriesID: series, action: {})
+        )
+        #expect(
+            ReviewRateCommand(isAvailable: true, seriesID: series, action: {})
+                != ReviewRateCommand(isAvailable: true, seriesID: otherSeries, action: {}),
+            "same availability, different series is a genuinely different menu action"
+        )
+        #expect(
+            ReviewRateCommand(isAvailable: true, seriesID: series, action: {})
+                != ReviewRateCommand(isAvailable: false, seriesID: series, action: {})
+        )
+        #expect(ReviewRateCommand(isAvailable: false, action: {}).seriesID == nil)
+    }
+
+    @Test("ReviewWorkspace publishes the selected series as part of the focused value")
+    func reviewWorkspacePublishesTheSeriesIdentity() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"),
+            encoding: .utf8
+        )
+        let command = try #require(
+            source.components(separatedBy: "ReviewRateCommand(").dropFirst().first?
+                .components(separatedBy: "\n            )").first
+        )
+        #expect(command.contains("seriesID: store.selectedSeriesID"))
+    }
+}

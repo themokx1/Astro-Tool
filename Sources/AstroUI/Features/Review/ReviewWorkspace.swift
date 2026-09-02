@@ -98,6 +98,10 @@ public struct ReviewWorkspace: View {
             ReviewRateCommand(
                 isAvailable: (store.selectedSeries.map { !$0.decisions.isEmpty } ?? false)
                     && runningRatingOperation == nil,
+                // Part of the value's identity, so `==` (see
+                // `FocusedAppValues.swift`) can tell "same menu item" from
+                // "same availability, different series".
+                seriesID: store.selectedSeriesID,
                 action: { Task { await store.rateSelectedSeries(mode: .nativeOnly, operationHost: operationHost) } }
             )
         )

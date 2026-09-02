@@ -79,10 +79,16 @@ private struct SensorMeasureFocusedValueKey: FocusedValueKey {
 /// has frames, and no rating run is already in flight for it).
 public struct ReviewRateCommand {
     public let isAvailable: Bool
+    /// The series the action would rate -- the one thing about this command
+    /// that can change while `isAvailable` stays `true`, so `==` (below)
+    /// compares it. `nil` means "no particular series", which is what the
+    /// menu item's disabled state already says.
+    public let seriesID: UUID?
     private let action: () -> Void
 
-    public init(isAvailable: Bool, action: @escaping () -> Void) {
+    public init(isAvailable: Bool, seriesID: UUID? = nil, action: @escaping () -> Void) {
         self.isAvailable = isAvailable
+        self.seriesID = seriesID
         self.action = action
     }
 
@@ -116,6 +122,55 @@ public struct GlobalSearchFocusCommand {
 
 private struct GlobalSearchFocusFocusedValueKey: FocusedValueKey {
     typealias Value = GlobalSearchFocusCommand
+}
+
+// MARK: - Equatable
+//
+// Every command above is constructed inline inside a `.focusedSceneValue`
+// modifier, i.e. FRESHLY on every single `body` pass of the view that
+// publishes it. Without `Equatable`, SwiftUI has no way to tell one pass's
+// value from the next, so each pass counts as a change: it invalidates
+// every view reading that focused value, which re-runs the body that
+// publishes it. That is the exact invalidation storm this project already
+// diagnosed once and fixed for the toolbar (see `WorkspaceActionCenter`'s
+// own doc comment, and `WorkspaceAction`'s closure-excluding `==`).
+//
+// Equality deliberately never looks at the stored closures -- functions are
+// not `Equatable`, and these ones capture only long-lived reference types
+// (the stores, `OperationHost`) or `@State` setters, so an earlier pass's
+// closure does exactly what a later pass's would. What is compared is the
+// state the menu bar actually renders from: `isAvailable`, plus an explicit
+// target identity wherever the action has one that can change
+// independently (`ReviewRateCommand.seriesID`).
+
+extension LibraryRescanCommand: Equatable {
+    public static func == (lhs: LibraryRescanCommand, rhs: LibraryRescanCommand) -> Bool {
+        lhs.isAvailable == rhs.isAvailable
+    }
+}
+
+extension LibraryAuditCommand: Equatable {
+    public static func == (lhs: LibraryAuditCommand, rhs: LibraryAuditCommand) -> Bool {
+        lhs.isAvailable == rhs.isAvailable
+    }
+}
+
+extension SensorMeasureCommand: Equatable {
+    public static func == (lhs: SensorMeasureCommand, rhs: SensorMeasureCommand) -> Bool {
+        lhs.isAvailable == rhs.isAvailable
+    }
+}
+
+extension ReviewRateCommand: Equatable {
+    public static func == (lhs: ReviewRateCommand, rhs: ReviewRateCommand) -> Bool {
+        lhs.isAvailable == rhs.isAvailable && lhs.seriesID == rhs.seriesID
+    }
+}
+
+extension GlobalSearchFocusCommand: Equatable {
+    public static func == (lhs: GlobalSearchFocusCommand, rhs: GlobalSearchFocusCommand) -> Bool {
+        lhs.isAvailable == rhs.isAvailable
+    }
 }
 
 public extension FocusedValues {
