@@ -338,6 +338,78 @@ import Testing
         _ = await phoneResult
     }
 
+    /// The recovery path for the permanent dead end above: once BOTH sides
+    /// forget the stale peer (`removeTrustedPeer`, the store-level action
+    /// the Mac's "Forget this iPhone and pair again" / the iPhone's "Forget
+    /// this Mac and pair again" UI each call locally), the exact same two
+    /// identities can pair again from scratch — a fresh first pairing with a
+    /// new SAS code, not another `peerIdentityChanged`.
+    ///
+    /// Both sides must forget, not just the one that observed
+    /// `peerIdentityChanged`: `NearbyPairingSession` decides "known peer" vs
+    /// "first pairing" unilaterally from its OWN trust store. If only the
+    /// side that saw the failure forgets, the next attempt is asymmetric —
+    /// that side runs the first-pairing message flow (SAS + `.pairingConfirm`
+    /// exchange) while the still-trusting other side runs the known-peer
+    /// flow (no `.pairingConfirm` at all) and the first-pairing side hangs
+    /// waiting for a confirm frame that never arrives, until the handshake
+    /// timeout. This is exactly why the recovery UI exists on BOTH ends
+    /// (fix item 1b/1c) rather than only on whichever device happened to
+    /// detect the mismatch.
+    @Test func forgettingTheStalePeerOnBothSidesAfterIdentityChangedAllowsAFreshPairing() async throws {
+        let macStore = InMemoryDeviceIdentityStore()
+        let phoneStore = InMemoryDeviceIdentityStore()
+        let macIdentity = try macStore.loadOrCreateOwnIdentity(displayName: "Mac")
+        let phoneIdentity = try phoneStore.loadOrCreateOwnIdentity(displayName: "Phone")
+
+        try await pairOnce(macIdentity: macIdentity, macStore: macStore, phoneIdentity: phoneIdentity, phoneStore: phoneStore)
+
+        let tamperedPhonePeer = MobilePeerIdentity(
+            deviceID: phoneIdentity.deviceID,
+            signingPublicKeyRawRepresentation: Curve25519.Signing.PrivateKey().publicKey.rawRepresentation,
+            displayName: "Phone"
+        )
+        macStore.forceOverwriteTrustedPeer(tamperedPhonePeer)
+
+        let (failingMacConnection, failingPhoneConnection) = InMemoryDuplexConnection.makePair()
+        let failingMacSession = NearbyPairingSession(role: .listener, identity: macIdentity, trustStore: macStore, connection: failingMacConnection)
+        let failingPhoneSession = NearbyPairingSession(role: .initiator, identity: phoneIdentity, trustStore: phoneStore, connection: failingPhoneConnection)
+        async let failingPhoneResult: Result<NearbyPairingOutcome, Error> = {
+            do { return .success(try await failingPhoneSession.establish()) } catch { return .failure(error) }
+        }()
+        await #expect(throws: NearbyTransportError.peerIdentityChanged(phoneIdentity.deviceID)) {
+            _ = try await failingMacSession.establish()
+        }
+        _ = await failingPhoneResult
+
+        // Recovery: forget the stale peer on BOTH ends (mirrors the Mac's
+        // and the iPhone's own "Forget … and pair again" actions, each
+        // calling `NearbySyncCoordinator`/`NearbyPhoneSyncSession
+        // .forgetPeer(deviceID:)` locally).
+        try macStore.removeTrustedPeer(deviceID: phoneIdentity.deviceID)
+        try phoneStore.removeTrustedPeer(deviceID: macIdentity.deviceID)
+        #expect(try macStore.trustedPeers().isEmpty)
+        #expect(try phoneStore.trustedPeers().isEmpty)
+
+        let (macConnection, phoneConnection) = InMemoryDuplexConnection.makePair()
+        let macSession = NearbyPairingSession(role: .listener, identity: macIdentity, trustStore: macStore, connection: macConnection)
+        let phoneSession = NearbyPairingSession(role: .initiator, identity: phoneIdentity, trustStore: phoneStore, connection: phoneConnection)
+
+        let macTask = Task<NearbyPairingOutcome, Error> { try await macSession.establish() }
+        let phoneTask = Task<NearbyPairingOutcome, Error> { try await phoneSession.establish() }
+
+        _ = try await macSession.shortAuthenticationCode
+        _ = try await phoneSession.shortAuthenticationCode
+        await macSession.confirmPairing()
+        await phoneSession.confirmPairing()
+
+        let macOutcome = try await macTask.value
+        let phoneOutcome = try await phoneTask.value
+        #expect(macOutcome.wasFirstPairing)
+        #expect(phoneOutcome.wasFirstPairing)
+        #expect(try macStore.trustedPeers().first?.signingPublicKeyRawRepresentation == phoneIdentity.publicIdentity.signingPublicKeyRawRepresentation)
+    }
+
     // MARK: - Timeout
 
     @Test func establishTimesOutWhenThePeerNeverAnswers() async throws {

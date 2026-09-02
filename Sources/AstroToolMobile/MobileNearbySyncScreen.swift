@@ -18,6 +18,7 @@ struct MobileNearbySyncScreen: View {
     let onRejectCode: () -> Void
     let onCancel: () -> Void
     let onRetry: () -> Void
+    let onForgetAndRetry: () -> Void
     let onOpenSettings: () -> Void
     let onUseAirDropInstead: () -> Void
     let onDone: () -> Void
@@ -146,9 +147,15 @@ struct MobileNearbySyncScreen: View {
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("v5.mobile.nearby.open-settings")
             }
-            Button("Try again", action: onRetry)
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("v5.mobile.nearby.retry")
+            if case .identityChanged = failure {
+                Button("Forget this Mac and pair again", action: onForgetAndRetry)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v5.mobile.nearby.forget-and-retry")
+            } else {
+                Button("Try again", action: onRetry)
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("v5.mobile.nearby.retry")
+            }
             Button("Send with AirDrop instead", action: onUseAirDropInstead)
                 .buttonStyle(.borderless)
                 .accessibilityIdentifier("v5.mobile.nearby.use-airdrop")
@@ -163,7 +170,7 @@ struct MobileNearbySyncScreen: View {
         case .pairingRejected:
             return String(localized: "The code was not confirmed on both devices. Nothing was sent or received.")
         case .identityChanged:
-            return String(localized: "This Mac no longer matches what this iPhone already trusts. If you did not expect that, stop here and check your Mac. Otherwise, try connecting again.")
+            return String(localized: "This Mac no longer matches what this iPhone already trusts. This usually means the Mac was reinstalled or replaced. If you did not expect that, stop here and check your Mac. Otherwise, forget it and pair again — you'll see the six-digit code once more.")
         case .transferFailed:
             return String(localized: "The connection was lost before the sync finished. Nothing changed on either device.")
         case .importFailed:

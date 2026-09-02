@@ -616,10 +616,21 @@ public struct MobileSyncView: View {
                 Label(nearbyFailureMessage(reason), systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(AstroTokens.Color.critical)
                     .accessibilityIdentifier("v5.nearby.state")
+                if case .identityChanged = reason {
+                    Text("This usually means the iPhone was reinstalled or replaced. Forgetting it lets you pair again — you'll see the six-digit code once more.")
+                        .astroBody()
+                        .foregroundStyle(AstroTokens.Color.inkDim)
+                }
                 HStack {
-                    Button("Try again", systemImage: "arrow.clockwise") { store.retryNearbySync() }
-                        .buttonStyle(.borderedProminent)
-                        .accessibilityIdentifier("v5.nearby.retry")
+                    if case .identityChanged = reason {
+                        Button("Forget this iPhone and pair again", systemImage: "iphone.slash") { store.forgetNearbyPeerAndRetry() }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("v5.nearby.forget-and-retry")
+                    } else {
+                        Button("Try again", systemImage: "arrow.clockwise") { store.retryNearbySync() }
+                            .buttonStyle(.borderedProminent)
+                            .accessibilityIdentifier("v5.nearby.retry")
+                    }
                     Button("Cancel", role: .cancel) { store.cancelNearbySync() }
                         .accessibilityIdentifier("v5.nearby.cancel")
                 }
@@ -637,7 +648,7 @@ public struct MobileSyncView: View {
     private func nearbyFailureMessage(_ reason: NearbySyncFailure) -> LocalizedStringKey {
         switch reason {
         case .pairingRejected: "Pairing was declined."
-        case .identityChanged: "This iPhone's saved identity changed. Re-pair to continue."
+        case .identityChanged: "This iPhone's saved identity no longer matches."
         case .transferFailed: "The transfer could not complete."
         case .applyRefused: "The reviewed changes were not applied."
         case .timeout: "The connection timed out."

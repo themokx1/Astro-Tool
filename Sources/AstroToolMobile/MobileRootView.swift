@@ -43,7 +43,10 @@ enum MobileNearbySyncUIState: Equatable {
 enum MobileNearbySyncUIFailure: Equatable {
     case peerNotFound
     case pairingRejected
-    case identityChanged
+    /// Carries the Mac's deviceID so the "Forget this Mac and pair again"
+    /// recovery action (`MobileRootView.forgetNearbySyncPeerAndRetry`) knows
+    /// exactly which trusted peer to remove.
+    case identityChanged(deviceID: UUID)
     case transferFailed
     case importFailed
     case timeout
@@ -53,7 +56,7 @@ enum MobileNearbySyncUIFailure: Equatable {
         switch failure {
         case .peerNotFound: self = .peerNotFound
         case .pairingRejected: self = .pairingRejected
-        case .identityChanged: self = .identityChanged
+        case .identityChanged(let deviceID): self = .identityChanged(deviceID: deviceID)
         case .transferFailed: self = .transferFailed
         case .importFailed: self = .importFailed
         case .timeout: self = .timeout
@@ -424,6 +427,7 @@ struct MobileRootView: View {
                     onRejectCode: rejectNearbySyncCode,
                     onCancel: { showingNearbySync = false },
                     onRetry: startNearbySync,
+                    onForgetAndRetry: forgetNearbySyncPeerAndRetry,
                     onOpenSettings: openNearbySyncSettings,
                     onUseAirDropInstead: { showingNearbySync = false },
                     onDone: {
@@ -591,6 +595,23 @@ struct MobileRootView: View {
     private func openNearbySyncSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
+    }
+
+    /// The recovery action behind "Forget this Mac and pair again" on the
+    /// `.failed(.identityChanged)` screen. `nearbySyncSession` is already
+    /// nil by the time the user can tap this (the session actor is cleared
+    /// as soon as its stream reaches a terminal state — see
+    /// `startNearbySync`'s `for await` loop), so this talks to the same
+    /// Keychain-backed trust store directly rather than through a live
+    /// session, exactly like `NearbySyncCoordinator.forgetPeer(deviceID:)`
+    /// does on the Mac side. The Mac must forget this iPhone the same way on
+    /// its own side (its own "Forget this iPhone and pair again" action) for
+    /// the retry to actually succeed rather than time out.
+    private func forgetNearbySyncPeerAndRetry() {
+        guard case .failed(.identityChanged(let deviceID)) = nearbySyncState else { return }
+        try? KeychainDeviceIdentityStore().removeTrustedPeer(deviceID: deviceID)
+        nearbySyncState = .idle
+        startNearbySync()
     }
 
     /// Builds the phone's reply from its own queued checklist/note changes,

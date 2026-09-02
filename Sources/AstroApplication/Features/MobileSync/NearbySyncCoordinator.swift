@@ -11,7 +11,10 @@ public enum NearbySyncFailure: Equatable, Sendable {
     case pairingRejected
     /// The connecting peer's stored identity key no longer matches the key
     /// it presented — a hard re-pairing signal, never silently accepted.
-    case identityChanged
+    /// Carries the peer's deviceID so the recovery UI can offer "Forget this
+    /// iPhone and pair again" (`NearbySyncCoordinator.forgetPeer(deviceID:)`)
+    /// without a second round trip to look it up.
+    case identityChanged(deviceID: UUID)
     /// The authenticated handshake, the forward-snapshot publish, or the
     /// wire-level package transfer itself failed.
     case transferFailed
@@ -235,6 +238,27 @@ public actor NearbySyncCoordinator {
         await currentPairingSession?.rejectPairing()
     }
 
+    /// Removes `deviceID` from the Mac's own trust store — the recovery
+    /// action behind "Forget this iPhone and pair again" on the
+    /// `.failed(.identityChanged)` state, and the same action the "Forget
+    /// paired devices" list in iPhone Sync settings offers per-peer. The
+    /// next `startAdvertising` session with this deviceID then goes through
+    /// a fresh first pairing instead of repeating the same
+    /// `peerIdentityChanged` failure forever. Never touches the iPhone's own
+    /// trust store, which must forget this Mac the same way on its side for
+    /// the next handshake to succeed (see `NearbyPairingSessionTests
+    /// .forgettingTheStalePeerOnBothSidesAfterIdentityChangedAllowsAFreshPairing`).
+    public func forgetPeer(deviceID: UUID) throws {
+        try trustStore.removeTrustedPeer(deviceID: deviceID)
+    }
+
+    /// The last known display name for `deviceID`, if the Mac still has it
+    /// trusted. Used to label the recovery action with the iPhone's name
+    /// instead of a bare UUID.
+    public func trustedPeerDisplayName(deviceID: UUID) -> String? {
+        (try? trustStore.trustedPeers())?.first { $0.deviceID == deviceID }?.displayName
+    }
+
     /// Reports the outcome of a `.receivedReturn` review resolved through
     /// the caller's own apply/discard UI. A no-op unless a session is
     /// currently suspended waiting for exactly this call.
@@ -418,8 +442,8 @@ public actor NearbySyncCoordinator {
         switch transportError {
         case .pairingRejected, .pairingConfirmationFailed:
             return .pairingRejected
-        case .peerIdentityChanged:
-            return .identityChanged
+        case .peerIdentityChanged(let deviceID):
+            return .identityChanged(deviceID: deviceID)
         case .handshakeTimeout:
             return .timeout
         default:

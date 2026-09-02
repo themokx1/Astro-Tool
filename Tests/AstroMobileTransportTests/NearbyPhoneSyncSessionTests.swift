@@ -194,9 +194,17 @@ struct NearbyPhoneSyncSessionTests {
         }
         _ = await macOutcome
 
-        #expect(collected.last == .failed(.identityChanged))
+        #expect(collected.last == .failed(.identityChanged(deviceID: macIdentity.deviceID)))
         #expect(!collected.contains { if case .pairingCode = $0 { return true }; return false })
         #expect(try phoneStore.trustedPeers().count == 1)
+
+        // Recovery: "Forget this Mac and pair again" on the iPhone's own
+        // failed screen removes exactly the offending deviceID and reports
+        // its last known display name for that action's label.
+        #expect(await phoneSession.trustedPeerDisplayName(deviceID: macIdentity.deviceID) == "Zoltán Macje")
+        try await phoneSession.forgetPeer(deviceID: macIdentity.deviceID)
+        #expect(try phoneStore.trustedPeers().isEmpty)
+        #expect(await phoneSession.trustedPeerDisplayName(deviceID: macIdentity.deviceID) == nil)
     }
 
     @Test("a connection drop mid-transfer fails closed with no residue left in the phone's staging area")

@@ -128,4 +128,45 @@ struct MobileSyncSurfaceTests {
         // instead, so this call site would only ever appear in a comment.
         #expect(!store.contains("NearbySyncCoordinator(rootURL:"))
     }
+
+    // MARK: - Fix 1: peer-identity-changed recovery (permanent dead end)
+
+    @Test("Mac's identityChanged failure offers a dedicated forget-and-retry recovery action")
+    func macIdentityChangedOffersForgetAndRetry() throws {
+        let view = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncView.swift"), encoding: .utf8)
+        let store = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Features/MobileSync/MobileSyncStore.swift"), encoding: .utf8)
+        let coordinator = try String(contentsOf: root.appendingPathComponent("Sources/AstroApplication/Features/MobileSync/NearbySyncCoordinator.swift"), encoding: .utf8)
+
+        #expect(view.contains("v5.nearby.forget-and-retry"))
+        #expect(view.contains("Forget this iPhone and pair again"))
+        #expect(store.contains("func forgetNearbyPeerAndRetry()"))
+        #expect(store.contains("case .failed(.identityChanged(let deviceID))"))
+        // The failure carries the offending peer's deviceID (not just a bare
+        // "it changed" signal) so the recovery action knows exactly which
+        // trusted peer to remove.
+        #expect(coordinator.contains("case identityChanged(deviceID: UUID)"))
+        #expect(coordinator.contains("func forgetPeer(deviceID: UUID) throws"))
+        #expect(coordinator.contains("func trustedPeerDisplayName(deviceID: UUID) -> String?"))
+    }
+
+    @Test("iPhone Sync settings lists trusted peers with a per-peer forget action")
+    func settingsListsPairedDevicesWithForget() throws {
+        let settings = try String(contentsOf: root.appendingPathComponent("Sources/AstroUI/Settings/V2SettingsView.swift"), encoding: .utf8)
+        #expect(settings.contains("Forget paired devices"))
+        #expect(settings.contains("removeTrustedPeer(deviceID:"))
+        #expect(settings.contains("trustedPeers()"))
+    }
+
+    @Test("iPhone's own identityChanged screen offers the mirrored forget-and-retry action")
+    func iPhoneIdentityChangedOffersForgetAndRetry() throws {
+        let screen = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileNearbySyncScreen.swift"), encoding: .utf8)
+        let rootView = try String(contentsOf: root.appendingPathComponent("Sources/AstroToolMobile/MobileRootView.swift"), encoding: .utf8)
+        let session = try String(contentsOf: root.appendingPathComponent("Sources/AstroMobileTransport/NearbyPhoneSyncSession.swift"), encoding: .utf8)
+
+        #expect(screen.contains("v5.mobile.nearby.forget-and-retry"))
+        #expect(screen.contains("Forget this Mac and pair again"))
+        #expect(rootView.contains("func forgetNearbySyncPeerAndRetry()"))
+        #expect(rootView.contains("case identityChanged(deviceID: UUID)"))
+        #expect(session.contains("func forgetPeer(deviceID: UUID) throws"))
+    }
 }

@@ -200,8 +200,16 @@ struct NearbySyncCoordinatorTests {
 
         #expect(!collected.contains { if case .pairingCode = $0 { return true }; return false })
         #expect(collected.last.map {
-            if case .failed(.identityChanged) = $0 { return true }; return false
+            if case .failed(.identityChanged(let deviceID)) = $0 { return deviceID == phoneIdentity.deviceID }; return false
         } == true)
+
+        // Recovery: "Forget this iPhone and pair again" removes exactly the
+        // offending deviceID and reports its last known display name for
+        // that action's label.
+        #expect(await coordinator.trustedPeerDisplayName(deviceID: phoneIdentity.deviceID) == "Zoltán iPhone")
+        try await coordinator.forgetPeer(deviceID: phoneIdentity.deviceID)
+        #expect(try fixture.macTrustStore.trustedPeers().isEmpty)
+        #expect(await coordinator.trustedPeerDisplayName(deviceID: phoneIdentity.deviceID) == nil)
     }
 
     @Test("stop() during waitingForPhone finishes the stream with exactly one terminal event")

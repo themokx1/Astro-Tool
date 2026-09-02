@@ -2851,11 +2851,17 @@
 "Transferring" = "Átvitel";
 "Verifying" = "Ellenőrzés";
 "Pairing was declined." = "A párosítást elutasították.";
-"This iPhone's saved identity changed. Re-pair to continue." = "Ennek az iPhone-nak a mentett azonosítója megváltozott. A folytatáshoz párosítsd újra.";
+"This iPhone's saved identity no longer matches." = "Ennek az iPhone-nak a mentett azonosítója már nem egyezik.";
+"This usually means the iPhone was reinstalled or replaced. Forgetting it lets you pair again — you'll see the six-digit code once more." = "Ez általában azt jelenti, hogy az iPhone-t újratelepítették vagy lecserélték. Ha elfelejted, újra párosíthatod — a hatjegyű kód ismét megjelenik.";
+"Forget this iPhone and pair again" = "iPhone elfelejtése és újrapárosítás";
 "The transfer could not complete." = "Az átvitel nem fejeződött be.";
 "The reviewed changes were not applied." = "Az ellenőrzött módosítások nem kerültek alkalmazásra.";
 "The connection timed out." = "A kapcsolat időtúllépés miatt megszakadt.";
 "Sync was cancelled." = "A szinkronizálást megszakítottuk.";
+"Forget paired devices" = "Párosított eszközök elfelejtése";
+"Forget" = "Elfelejtés";
+"No iPhone has paired with this Mac yet." = "Még egyetlen iPhone sem párosult ezzel a Mac-kel.";
+"The list of paired iPhones could not be read." = "A párosított iPhone-ok listája nem olvasható.";
 
 /* 2026-09-02 first-run flow fixes */
 "This library could not be prepared" = "Ezt a könyvtárat nem sikerült előkészíteni";

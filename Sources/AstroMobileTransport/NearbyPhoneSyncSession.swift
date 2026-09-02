@@ -16,8 +16,10 @@ public enum NearbyPhoneSyncFailure: Equatable, Sendable {
     case pairingRejected
     /// The Mac's presented identity key no longer matches the key this
     /// iPhone already trusts for it — a hard re-pairing signal, never
-    /// silently accepted.
-    case identityChanged
+    /// silently accepted. Carries the Mac's deviceID so the recovery UI can
+    /// offer "Forget this Mac and pair again" (`forgetPeer(deviceID:)`)
+    /// without a second round trip to look it up.
+    case identityChanged(deviceID: UUID)
     /// The handshake, or the wire-level exchange of package bytes, failed.
     case transferFailed
     /// The forward package arrived and was hash-verified at the wire layer,
@@ -229,6 +231,25 @@ public actor NearbyPhoneSyncSession {
         await currentPairingSession?.rejectPairing()
     }
 
+    /// Removes `deviceID` from this iPhone's own trust store — the recovery
+    /// action behind "Forget this Mac and pair again" on the
+    /// `.failed(.identityChanged)` screen. The next `run()` call then goes
+    /// through a fresh first pairing instead of repeating the same
+    /// `peerIdentityChanged` failure forever. Never touches the Mac's own
+    /// trust store, which must forget this iPhone the same way on its side
+    /// for the next handshake to succeed (see `NearbyPairingSessionTests
+    /// .forgettingTheStalePeerOnBothSidesAfterIdentityChangedAllowsAFreshPairing`).
+    public func forgetPeer(deviceID: UUID) throws {
+        try trustStore.removeTrustedPeer(deviceID: deviceID)
+    }
+
+    /// The last known display name for `deviceID`, if this iPhone still has
+    /// it trusted. Used to label the recovery action with the Mac's name
+    /// ("Forget MacBook Pro and pair again") instead of a bare UUID.
+    public func trustedPeerDisplayName(deviceID: UUID) -> String? {
+        (try? trustStore.trustedPeers())?.first { $0.deviceID == deviceID }?.displayName
+    }
+
     /// Cancels the in-flight session (any browse/connect attempt, any
     /// handshake, any confirmation wait) and finishes the state stream with
     /// exactly one terminal `.failed(.cancelled)` state. Idempotent. A
@@ -377,8 +398,8 @@ public actor NearbyPhoneSyncSession {
         switch transportError {
         case .pairingRejected, .pairingConfirmationFailed:
             return .pairingRejected
-        case .peerIdentityChanged:
-            return .identityChanged
+        case .peerIdentityChanged(let deviceID):
+            return .identityChanged(deviceID: deviceID)
         case .handshakeTimeout:
             return .timeout
         default:
