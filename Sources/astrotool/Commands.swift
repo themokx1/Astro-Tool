@@ -121,7 +121,7 @@ Commands:
   session-convert plan --target T --date D [--physical] [--out PLAN.json] [--root R] [--json]
   session-convert apply --plan PLAN.json --yes [--root R] [--json]
   session-convert rollback --id CONVERSION_ID --yes [--root R] [--json]
-                Mindig pontosan egy célpont/dátum sessionre korlátozott.
+                Always scoped to exactly one target/date session.
   config        (show|path) [--root R] [--json]
   tag add       --target T [--date D] <tag> [--root R] [--json]
   tag remove    --target T [--date D] <tag> [--root R] [--json]
@@ -225,24 +225,25 @@ Commands:
                 same target/date SYNCS the lights/ tree to the current
                 selection -- a frame no longer selected (tighter --keep, or a
                 flat-to-per-filter shape change) is unlinked and reported as
-                "N elavult link eltávolítva". Additive and idempotent --
+                "N stale link(s) removed". Additive and idempotent --
                 never touches your original files. --out PATH exports
                 straight into PATH instead (PATH becomes the stacklist dir
                 itself, may be outside the library root -- a cross-volume
                 destination falls back to a plain copy per file instead of a
-                hardlink, reported as "hardlink helyett másolat készült");
+                hardlink, reported as "copied instead of hardlinked");
                 --out - is rejected (this exports a directory tree, not a
                 single file).
   stacks        [--target T] [--json] [--grouped] [--verbose] [--root R]
-                Stack-file felderítés: minden már létrejött stack/feldolgozott
-                kimenet célpontonként, bárhol is legyen a lemezen -- nem csak
-                a kanonikus stacks/<cél>/<dátum>/ helyen. Ismeretlen célponthoz
-                sorolt találatok "Besorolatlan" alatt. Emberi kimenet
-                variáns-családokba csoportosítva (R8-3): eredeti/szerkesztett/
-                starless/starmask/export egy stackhez tartozó fájljai egy
-                sorban; --verbose behúzva kilistázza a variánsokat is. --json
-                alapból a lapos [TargetStacks] listát adja; --json --grouped
-                a csoportosított [StackGroup] listát.
+                Stack-file discovery: every stack/processed output already
+                produced, per target, wherever it lives on disk -- not just
+                the canonical stacks/<target>/<date>/ location. Results
+                filed under an unrecognized target are grouped as
+                "Unclassified". Human output is grouped into variant
+                families (R8-3): original/edited/starless/starmask/export
+                files belonging to one stack share a line; --verbose
+                indents and lists the variants too. --json defaults to the
+                flat [TargetStacks] list; --json --grouped gives the
+                grouped [StackGroup] list instead.
   report        --target T --date D [--out -] [--root R]
                 Self-contained HTML night-report card: frame/exposure
                 summary, timeline, quality, altitude/airmass + achieved Moon
@@ -263,16 +264,28 @@ Commands:
   --help        Show this help
 """
 
-let tccGuidance = """
-Hozzáférés megtagadva, vagy a kötet nincs csatlakoztatva.
+let tccGuidance = L(
+    """
+    Access denied, or the volume isn't mounted.
 
-Ha a hiba oka a Teljes lemezhozzáférés hiánya:
-  1. Rendszerbeállítások → Adatvédelem és biztonság → Teljes lemezhozzáférés
-  2. Engedélyezd a hozzáférést az alkalmazásnak / terminálnak
-  3. Az engedély megadása után indítsd újra az appot/terminált
+    If this is caused by missing Full Disk Access:
+      1. System Settings -> Privacy & Security -> Full Disk Access
+      2. Enable access for the app / terminal
+      3. Restart the app/terminal after granting access
 
-Ha külső kötetről van szó, ellenőrizd, hogy csatlakoztatva van-e (pl. a Finderben).
-"""
+    If this is an external volume, check that it's mounted (e.g. in Finder).
+    """,
+    """
+    Hozzáférés megtagadva, vagy a kötet nincs csatlakoztatva.
+
+    Ha a hiba oka a Teljes lemezhozzáférés hiánya:
+      1. Rendszerbeállítások → Adatvédelem és biztonság → Teljes lemezhozzáférés
+      2. Engedélyezd a hozzáférést az alkalmazásnak / terminálnak
+      3. Az engedély megadása után indítsd újra az appot/terminált
+
+    Ha külső kötetről van szó, ellenőrizd, hogy csatlakoztatva van-e (pl. a Finderben).
+    """
+)
 
 func describeAstroError(_ error: AstroError) -> String {
     switch error {
@@ -700,12 +713,17 @@ func cmdVerify(_ args: [String]) throws -> Int32 {
             ))
         } else {
             print(
-                "baseline: új hash \(outcome.hashed), hiba \(outcome.errors.count); "
-                    + "lefedettség \(coverage.hashed)/\(coverage.tracked) "
-                    + "(\(String(format: "%.1f", coverage.percent))%)"
+                L(
+                    "baseline: new hash \(outcome.hashed), errors \(outcome.errors.count); "
+                        + "coverage \(coverage.hashed)/\(coverage.tracked) "
+                        + "(\(String(format: "%.1f", coverage.percent))%)",
+                    "baseline: új hash \(outcome.hashed), hiba \(outcome.errors.count); "
+                        + "lefedettség \(coverage.hashed)/\(coverage.tracked) "
+                        + "(\(String(format: "%.1f", coverage.percent))%)"
+                )
             )
             for error in outcome.errors {
-                print("  HIBA  \(error.path)")
+                print(L("  ERROR  \(error.path)", "  HIBA  \(error.path)"))
                 if let reason = error.readError { print("    \(reason)") }
             }
         }
@@ -726,22 +744,26 @@ func cmdVerify(_ args: [String]) throws -> Int32 {
         try printJSON(VerifyJSONPayload(summary: summary, coverage: coverage, items: findingsList))
     } else {
         print(
-            "verify: ellenőrizve \(summary.checked), ok \(summary.ok), eltérés \(summary.contentChanged), "
-                + "módosult \(summary.modified), helyben módosult \(summary.modifiedInPlace), hiba \(summary.readErrors)"
+            L(
+                "verify: checked \(summary.checked), ok \(summary.ok), changed \(summary.contentChanged), "
+                    + "modified \(summary.modified), modified in place \(summary.modifiedInPlace), errors \(summary.readErrors)",
+                "verify: ellenőrizve \(summary.checked), ok \(summary.ok), eltérés \(summary.contentChanged), "
+                    + "módosult \(summary.modified), helyben módosult \(summary.modifiedInPlace), hiba \(summary.readErrors)"
+            )
         )
         for finding in findingsList where finding.category == "content-changed" {
-            print("  ELTÉRÉS  \(finding.path)")
+            print(L("  CHANGED  \(finding.path)", "  ELTÉRÉS  \(finding.path)"))
             print("    \(finding.message)")
         }
         for finding in findingsList where finding.category == "verify-read-error" {
-            print("  HIBA  \(finding.path)")
+            print(L("  ERROR  \(finding.path)", "  HIBA  \(finding.path)"))
             print("    \(finding.message)")
         }
         for finding in findingsList where finding.category == "modified" {
-            print("  módosult  \(finding.path)")
+            print(L("  modified  \(finding.path)", "  módosult  \(finding.path)"))
         }
         for finding in findingsList where finding.category == "modified-in-place" {
-            print("  GYANÚS HELYBEN MÓDOSÍTÁS  \(finding.path)")
+            print(L("  SUSPICIOUS IN-PLACE MODIFICATION  \(finding.path)", "  GYANÚS HELYBEN MÓDOSÍTÁS  \(finding.path)"))
             print("    \(finding.message)")
         }
     }
@@ -867,21 +889,30 @@ private struct CleanupJSONPayload: Encodable {
 
 private func printCleanupReport(_ summary: CleanupSummary, limit: Int, sizeByPath: [String: Int64]) {
     guard !summary.groups.isEmpty else {
-        print("nincs takarítható elem")
+        print(L("nothing to clean up", "nincs takarítható elem"))
         return
     }
 
     for group in summary.groups {
-        print("\(group.category)  \(group.fileCount) fájl  \(formatBytes(group.totalBytes))")
+        print(L(
+            "\(group.category)  \(group.fileCount) file(s)  \(formatBytes(group.totalBytes))",
+            "\(group.category)  \(group.fileCount) fájl  \(formatBytes(group.totalBytes))"
+        ))
         for path in group.paths.prefix(limit) {
             print("  \(path)  \(formatBytes(sizeByPath[path] ?? 0))")
         }
         if group.truncatedCount > 0 {
-            print("  … és még \(group.truncatedCount) fájl (nincs kilistázva)")
+            print(L(
+                "  … and \(group.truncatedCount) more file(s) (not listed)",
+                "  … és még \(group.truncatedCount) fájl (nincs kilistázva)"
+            ))
         }
     }
     print("")
-    print("összesen felszabadítható: \(formatBytes(summary.grandTotalBytes))")
+    print(L(
+        "total reclaimable: \(formatBytes(summary.grandTotalBytes))",
+        "összesen felszabadítható: \(formatBytes(summary.grandTotalBytes))"
+    ))
 }
 
 private func formatBytes(_ bytes: Int64) -> String {
@@ -927,7 +958,10 @@ func cmdRate(_ args: [String]) throws -> Int32 {
     let results = try rater.rate(target: target, date: parsed.value("--date"), force: parsed.has("--force"))
 
     if Rater.shouldWarnNoMetrics(results, providerWasUsed: provider != nil) {
-        eprint("a Siril nem adott metrikát egyetlen keretre sem — ellenőrizd a telepítést")
+        eprint(L(
+            "Siril didn't return metrics for any frame — check the installation",
+            "a Siril nem adott metrikát egyetlen keretre sem — ellenőrizd a telepítést"
+        ))
     }
 
     if parsed.has("--json") {
@@ -1113,7 +1147,7 @@ private func printSessionDetails(target: String, sessions: [SessionDetail]) {
     }
 
     for s in sessions {
-        let excludedSuffix = s.isExcludedFromTotals ? "  [kizárva a célpont-összegzésből]" : ""
+        let excludedSuffix = s.isExcludedFromTotals ? L("  [excluded from target summary]", "  [kizárva a célpont-összegzésből]") : ""
         print("session: \(s.target) / \(s.dateRaw)\(excludedSuffix)")
         print("  frames: \(frameCountText(s))")
         print("  integration: \(formatHoursMinutes(s.integrationSeconds))")
@@ -1137,7 +1171,7 @@ private func printSessionDetails(target: String, sessions: [SessionDetail]) {
 private func frameCountText(_ s: SessionDetail) -> String {
     var base = "\(s.usableLightCount) light, \(s.flatCount) flat, \(s.darkCount) dark, \(s.biasCount) bias"
     var extras: [String] = []
-    if s.rejectedCount > 0 { extras.append("\(s.rejectedCount) elvetett") }
+    if s.rejectedCount > 0 { extras.append(L("\(s.rejectedCount) rejected", "\(s.rejectedCount) elvetett")) }
     if s.duplicateLinkCount > 0 { extras.append("\(s.duplicateLinkCount) link") }
     if !extras.isEmpty {
         base += "  (+\(extras.joined(separator: " · ")))"
@@ -1219,17 +1253,17 @@ private func printSingleTargetStats(_ s: TargetStats, showGross: Bool) {
 /// stays exactly as before.
 private func printFilterBreakdown(_ breakdown: [FilterIntegration]) {
     guard !breakdown.isEmpty else {
-        print("nincs szűrő-adat")
+        print(L("no filter data", "nincs szűrő-adat"))
         return
     }
 
     let filterWidth = max(breakdown.map { $0.filter.count }.max() ?? 5, 5)
     let hasGoals = breakdown.contains { $0.goalSeconds != nil }
-    let header = "SZŰRŐ".padding(toLength: filterWidth, withPad: " ", startingAt: 0)
+    let header = L("FILTER", "SZŰRŐ").padding(toLength: filterWidth, withPad: " ", startingAt: 0)
     if hasGoals {
-        print("\(header)  KERET  INTEGRÁCIÓ  CÉL      HIÁNYZIK")
+        print(L("\(header)  FRAMES  INTEGRATION  GOAL     MISSING", "\(header)  KERET  INTEGRÁCIÓ  CÉL      HIÁNYZIK"))
     } else {
-        print("\(header)  KERET  INTEGRÁCIÓ")
+        print(L("\(header)  FRAMES  INTEGRATION", "\(header)  KERET  INTEGRÁCIÓ"))
     }
     for f in breakdown {
         let name = f.filter.padding(toLength: filterWidth, withPad: " ", startingAt: 0)
@@ -1378,9 +1412,12 @@ private func printNightsTable(_ rows: [NightRow]) {
     let names = rows.map { nightsNameColumnText($0) }
     let targetWidth = max(names.map(\.count).max() ?? 7, 7)
 
-    let dateHeader = "DÁTUM".padding(toLength: dateWidth, withPad: " ", startingAt: 0)
-    let targetHeader = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
-    print("\(dateHeader)  \(targetHeader)  LIGHT  INTEGRÁCIÓ  FWHM(\")  DUTY%  JEGYZET")
+    let dateHeader = L("DATE", "DÁTUM").padding(toLength: dateWidth, withPad: " ", startingAt: 0)
+    let targetHeader = L("TARGET", "CÉLPONT").padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    print(L(
+        "\(dateHeader)  \(targetHeader)  LIGHT  INTEGRATION  FWHM(\")  DUTY%  NOTE",
+        "\(dateHeader)  \(targetHeader)  LIGHT  INTEGRÁCIÓ  FWHM(\")  DUTY%  JEGYZET"
+    ))
 
     for (row, nameText) in zip(rows, names) {
         let date = row.date.padding(toLength: dateWidth, withPad: " ", startingAt: 0)
@@ -1392,7 +1429,7 @@ private func printNightsTable(_ rows: [NightRow]) {
         // Same plain-marker convention `printRateTable` uses for
         // `isOutlier` -- a short flag column, not a full word.
         let notes = row.hasNotes ? "*" : ""
-        let excludedSuffix = row.isExcludedFromTotals ? "  [kizárva]" : ""
+        let excludedSuffix = row.isExcludedFromTotals ? L("  [excluded]", "  [kizárva]") : ""
         print("\(date)  \(name)  \(lights)  \(integration)  \(fwhm)  \(duty)  \(notes)\(excludedSuffix)")
     }
 }
@@ -1413,11 +1450,17 @@ func cmdCalib(_ args: [String]) throws -> Int32 {
 
     let selectedModes = ["--health", "--flats", "--shopping"].filter(parsed.has)
     guard selectedModes.count <= 1 else {
-        eprint("error: --health, --flats és --shopping közül egyszerre csak egy választható")
+        eprint(L(
+            "error: only one of --health, --flats and --shopping may be selected at a time",
+            "error: --health, --flats és --shopping közül egyszerre csak egy választható"
+        ))
         return 1
     }
     guard parsed.has("--shopping") || (parsed.value("--date") == nil && parsed.value("--site") == nil) else {
-        eprint("error: --date és --site csak a --shopping móddal használható")
+        eprint(L(
+            "error: --date and --site can only be used with --shopping mode",
+            "error: --date és --site csak a --shopping móddal használható"
+        ))
         return 1
     }
 
@@ -1453,10 +1496,16 @@ func cmdCalib(_ args: [String]) throws -> Int32 {
         if parsed.has("--json") {
             try printJSON(report)
         } else {
-            print("Kalibrációs bevásárlólista — \(report.night) éjszakájára")
-            if let site = report.site { print("Helyszín: \(site)") }
+            print(L(
+                "Calibration shopping list — for the night of \(report.night)",
+                "Kalibrációs bevásárlólista — \(report.night) éjszakájára"
+            ))
+            if let site = report.site { print(L("Site: \(site)", "Helyszín: \(site)")) }
             if items.isEmpty {
-                print("Nincs szükséges kalibrációs felvétel a ma látható célpontokhoz.")
+                print(L(
+                    "No calibration frames needed for tonight's visible targets.",
+                    "Nincs szükséges kalibrációs felvétel a ma látható célpontokhoz."
+                ))
             } else {
                 for item in items { print("  - \(item.summary)") }
             }
@@ -1507,11 +1556,11 @@ private func planNightString(_ date: Date) -> String {
 }
 
 private func printCalibHealthReport(_ report: CalibHealthReport) {
-    print("Flat-fegyelem:")
+    print(L("Flat discipline:", "Flat-fegyelem:"))
     let problemFlats = report.flats.filter { $0.status != "rendben" }
     let okFlats = report.flats.filter { $0.status == "rendben" }
     if report.flats.isEmpty {
-        print("  nincs session usable lighttal")
+        print(L("  no session with usable lights", "  nincs session usable lighttal"))
     }
     for flat in problemFlats + okFlats {
         print("  \(flat.target)/\(flat.date): \(flat.status)")
@@ -1521,9 +1570,9 @@ private func printCalibHealthReport(_ report: CalibHealthReport) {
     }
 
     print("")
-    print("Bias-készlet:")
+    print(L("Bias set:", "Bias-készlet:"))
     if report.biasGroups.isEmpty {
-        print("  nincs bias frame")
+        print(L("  no bias frames", "  nincs bias frame"))
     }
     for group in report.biasGroups {
         let gainStr = group.gain.map(formatted) ?? "-"
@@ -1532,21 +1581,24 @@ private func printCalibHealthReport(_ report: CalibHealthReport) {
         print("  gain\(gainStr)/offset\(offsetStr)/\(cameraStr): \(group.frameCount) frame (\(group.locations.joined(separator: ", ")))")
     }
     if !report.missingBiasCombos.isEmpty {
-        print("  hiányzó kombók:")
+        print(L("  missing combos:", "  hiányzó kombók:"))
         for combo in report.missingBiasCombos {
             print("    - \(combo)")
         }
     }
 
     print("")
-    print("Dark-készlet egészség:")
+    print(L("Dark set health:", "Dark-készlet egészség:"))
     if report.darkMasters.isEmpty {
-        print("  nincs master dark")
+        print(L("  no master dark", "  nincs master dark"))
     }
     for master in report.darkMasters {
         let ageStr = master.ageDays.map(String.init) ?? "-"
-        var line = "  \(master.path): \(master.frameCount) frame, \(ageStr) napos"
-        if master.isStale { line += " ⚠️ elavult" }
+        var line = L(
+            "  \(master.path): \(master.frameCount) frame, \(ageStr) days old",
+            "  \(master.path): \(master.frameCount) frame, \(ageStr) napos"
+        )
+        if master.isStale { line += L(" ⚠️ stale", " ⚠️ elavult") }
         print(line)
         if !master.warnings.isEmpty {
             print("    - \(master.warnings.joined(separator: ", "))")
@@ -1562,7 +1614,10 @@ private func printCalibReport(_ needs: [CalibNeed]) {
     // surfaces the flat-gap count too, not just darks.
     let darkTodoCount = todos.filter { $0.kind == .dark }.count
     let flatTodoCount = todos.filter { $0.kind == .flat }.count
-    print("\(todos.count) teendő (\(darkTodoCount) dark, \(flatTodoCount) flat)")
+    print(L(
+        "\(todos.count) todo(s) (\(darkTodoCount) dark, \(flatTodoCount) flat)",
+        "\(todos.count) teendő (\(darkTodoCount) dark, \(flatTodoCount) flat)"
+    ))
     print("")
 
     if todos.isEmpty {
@@ -1572,7 +1627,10 @@ private func printCalibReport(_ needs: [CalibNeed]) {
         for need in todos {
             print("  - \(need.todo ?? "")")
             if !need.mismatchReasons.isEmpty {
-                print("    ⚠️ nem illeszkedő master: \(need.mismatchReasons.joined(separator: ", "))")
+                print(L(
+                    "    ⚠️ mismatched master: \(need.mismatchReasons.joined(separator: ", "))",
+                    "    ⚠️ nem illeszkedő master: \(need.mismatchReasons.joined(separator: ", "))"
+                ))
             }
         }
     }
@@ -1600,7 +1658,10 @@ private func printFlatCoverageReport(_ needs: [CalibNeed]) {
         for need in todos {
             print("  - \(need.todo ?? "")")
             if !need.mismatchReasons.isEmpty {
-                print("    ⚠️ nem illeszkedő flat: \(need.mismatchReasons.joined(separator: ", "))")
+                print(L(
+                    "    ⚠️ mismatched flat: \(need.mismatchReasons.joined(separator: ", "))",
+                    "    ⚠️ nem illeszkedő flat: \(need.mismatchReasons.joined(separator: ", "))"
+                ))
             }
         }
     }
@@ -1608,7 +1669,7 @@ private func printFlatCoverageReport(_ needs: [CalibNeed]) {
     print("")
     print("covered filters: \(covered.count)")
     for need in covered {
-        let filterText = need.filter ?? "(nincs szűrő)"
+        let filterText = need.filter ?? L("(no filter)", "(nincs szűrő)")
         print("  \(filterText) -> \(need.matchedMasterPath ?? "-")")
     }
 }
@@ -1723,7 +1784,7 @@ func cmdLinkCalib(_ args: [String]) throws -> Int32 {
             try printJSON(plan)
         } else {
             printLinkPlan(plan)
-            print("(dry-run: nincs írás)")
+            print(L("(dry-run: no writes)", "(dry-run: nincs írás)"))
         }
         return 0
     }
@@ -1746,7 +1807,7 @@ func cmdLinkCalib(_ args: [String]) throws -> Int32 {
     if !parsed.has("--yes") {
         print("Type YES to link:")
         guard let line = readLine(), line.trimmingCharacters(in: .whitespacesAndNewlines) == "YES" else {
-            print("megszakítva, nem történt írás")
+            print(L("cancelled, nothing was written", "megszakítva, nem történt írás"))
             return 0
         }
     }
@@ -1768,9 +1829,12 @@ private func printLinkPlan(_ plan: CalibLinkPlan) {
 
     guard !plan.items.isEmpty else {
         if !plan.mismatchReasons.isEmpty {
-            print("nem linkelhető: \(plan.mismatchReasons.joined(separator: ", "))")
+            print(L(
+                "not linkable: \(plan.mismatchReasons.joined(separator: ", "))",
+                "nem linkelhető: \(plan.mismatchReasons.joined(separator: ", "))"
+            ))
         } else {
-            print("nincs linkelhető kalibráció")
+            print(L("no linkable calibration", "nincs linkelhető kalibráció"))
         }
         return
     }
@@ -1880,11 +1944,11 @@ func cmdConfig(_ args: [String]) throws -> Int32 {
 /// that's allowed (same exception `printPlanHeader`'s own doc comment
 /// notes); every other command only ever derives times/altitudes from them.
 private func printConfigHumanReadable(_ config: AstroConfig) {
-    print("Gyökér")
+    print(L("Root", "Gyökér"))
     print("  rootPath: \(config.rootPath)")
 
     print("")
-    print("Kizárások")
+    print(L("Exclusions", "Kizárások"))
     print("  excludedDirNames: \(joinedOrDash(config.excludedDirNames))")
     print("  excludedPaths: \(joinedOrDash(config.excludedPaths))")
     print("  residuePatterns: \(joinedOrDash(config.residuePatterns))")
@@ -1893,13 +1957,13 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     print("  toolOutputDirNames: \(joinedOrDash(config.toolOutputDirNames))")
 
     print("")
-    print("Szándékos dátum-minták (intentional)")
+    print(L("Intentional date patterns (intentional)", "Szándékos dátum-minták (intentional)"))
     print("  runSuffix: \(config.intentional.runSuffix)")
     print("  dateRange: \(config.intentional.dateRange)")
     print("  labels: \(joinedOrDash(config.intentional.labels))")
 
     print("")
-    print("Wide-field szabály")
+    print(L("Wide-field rule", "Wide-field szabály"))
     print("  extensions: \(joinedOrDash(config.wideField.extensions))")
     print("  maxFocalLengthMM: \(formatted(config.wideField.maxFocalLengthMM))")
     print("  nameMarkers: \(joinedOrDash(config.wideField.nameMarkers))")
@@ -1914,7 +1978,7 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     }
 
     print("")
-    print("Kalibráció (calib)")
+    print(L("Calibration (calib)", "Kalibráció (calib)"))
     print("  tempToleranceC: \(formatted(config.calib.tempToleranceC))")
     print("  exposureToleranceS: \(formatted(config.calib.exposureToleranceS))")
     print("  exposureToleranceFraction: \(formatted(config.calib.exposureToleranceFraction))")
@@ -1928,7 +1992,7 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     print("  matchCamera: \(config.calib.matchCamera)")
 
     print("")
-    print("Pontozás (rating)")
+    print(L("Rating (rating)", "Pontozás (rating)"))
     print("  workers: \(config.rating.workers)")
     print("  outlierZScore: \(formatted(config.rating.outlierZScore))")
     print("  sirilPath: \(config.rating.sirilPath)")
@@ -1936,14 +2000,17 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     print("  weights: \(weights.isEmpty ? "-" : weights.joined(separator: ", "))")
 
     print("")
-    print("Statisztika (stats)")
+    print(L("Statistics (stats)", "Statisztika (stats)"))
     print("  excludeLabels: \(joinedOrDash(config.stats.excludeLabels))")
     print("  gapThresholdSeconds: \(formatted(config.stats.gapThresholdSeconds))")
     print("  collectingThresholdSeconds: \(formatted(config.stats.collectingThresholdSeconds))")
 
     print("")
-    print("Helyszín (site)")
-    let siteFallback = "n/a (FITS SITELAT/SITELONG-ból származtatva scan-eléskor)"
+    print(L("Site (site)", "Helyszín (site)"))
+    let siteFallback = L(
+        "n/a (derived from FITS SITELAT/SITELONG at scan time)",
+        "n/a (FITS SITELAT/SITELONG-ból származtatva scan-eléskor)"
+    )
     print("  latitudeDeg: \(config.site.latitudeDeg.map { formatted($0) } ?? siteFallback)")
     print("  longitudeDeg: \(config.site.longitudeDeg.map { formatted($0) } ?? siteFallback)")
 
@@ -1951,27 +2018,30 @@ private func printConfigHumanReadable(_ config: AstroConfig) {
     // R11-T15/F16: PRIVACY exception, same as `site` right above -- `config
     // show` is the one place a configured site's real coordinates may
     // appear in the clear.
-    print("Helyszínek (sites)")
+    print(L("Sites (sites)", "Helyszínek (sites)"))
     if config.sites.isEmpty {
-        print("  - (nincs konfigurált helyszín -- a fenti site/FITS-medián érvényes)")
+        print(L(
+            "  - (no site configured -- the site/FITS median above applies)",
+            "  - (nincs konfigurált helyszín -- a fenti site/FITS-medián érvényes)"
+        ))
     } else {
         for profile in config.sites {
-            let defaultMarker = profile.isDefault ? " [alapértelmezett]" : ""
+            let defaultMarker = profile.isDefault ? L(" [default]", " [alapértelmezett]") : ""
             print("  \(profile.name)\(defaultMarker): \(formatted(profile.latitudeDeg)), \(formatted(profile.longitudeDeg))")
         }
     }
 
     print("")
-    print("Expozíció-tanácsadó (expose)")
+    print(L("Exposure advisor (expose)", "Expozíció-tanácsadó (expose)"))
     print("  maxSubSeconds: \(formatted(config.expose.maxSubSeconds))")
     print("  noiseContributionC: \(formatted(config.expose.noiseContributionC))")
 
     print("")
-    print("Időjárás (weather)")
+    print(L("Weather (weather)", "Időjárás (weather)"))
     print("  enabled: \(config.weather.enabled)")
 
     print("")
-    print("Tervező (plan)")
+    print(L("Planner (plan)", "Tervező (plan)"))
     print("  narrowbandFilters: \(joinedOrDash(config.plan.narrowbandFilters))")
 }
 
@@ -2242,29 +2312,32 @@ func cmdSearch(_ args: [String]) throws -> Int32 {
 /// `searchFileCap` truncated the file list.
 private func printSearchAllResults(_ results: SearchResults) {
     if !results.targets.isEmpty {
-        print("Célpontok (\(results.targets.count)):")
+        print(L("Targets (\(results.targets.count)):", "Célpontok (\(results.targets.count)):"))
         for hit in results.targets {
             let suffix = hit.displayName != hit.target ? " (\(hit.target))" : ""
             print("  \(hit.displayName)\(suffix)")
         }
     }
     if !results.sessions.isEmpty {
-        print("Sessionök (\(results.sessions.count)):")
+        print(L("Sessions (\(results.sessions.count)):", "Sessionök (\(results.sessions.count)):"))
         for hit in results.sessions {
             print("  \(hit.target) [\(hit.date)]")
         }
     }
     if !results.files.isEmpty {
         let header = results.totalFileMatches > results.files.count
-            ? "Fájlok (\(results.files.count) / \(results.totalFileMatches)):"
-            : "Fájlok (\(results.files.count)):"
+            ? L(
+                "Files (\(results.files.count) / \(results.totalFileMatches)):",
+                "Fájlok (\(results.files.count) / \(results.totalFileMatches)):"
+              )
+            : L("Files (\(results.files.count)):", "Fájlok (\(results.files.count)):")
         print(header)
         for hit in results.files {
             print("  \(hit.path)  (\(hit.kind), \(hit.sizeBytes) B)")
         }
     }
     if !results.notes.isEmpty {
-        print("Jegyzetek (\(results.notes.count)):")
+        print(L("Notes (\(results.notes.count)):", "Jegyzetek (\(results.notes.count)):"))
         for hit in results.notes {
             print("  \(hit.target) [\(hit.date)] \(hit.key): \(hit.value)")
         }
@@ -2525,7 +2598,7 @@ private func cmdNoteShow(_ args: [String]) throws -> Int32 {
         print("no notes for \(target) [\(date)]")
     } else {
         for key in notes.keys.sorted() {
-            let suffix = conflicts[key] != nil ? "  ⚠ eltér a README-től" : ""
+            let suffix = conflicts[key] != nil ? L("  ⚠ differs from README", "  ⚠ eltér a README-től") : ""
             print("\(key): \(notes[key] ?? "")\(suffix)")
         }
     }
@@ -2727,7 +2800,7 @@ func cmdGoal(_ args: [String]) throws -> Int32 {
     if parsed.has("--json") {
         try printJSON(GoalResult(target: target, filter: filterArg, goalTag: resultTag))
     } else {
-        print("\(target)\(filterArg.map { " [\($0)]" } ?? ""): \(resultTag ?? "nincs cél")")
+        print("\(target)\(filterArg.map { " [\($0)]" } ?? ""): \(resultTag ?? L("no goal", "nincs cél"))")
     }
     return 0
 }
@@ -2760,9 +2833,12 @@ private struct GoalListResult: Encodable {
 /// as a one-line header above it.
 private func printGoalList(_ result: GoalListResult) {
     if let overallGoalSeconds = result.overallGoalSeconds {
-        print("\(result.target): összcél \(formatHoursMinutes(overallGoalSeconds))")
+        print(L(
+            "\(result.target): overall goal \(formatHoursMinutes(overallGoalSeconds))",
+            "\(result.target): összcél \(formatHoursMinutes(overallGoalSeconds))"
+        ))
     } else {
-        print("\(result.target): nincs összcél")
+        print(L("\(result.target): no overall goal", "\(result.target): nincs összcél"))
     }
     printFilterBreakdown(result.filters)
 }
@@ -2881,7 +2957,7 @@ private func printMonthTable(_ summaries: [NightSummary]) {
         return
     }
 
-    print("   DÁTUM       SÖTÉT ÓRA  HOLD%   LEGJOBB CÉLPONTOK")
+    print(L("   DATE        DARK HOURS MOON%   BEST TARGETS", "   DÁTUM       SÖTÉT ÓRA  HOLD%   LEGJOBB CÉLPONTOK"))
     for summary in summaries {
         let isHighlight = (summary.astroDarkHours ?? 0) >= monthHighlightMinDarkHours
             && summary.moonIlluminationPercent < monthHighlightMaxMoonPercent
@@ -2916,22 +2992,33 @@ private func parsePlanDate(_ raw: String) -> Date? {
 private func printPlanHeader(db: Database, config: AstroConfig, date: Date?, siteName: String? = nil) throws {
     let site = try Planner.resolveSite(db: db, config: config, siteName: siteName)
     guard let lat = site.latitudeDeg, let lon = site.longitudeDeg else {
-        print("Ma este: helyszín ismeretlen (nincs SITELAT/SITELONG a könyvtárban, és a config sem ad meg helyszínt)")
+        print(L(
+            "Tonight: site unknown (no SITELAT/SITELONG in the library, and the config gives no site either)",
+            "Ma este: helyszín ismeretlen (nincs SITELAT/SITELONG a könyvtárban, és a config sem ad meg helyszínt)"
+        ))
         return
     }
 
     let timeZone = TimeZone.current
     let night = SunMoon.astronomicalTwilight(nightOf: date ?? Date(), latDeg: lat, lonDeg: lon, timeZone: timeZone)
     guard let dusk = night.duskUTC, let dawn = night.dawnUTC else {
-        print("Ma este: nincs csillagászati (sem nautikai) éjszaka ezen a szélességen ma")
+        print(L(
+            "Tonight: no astronomical (or nautical) darkness at this latitude tonight",
+            "Ma este: nincs csillagászati (sem nautikai) éjszaka ezen a szélességen ma"
+        ))
         return
     }
 
     let midNight = dusk.addingTimeInterval(dawn.timeIntervalSince(dusk) / 2)
     let moonIllum = SunMoon.moonIlluminationPercent(julianDay: JulianDate.julianDay(midNight))
-    let fallbackNote = night.usedNauticalFallback ? " (nautikai szürkület, nincs valódi csillagászati sötét)" : ""
+    let fallbackNote = night.usedNauticalFallback
+        ? L(" (nautical twilight, no true astronomical dark)", " (nautikai szürkület, nincs valódi csillagászati sötét)")
+        : ""
 
-    print("Ma este: szürkület \(formatLocalTime(dusk, timeZone: timeZone)) -> hajnal \(formatLocalTime(dawn, timeZone: timeZone))\(fallbackNote), Hold: \(String(format: "%.0f%%", moonIllum))")
+    print(L(
+        "Tonight: dusk \(formatLocalTime(dusk, timeZone: timeZone)) -> dawn \(formatLocalTime(dawn, timeZone: timeZone))\(fallbackNote), Moon: \(String(format: "%.0f%%", moonIllum))",
+        "Ma este: szürkület \(formatLocalTime(dusk, timeZone: timeZone)) -> hajnal \(formatLocalTime(dawn, timeZone: timeZone))\(fallbackNote), Hold: \(String(format: "%.0f%%", moonIllum))"
+    ))
 }
 
 private func formatLocalTime(_ date: Date, timeZone: TimeZone) -> String {
@@ -2958,8 +3045,11 @@ private func printPlanTable(_ plans: [TargetPlan]) {
 
     let names = plans.map(planNameColumnText)
     let targetWidth = max(names.map(\.count).max() ?? 7, 7)
-    let header = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
-    print("\(header)  MEGVAN   CÉL      KULMINÁCIÓ  MAX ALT  ABLAK          HOLD        VERDIKT")
+    let header = L("TARGET", "CÉLPONT").padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    print(L(
+        "\(header)  HAVE     GOAL     CULMINATION MAX ALT  WINDOW         MOON        VERDICT",
+        "\(header)  MEGVAN   CÉL      KULMINÁCIÓ  MAX ALT  ABLAK          HOLD        VERDIKT"
+    ))
 
     for (plan, nameText) in zip(plans, names) {
         let name = nameText.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
@@ -3026,12 +3116,18 @@ func cmdNightInfo(_ args: [String]) throws -> Int32 {
 /// `printPlanHeader` follows, only derived times/phase are shown.
 private func printNightInfo(_ info: NightInfo) {
     if let darkHours = info.darkHours {
-        print("sötét óra: \(String(format: "%.1f", darkHours))")
+        print(L("dark hours: \(String(format: "%.1f", darkHours))", "sötét óra: \(String(format: "%.1f", darkHours))"))
     } else {
-        print("sötét óra: n/a\(info.note.map { " (\($0))" } ?? "")")
+        print(L(
+            "dark hours: n/a\(info.note.map { " (\($0))" } ?? "")",
+            "sötét óra: n/a\(info.note.map { " (\($0))" } ?? "")"
+        ))
     }
     let moonEvent = info.moonEventLabel.map { ", \($0)" } ?? ""
-    print("Hold: \(String(format: "%.0f%%", info.moonIlluminationPercent))\(moonEvent)")
+    print(L(
+        "Moon: \(String(format: "%.0f%%", info.moonIlluminationPercent))\(moonEvent)",
+        "Hold: \(String(format: "%.0f%%", info.moonIlluminationPercent))\(moonEvent)"
+    ))
 }
 
 // MARK: - projects
@@ -3068,10 +3164,10 @@ private func printProjectsGrouped(_ projects: [ProjectState]) {
     }
 
     let groups: [(ProjectPhase, String)] = [
-        (.collecting, "Gyűjtés alatt"),
-        (.readyToStack, "Stackelhető"),
-        (.stacked, "Feldolgozásra vár"),
-        (.done, "Kész"),
+        (.collecting, L("Collecting", "Gyűjtés alatt")),
+        (.readyToStack, L("Ready to stack", "Stackelhető")),
+        (.stacked, L("Awaiting processing", "Feldolgozásra vár")),
+        (.done, L("Done", "Kész")),
     ]
 
     for (phase, header) in groups {
@@ -3133,7 +3229,10 @@ func cmdExport(_ args: [String]) throws -> Int32 {
     if format == .astrobin {
         let unmapped = try AcquisitionExport.unmappedAstrobinFilters(target: target, db: db, config: config)
         if !unmapped.isEmpty {
-            eprint("warning: nincs AstroBin filter-ID leképezve ehhez: \(unmapped.joined(separator: ", ")) -- a szűrő neve marad a CSV-ben (config astrobin.filterIds)")
+            eprint(L(
+                "warning: no AstroBin filter ID mapped for: \(unmapped.joined(separator: ", ")) -- the filter name stays as-is in the CSV (config astrobin.filterIds)",
+                "warning: nincs AstroBin filter-ID leképezve ehhez: \(unmapped.joined(separator: ", ")) -- a szűrő neve marad a CSV-ben (config astrobin.filterIds)"
+            ))
         }
     }
 
@@ -3292,8 +3391,8 @@ private func printHealthReports(_ reports: [NightHealthReport]) {
     }
     for r in reports {
         print("session: \(r.target) / \(r.date)")
-        print("  Hűtés: \(r.cooler.verdict)")
-        print("  Fókusz: \(r.focus.verdict)")
+        print(L("  Cooling: \(r.cooler.verdict)", "  Hűtés: \(r.cooler.verdict)"))
+        print(L("  Focus: \(r.focus.verdict)", "  Fókusz: \(r.focus.verdict)"))
     }
 }
 
@@ -3336,7 +3435,10 @@ private func printPanelReport(_ report: PanelReport) {
         return
     }
 
-    print("PANEL  KÖZÉP RA/DEC          KERET  INTEGRÁCIÓ  ROT      SCALE")
+    print(L(
+        "PANEL  CENTER RA/DEC         FRAMES INTEGRATION  ROT      SCALE",
+        "PANEL  KÖZÉP RA/DEC          KERET  INTEGRÁCIÓ  ROT      SCALE"
+    ))
     for panel in report.panels {
         let center = String(format: "%9.4f / %+8.4f", panel.centerRaDeg, panel.centerDecDeg)
         let integration = formatHoursMinutes(panel.integrationSeconds)
@@ -3346,7 +3448,10 @@ private func printPanelReport(_ report: PanelReport) {
     }
 
     if report.isUnbalanced {
-        print("⚠️  kiegyenlítetlen mozaik: a panelek integrációja jelentősen eltér egymástól")
+        print(L(
+            "⚠️  unbalanced mosaic: panel integrations differ significantly from each other",
+            "⚠️  kiegyenlítetlen mozaik: a panelek integrációja jelentősen eltér egymástól"
+        ))
     }
 }
 
@@ -3426,7 +3531,7 @@ func cmdSolve(_ args: [String]) throws -> Int32 {
         if isJSON {
             try printJSON([String: SolveSummary]())
         } else {
-            print("nincs koordináta nélküli célpont")
+            print(L("no target without coordinates", "nincs koordináta nélküli célpont"))
         }
         return 0
     }
@@ -3537,7 +3642,10 @@ func cmdSensor(_ args: [String]) throws -> Int32 {
     }
     let missingCombos = SensorProfiler.combosMissingProfile(lights: lights, meta: metaByFileID, profiles: profiles)
     for combo in missingCombos {
-        eprint("nincs mérés ehhez: \(sensorComboDescription(camera: combo.camera, gain: combo.gain, offset: combo.offset)) (készíts legalább 2 bias frame-et)")
+        eprint(L(
+            "no measurement for: \(sensorComboDescription(camera: combo.camera, gain: combo.gain, offset: combo.offset)) (shoot at least 2 bias frames)",
+            "nincs mérés ehhez: \(sensorComboDescription(camera: combo.camera, gain: combo.gain, offset: combo.offset)) (készíts legalább 2 bias frame-et)"
+        ))
     }
 
     if isJSON {
@@ -3556,21 +3664,29 @@ private func sensorComboDescription(camera: String, gain: Double?, offset: Doubl
 
 private func printSensorProfiles(_ profiles: [SensorProfileRecord]) {
     guard !profiles.isEmpty else {
-        print("nincs mért szenzor-profil (astrotool sensor --measure)")
+        print(L(
+            "no measured sensor profile (astrotool sensor --measure)",
+            "nincs mért szenzor-profil (astrotool sensor --measure)"
+        ))
         return
     }
     for p in profiles {
         let biasText = p.biasLevelADU.map { String(format: "%.0f ADU", $0) } ?? "n/a"
-        let readNoiseText = p.readNoiseE.map { String(format: "%.2f e⁻ (mérve)", $0) } ?? "n/a (kell 2. bias frame)"
+        let readNoiseText = p.readNoiseE.map { String(format: "%.2f e⁻ (measured)", $0) } ?? L(
+            "n/a (needs 2nd bias frame)", "n/a (kell 2. bias frame)"
+        )
         let darkText: String
         if let darkRate = p.darkRateEPerS {
             let tempText = p.darkTempC.map { String(format: "%.1f °C", $0) } ?? "?"
             darkText = "dark \(tempText): \(String(format: "%.4f", darkRate)) e⁻/s"
         } else {
-            darkText = "dark n/a (nincs dark ehhez a kombóhoz)"
+            darkText = L("dark n/a (no dark for this combo)", "dark n/a (nincs dark ehhez a kombóhoz)")
         }
         let egainText = p.egain.map { String(format: "%.3f", $0) } ?? "n/a"
-        print("\(sensorComboDescription(camera: p.camera, gain: p.gain, offset: p.offset)): bias \(biasText), leolvasási zaj \(readNoiseText), \(darkText), EGAIN \(egainText)")
+        print(L(
+            "\(sensorComboDescription(camera: p.camera, gain: p.gain, offset: p.offset)): bias \(biasText), read noise \(readNoiseText), \(darkText), EGAIN \(egainText)",
+            "\(sensorComboDescription(camera: p.camera, gain: p.gain, offset: p.offset)): bias \(biasText), leolvasási zaj \(readNoiseText), \(darkText), EGAIN \(egainText)"
+        ))
     }
 }
 
@@ -3588,7 +3704,10 @@ private struct SensorHistoryGroup: Encodable {
 
 private func printSensorHistoryGroups(_ groups: [SensorHistoryGroup]) {
     guard !groups.isEmpty else {
-        print("nincs mért szenzor-profil (astrotool sensor --measure)")
+        print(L(
+            "no measured sensor profile (astrotool sensor --measure)",
+            "nincs mért szenzor-profil (astrotool sensor --measure)"
+        ))
         return
     }
     let dateFormatter = DateFormatter()
@@ -3598,15 +3717,18 @@ private func printSensorHistoryGroups(_ groups: [SensorHistoryGroup]) {
     for group in groups {
         print("\(sensorComboDescription(camera: group.camera, gain: group.gain, offset: group.offset)):")
         guard !group.history.isEmpty else {
-            print("  (nincs történeti bejegyzés)")
+            print(L("  (no history entries)", "  (nincs történeti bejegyzés)"))
             continue
         }
         for entry in group.history {
             let dateText = dateFormatter.string(from: Date(timeIntervalSince1970: entry.measuredAt))
             let readNoiseText = entry.readNoiseE.map { String(format: "%.2f e⁻", $0) } ?? "n/a"
             let darkText = entry.darkRateEPerS.map { String(format: "%.4f e⁻/s", $0) } ?? "n/a"
-            let versionText = entry.estimatorVersion.map { "v\($0)" } ?? "ismeretlen becslő"
-            print("  \(dateText)  leolvasási zaj \(readNoiseText)  dark \(darkText)  becslő \(versionText)")
+            let versionText = entry.estimatorVersion.map { "v\($0)" } ?? L("unknown estimator", "ismeretlen becslő")
+            print(L(
+                "  \(dateText)  read noise \(readNoiseText)  dark \(darkText)  estimator \(versionText)",
+                "  \(dateText)  leolvasási zaj \(readNoiseText)  dark \(darkText)  becslő \(versionText)"
+            ))
         }
     }
 }
@@ -3677,8 +3799,8 @@ private enum TrendMetric: String {
     var label: String {
         switch self {
         case .fwhm: return "FWHM"
-        case .background: return "HÁTTÉR (e⁻/s/″²)"
-        case .efficiency: return "HATÉKONYSÁG%"
+        case .background: return L("BACKGROUND (e⁻/s/″²)", "HÁTTÉR (e⁻/s/″²)")
+        case .efficiency: return L("EFFICIENCY%", "HATÉKONYSÁG%")
         }
     }
 
@@ -3722,14 +3844,17 @@ private struct TrendSeriesPoint: Encodable {
 
 private func printTrendsTable(_ series: [TrendSeriesPoint], metric: TrendMetric) {
     guard !series.isEmpty else {
-        print("nincs adat ehhez a metrikához a megadott szűréssel")
+        print(L(
+            "no data for this metric with the given filters",
+            "nincs adat ehhez a metrikához a megadott szűréssel"
+        ))
         return
     }
 
     let dateWidth = max(series.map { $0.date.count }.max() ?? 10, 10)
     let targetWidth = max(series.map { $0.target.count }.max() ?? 7, 7)
-    let dateHeader = "DÁTUM".padding(toLength: dateWidth, withPad: " ", startingAt: 0)
-    let targetHeader = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    let dateHeader = L("DATE", "DÁTUM").padding(toLength: dateWidth, withPad: " ", startingAt: 0)
+    let targetHeader = L("TARGET", "CÉLPONT").padding(toLength: targetWidth, withPad: " ", startingAt: 0)
     print("\(dateHeader)  \(targetHeader)  \(metric.label)")
 
     for point in series {
@@ -3780,9 +3905,14 @@ func cmdIngestDSS(_ args: [String]) throws -> Int32 {
         try printJSON(summary)
     } else {
         print(
-            "info.txt feldolgozva: \(summary.infoFilesParsed), rating beszúrva/frissítve: \(summary.ratingsUpserted), "
-                + ".dssfilelist feldolgozva: \(summary.filelistsParsed), döntés rögzítve: \(summary.verdictsRecorded), "
-                + "kihagyva: \(summary.skipped)"
+            L(
+                "info.txt parsed: \(summary.infoFilesParsed), ratings inserted/updated: \(summary.ratingsUpserted), "
+                    + ".dssfilelist parsed: \(summary.filelistsParsed), verdicts recorded: \(summary.verdictsRecorded), "
+                    + "skipped: \(summary.skipped)",
+                "info.txt feldolgozva: \(summary.infoFilesParsed), rating beszúrva/frissítve: \(summary.ratingsUpserted), "
+                    + ".dssfilelist feldolgozva: \(summary.filelistsParsed), döntés rögzítve: \(summary.verdictsRecorded), "
+                    + "kihagyva: \(summary.skipped)"
+            )
         )
     }
     return 0
@@ -3827,13 +3957,13 @@ func cmdExpose(_ args: [String]) throws -> Int32 {
 }
 
 private func printExposeDetail(_ advice: ExposureAdvice) {
-    print("Célpont: \(advice.target)")
+    print(L("Target: \(advice.target)", "Célpont: \(advice.target)"))
     if let sessionDate = advice.sessionDate {
         print("Session: \(sessionDate)")
     }
     if let camera = advice.camera {
         let gainText = advice.gain.map { String(format: "%g", $0) } ?? "-"
-        print("Kamera: \(camera) · gain \(gainText)")
+        print(L("Camera: \(camera) · gain \(gainText)", "Kamera: \(camera) · gain \(gainText)"))
     }
     if let descriptor = advice.setupDescriptor {
         print("Setup: \(descriptor)")
@@ -3843,27 +3973,42 @@ private func printExposeDetail(_ advice: ExposureAdvice) {
         print("n/a: \(reason)")
     } else {
         if let current = advice.currentSubSeconds {
-            print("Jelenlegi sub: \(String(format: "%.1f", current)) s")
+            print(L("Current sub: \(String(format: "%.1f", current)) s", "Jelenlegi sub: \(String(format: "%.1f", current)) s"))
         }
         if let channel = advice.weakestChannel, let skyRate = advice.skyRateEPerSPx {
-            print("Leggyengébb csatorna: \(channel) (\(String(format: "%.4f", skyRate)) e⁻/s/px)")
+            print(L(
+                "Weakest channel: \(channel) (\(String(format: "%.4f", skyRate)) e⁻/s/px)",
+                "Leggyengébb csatorna: \(channel) (\(String(format: "%.4f", skyRate)) e⁻/s/px)"
+            ))
         }
         if let optimal = advice.optimalSubSeconds {
-            print("Ideális sub (elméleti): \(String(format: "%.1f", optimal)) s")
+            print(L(
+                "Ideal sub (theoretical): \(String(format: "%.1f", optimal)) s",
+                "Ideális sub (elméleti): \(String(format: "%.1f", optimal)) s"
+            ))
         }
         if let recommended = advice.recommendedSubSeconds {
-            let capText = advice.capReason.map { " (\($0) miatt korlátozva)" } ?? ""
-            print("Ajánlott sub: \(String(format: "%.1f", recommended)) s\(capText)")
+            let capText = advice.capReason.map { L(" (capped by \($0))", " (\($0) miatt korlátozva)") } ?? ""
+            print(L(
+                "Recommended sub: \(String(format: "%.1f", recommended)) s\(capText)",
+                "Ajánlott sub: \(String(format: "%.1f", recommended)) s\(capText)"
+            ))
         }
         if let c10 = advice.recommendedSubSecondsC10 {
-            print("Rövidebb alternatíva (C=10%): \(String(format: "%.1f", c10)) s")
+            print(L(
+                "Shorter alternative (C=10%): \(String(format: "%.1f", c10)) s",
+                "Rövidebb alternatíva (C=10%): \(String(format: "%.1f", c10)) s"
+            ))
         }
     }
 
-    print("Összes használható integráció: \(String(format: "%.2f", advice.totalUsableSeconds / 3600)) óra")
+    print(L(
+        "Total usable integration: \(String(format: "%.2f", advice.totalUsableSeconds / 3600)) hours",
+        "Összes használható integráció: \(String(format: "%.2f", advice.totalUsableSeconds / 3600)) óra"
+    ))
 
     if !advice.advice.isEmpty {
-        print("Tanács:")
+        print(L("Advice:", "Tanács:"))
         for line in advice.advice {
             print("  - \(line)")
         }
@@ -3872,13 +4017,13 @@ private func printExposeDetail(_ advice: ExposureAdvice) {
 
 private func printExposeTable(_ all: [ExposureAdvice]) {
     guard !all.isEmpty else {
-        print("nincs adat egyetlen célponthoz sem")
+        print(L("no data for any target", "nincs adat egyetlen célponthoz sem"))
         return
     }
 
     let targetWidth = max(all.map(\.target.count).max() ?? 10, 10)
-    let header = "CÉLPONT".padding(toLength: targetWidth, withPad: " ", startingAt: 0)
-    print("\(header)  MOST      AJÁNLOTT  LEOLV.ZAJ  TANÁCS")
+    let header = L("TARGET", "CÉLPONT").padding(toLength: targetWidth, withPad: " ", startingAt: 0)
+    print(L("\(header)  NOW       RECOMMEND READ NOISE ADVICE", "\(header)  MOST      AJÁNLOTT  LEOLV.ZAJ  TANÁCS"))
     for advice in all {
         let target = advice.target.padding(toLength: targetWidth, withPad: " ", startingAt: 0)
         let current = (advice.currentSubSeconds.map { String(format: "%.0f s", $0) } ?? "-").padding(toLength: 8, withPad: " ", startingAt: 0)
@@ -3935,7 +4080,10 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
     var keepFractionPerFilter: [String: Double] = [:]
     if let keepFilterText = parsed.value("--keep-filter") {
         guard let parsed = parseKeepFilterPerFilter(keepFilterText) else {
-            eprint("error: --keep-filter formátuma érvénytelen, pl. \"Ha=0.9,OIII=0.7\" (0 és 1 közötti törtek)")
+            eprint(L(
+                "error: --keep-filter has an invalid format, e.g. \"Ha=0.9,OIII=0.7\" (fractions between 0 and 1)",
+                "error: --keep-filter formátuma érvénytelen, pl. \"Ha=0.9,OIII=0.7\" (0 és 1 közötti törtek)"
+            ))
             return 1
         }
         keepFractionPerFilter = parsed
@@ -3970,7 +4118,10 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
         for key in keepFractionPerFilter.keys.sorted() {
             let normalized = key.trimmingCharacters(in: .whitespaces).lowercased()
             if !presentLowercased.contains(normalized) {
-                eprint("warning: --keep-filter ismeretlen szűrőnév ebben a session-ben: \(key)")
+                eprint(L(
+                    "warning: --keep-filter unknown filter name in this session: \(key)",
+                    "warning: --keep-filter ismeretlen szűrőnév ebben a session-ben: \(key)"
+                ))
             }
         }
     }
@@ -4003,19 +4154,25 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
         )
     } else {
         printStackSelection(selection)
-        print("exportálva: \(result.directory.path)")
+        print(L("exported: \(result.directory.path)", "exportálva: \(result.directory.path)"))
         // R12-U2 (point 2): only printed when the re-export sync actually
         // removed something -- a fresh export or an unchanged re-export
         // stays silent on this line, same "only say something when
         // something happened" convention `link-calib`'s own summary uses.
         if result.removedStaleCount > 0 {
-            print("\(result.removedStaleCount) elavult link eltávolítva")
+            print(L(
+                "\(result.removedStaleCount) stale link(s) removed",
+                "\(result.removedStaleCount) elavult link eltávolítva"
+            ))
         }
         // R12-U2 (point 1): only ever `true` for `--out` onto a different
         // volume -- the default `.astro_tool/stacklists/` destination never
         // crosses a volume boundary.
         if result.copyFallbackUsed {
-            print("megjegyzés: hardlink helyett másolat készült (másik kötet)")
+            print(L(
+                "note: copied instead of hardlinked (different volume)",
+                "megjegyzés: hardlink helyett másolat készült (másik kötet)"
+            ))
         }
     }
     return 0
@@ -4024,16 +4181,16 @@ func cmdStackList(_ args: [String]) throws -> Int32 {
 private func printStackSelection(_ selection: StackSelection) {
     print("target: \(selection.target)")
     print("date: \(selection.date)")
-    print("összes használható: \(selection.totalFrames)")
-    print("kiválasztva: \(selection.selectedFrames)")
+    print(L("total usable: \(selection.totalFrames)", "összes használható: \(selection.totalFrames)"))
+    print(L("selected: \(selection.selectedFrames)", "kiválasztva: \(selection.selectedFrames)"))
     if let perFilter = selection.perFilter, !perFilter.isEmpty {
-        print("szűrőnként:")
+        print(L("per filter:", "szűrőnként:"))
         for entry in perFilter {
             print("  \(entry.filter): \(entry.selectedFrames) / \(entry.totalFrames)")
         }
     }
     if !selection.criteria.isEmpty {
-        print("szempontok:")
+        print(L("criteria:", "szempontok:"))
         for line in selection.criteria {
             print("  - \(line)")
         }
@@ -4131,13 +4288,16 @@ func cmdStacks(_ args: [String]) throws -> Int32 {
 private func printGroupedStackReports(_ reports: [TargetStacks], db: Database, config: AstroConfig, verbose: Bool) throws {
     let nonEmpty = reports.filter { !$0.stacks.isEmpty }
     guard !nonEmpty.isEmpty else {
-        print("nincs felfedezett stack")
+        print(L("no discovered stacks", "nincs felfedezett stack"))
         return
     }
 
     for report in nonEmpty {
         let groups = try StackDiscovery.groupedStacks(target: report.target, db: db, config: config)
-        print("\(report.displayName)  (\(groups.count) stack-csoport, \(report.stacks.count) fájl)")
+        print(L(
+            "\(report.displayName)  (\(groups.count) stack group(s), \(report.stacks.count) file(s))",
+            "\(report.displayName)  (\(groups.count) stack-csoport, \(report.stacks.count) fájl)"
+        ))
         for group in groups {
             print("  \(groupSummaryLine(group))")
             if verbose {
@@ -4170,7 +4330,7 @@ private func groupSummaryLine(_ group: StackGroup) -> String {
         if let total = group.totalSecondsBest {
             line += " (\(formatHoursMinutes(total)))"
         }
-        if group.fromHeader { line += " [headerből]" }
+        if group.fromHeader { line += L(" [from header]", " [headerből]") }
     }
     let counts = variantKindCounts(group.variants)
     if !counts.isEmpty {
@@ -4199,7 +4359,7 @@ private func locationLabel(for path: String) -> String {
     case "stacks": return "stacks"
     case "processed": return "processed"
     case "sessions": return "sessions"
-    default: return "gyökér"
+    default: return L("root", "gyökér")
     }
 }
 
@@ -4349,7 +4509,7 @@ private func cmdCaptureList(_ args: [String]) throws -> Int32 {
     if parsed.has("--json") {
         try printJSON(groups)
     } else if groups.isEmpty {
-        print("nincs gyűjtés: \(target) / \(date)")
+        print(L("no capture groups: \(target) / \(date)", "nincs gyűjtés: \(target) / \(date)"))
     } else {
         for group in groups {
             print("\(group.slug)  \(group.displayName)  \(group.quickLabel)")
@@ -4478,9 +4638,15 @@ private func cmdSessionConvertPlan(_ args: [String]) throws -> Int32 {
     if parsed.has("--json") {
         try printJSON(plan)
     } else {
-        print(plan.humanSummaryHU)
-        print("Mód: \(plan.mode == .physical ? "fizikai rendezés" : "csak logikai besorolás")")
-        print("Nyers képek: \(plan.summary.rawFrameCount), műtermékek: \(plan.summary.artifactCount), kalibráció: \(plan.summary.calibrationFrameCount)")
+        print(L(plan.humanSummary ?? plan.humanSummaryHU, plan.humanSummaryHU))
+        print(L(
+            "Mode: \(plan.mode == .physical ? "physical reorganization" : "logical classification only")",
+            "Mód: \(plan.mode == .physical ? "fizikai rendezés" : "csak logikai besorolás")"
+        ))
+        print(L(
+            "Raw frames: \(plan.summary.rawFrameCount), artifacts: \(plan.summary.artifactCount), calibration: \(plan.summary.calibrationFrameCount)",
+            "Nyers képek: \(plan.summary.rawFrameCount), műtermékek: \(plan.summary.artifactCount), kalibráció: \(plan.summary.calibrationFrameCount)"
+        ))
         for move in plan.moves { print("MOVE  \(move.sourceRelative) → \(move.destinationRelative)") }
         for ambiguity in plan.ambiguities { print("REVIEW  \(ambiguity.title): \(ambiguity.explanation)") }
         for conflict in plan.conflicts { print("BLOCK  \(conflict.path): \(conflict.message)") }
