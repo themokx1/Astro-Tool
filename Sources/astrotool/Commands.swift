@@ -336,15 +336,6 @@ func resolveConfig(rootFlag: String?) throws -> AstroConfig {
     return config
 }
 
-/// The volume mount point portion of an absolute path -- its first two path
-/// components, e.g. `/Volumes/AstroDrive/sessions` -> `/Volumes/AstroDrive`. Mirrors
-/// the equivalent (internal, not visible from here) logic in
-/// `AstroCore`'s `RootErrorClassifier`.
-private func volumePortion(of path: String) -> String {
-    let comps = path.split(separator: "/", omittingEmptySubsequences: true)
-    guard comps.count >= 2 else { return path }
-    return "/" + comps[0] + "/" + comps[1]
-}
 
 /// Classifies a missing library root the same way a scan would, without
 /// touching the filesystem beyond existence checks -- so every command that
@@ -352,14 +343,15 @@ private func volumePortion(of path: String) -> String {
 /// for a bad `--root` instead of a raw filesystem error.
 func ensureRootAccessible(_ config: AstroConfig) throws {
     guard !FileManager.default.fileExists(atPath: config.rootPath) else { return }
-
-    if config.rootPath.hasPrefix("/Volumes/") {
-        let volume = volumePortion(of: config.rootPath)
-        if !FileManager.default.fileExists(atPath: volume) {
-            throw AstroError.volumeNotMounted(path: config.rootPath)
-        }
-    }
-    throw AstroError.pathNotFound(path: config.rootPath)
+    // Same diagnosis the scanner and the app's onboarding make -- an
+    // unmounted /Volumes drive, an offline iCloud container or a detached
+    // volume mounted elsewhere all read as "reconnect and retry", not as a
+    // wrong path. Reusing the classifier keeps the three surfaces in step.
+    throw RootErrorClassifier.classify(
+        rootPath: config.rootPath,
+        subpath: nil,
+        probe: LibraryScanner.realVolumeProbe
+    )
 }
 
 func dbPath(for config: AstroConfig) -> String {
