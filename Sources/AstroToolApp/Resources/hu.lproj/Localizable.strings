@@ -1526,6 +1526,8 @@
 "Start Copy" = "Másolás indítása";
 "Copying files — the source card is not modified." = "Fájlok másolása — a forrás kártya nem módosul.";
 "%lld files copied · %@" = "%lld fájl másolva · %@";
+/* v5 flow fixes, item 1: a copy the toolbar's Activity popover cancelled mid-way now returns an honest partial receipt instead of discarding it -- this replaces the plain success banner when receipt.wasCancelled is true. */
+"Copy stopped — %lld files already copied and verified, %lld not copied." = "A másolás leállt — %lld fájl már másolva és ellenőrizve, %lld nem lett másolva.";
 "%lld files already existed at the destination and were skipped." = "%lld fájl már létezett a célnál, ezek kimaradtak.";
 "%lld files failed to copy:" = "%lld fájl másolása sikertelen volt:";
 "Every copy was verified with a checksum against the source." = "Minden másolatot ellenőrző-összeggel igazoltunk a forráshoz képest.";

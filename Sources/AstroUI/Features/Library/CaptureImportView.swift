@@ -999,8 +999,22 @@ public struct CaptureImportView: View {
     private var receiptStep: some View {
         VStack(alignment: .leading, spacing: AstroTokens.Spacing.standard) {
             if let receipt = store.receipt {
-                Label("\(receipt.copied.count) files copied · \(AstroFormat.bytes(receipt.totalBytesCopied))", systemImage: "checkmark.circle.fill")
-                    .font(.headline).foregroundStyle(AstroTokens.Color.ok)
+                // W-fix (item 1): a copy stopped mid-way through (the
+                // toolbar's Activity popover can cancel this operation like
+                // any other) still produced real, checksum-verified copies
+                // -- `receipt.wasCancelled` says so honestly instead of the
+                // ordinary "files copied" success banner, which would bury
+                // the fact that some files were never attempted at all.
+                if receipt.wasCancelled {
+                    Label(
+                        "Copy stopped — \(receipt.copied.count) files already copied and verified, \(notCopiedCount(receipt)) not copied.",
+                        systemImage: "stop.circle"
+                    )
+                    .font(.headline).foregroundStyle(AstroTokens.Color.attention)
+                } else {
+                    Label("\(receipt.copied.count) files copied · \(AstroFormat.bytes(receipt.totalBytesCopied))", systemImage: "checkmark.circle.fill")
+                        .font(.headline).foregroundStyle(AstroTokens.Color.ok)
+                }
                 Text(verbatim: "sessions/\(receipt.target)/\(receipt.date)/captures/\(receipt.slug)")
                     .font(.callout.monospaced()).textSelection(.enabled)
 
@@ -1055,5 +1069,17 @@ public struct CaptureImportView: View {
             }
         }
         .accessibilityIdentifier("v2.capture-import.receipt")
+    }
+
+    /// How many of the items submitted to `CaptureImportCommand.copy` never
+    /// got a resolved outcome at all -- the ones a cancellation stopped the
+    /// loop before reaching, distinct from `skippedCollisions`/`failed`
+    /// (both of which DID get processed, just not copied). `store.preview`
+    /// still holds the exact item count `copy` was given, since it is never
+    /// cleared once the copy step starts.
+    private func notCopiedCount(_ receipt: CaptureImportReceipt) -> Int {
+        let total = store.preview?.entries.count ?? receipt.copied.count
+        let accounted = receipt.copied.count + receipt.skippedCollisions.count + receipt.failed.count
+        return max(total - accounted, 0)
     }
 }

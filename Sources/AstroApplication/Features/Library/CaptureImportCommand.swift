@@ -139,6 +139,16 @@ public struct CaptureImportReceipt: Equatable, Sendable {
     /// untouched.
     public let skippedCollisions: [String]
     public let failed: [FailedFile]
+    /// `true` when `copy(...)` stopped early because `shouldCancel` returned
+    /// `true`, rather than running every item in `items` -- W-fix (item 1):
+    /// this used to be a plain `throw CancellationError()`, which discarded
+    /// every already-verified `copied`/`skippedCollisions`/`failed` entry
+    /// accumulated so far and left the caller with no receipt at all, even
+    /// though real files had already been copied and checksum-verified into
+    /// the library. A cancelled receipt is still an honest receipt: it
+    /// reports exactly what happened before the stop, same as a completed
+    /// one, just flagged so the UI can say "stopped", not "failed".
+    public let wasCancelled: Bool
 
     public init(
         target: String,
@@ -146,7 +156,8 @@ public struct CaptureImportReceipt: Equatable, Sendable {
         slug: String,
         copied: [CopiedFile],
         skippedCollisions: [String],
-        failed: [FailedFile]
+        failed: [FailedFile],
+        wasCancelled: Bool = false
     ) {
         self.target = target
         self.date = date
@@ -154,6 +165,7 @@ public struct CaptureImportReceipt: Equatable, Sendable {
         self.copied = copied
         self.skippedCollisions = skippedCollisions
         self.failed = failed
+        self.wasCancelled = wasCancelled
     }
 
     public var totalBytesCopied: Int64 { copied.reduce(0) { $0 + $1.sizeBytes } }
@@ -299,10 +311,22 @@ public enum CaptureImportCommand {
         var copied: [CaptureImportReceipt.CopiedFile] = []
         var skipped: [String] = []
         var failed: [CaptureImportReceipt.FailedFile] = []
+        var wasCancelled = false
         let total = items.count
 
         for (index, item) in items.enumerated() {
-            if shouldCancel() { throw CancellationError() }
+            // W-fix (item 1): stop rather than throw. A thrown
+            // `CancellationError()` here used to discard every
+            // already-verified `copied`/`skipped`/`failed` entry accumulated
+            // so far -- real files the loop had already copied and
+            // checksum-verified into the library -- leaving the caller with
+            // no receipt at all. Breaking out and returning the partial
+            // receipt (flagged `wasCancelled`) below is still an honest
+            // report of exactly what happened before the stop.
+            if shouldCancel() {
+                wasCancelled = true
+                break
+            }
             do {
                 let directory = try directoryName(for: item.role)
                 let destDirRelative = "sessions/\(target)/\(date)/captures/\(slug)/\(directory)"
@@ -364,7 +388,8 @@ public enum CaptureImportCommand {
 
         return CaptureImportReceipt(
             target: target, date: date, slug: slug,
-            copied: copied, skippedCollisions: skipped, failed: failed
+            copied: copied, skippedCollisions: skipped, failed: failed,
+            wasCancelled: wasCancelled
         )
     }
 }
