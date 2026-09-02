@@ -159,4 +159,14 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(root.contains("panel.prompt = String(localized:"))
         #expect(root.contains("panel.message = String(localized:"))
     }
+
+    // MARK: - v5 flow fixes, item 7: "Not chosen yet" had no hu.lproj entry.
+
+    @Test("The create-library location placeholder has a Hungarian translation")
+    func notChosenYetIsTranslated() throws {
+        let view = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")
+        #expect(view.contains(#"String(localized: "Not chosen yet")"#))
+        let strings = try source("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        #expect(strings.contains(#""Not chosen yet" = "#), "\"Not chosen yet\" has no Hungarian translation in hu.lproj")
+    }
 }

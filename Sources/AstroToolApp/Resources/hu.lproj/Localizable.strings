@@ -2617,6 +2617,8 @@
 "Choose a familiar name and a place with enough room for your photos. AstroTool only creates the missing folders." = "Válassz ismerős nevet és olyan helyet, ahol elférnek a fotóid. Az AstroTool csak a hiányzó mappákat hozza létre.";
 "Library name" = "A könyvtár neve";
 "Choose Location…" = "Hely kiválasztása…";
+/* v5 flow fixes, item 7: String(localized:) call site, not a SwiftUI construct -- the extraction script does not scan it, hand-added like the NSOpenPanel prompt/message above. */
+"Not chosen yet" = "Még nincs kiválasztva";
 "What will be created on my Mac?" = "Mi jön létre a gépemen?";
 "Projects and nights · Stacks · Processed images" = "Projektek és éjszakák · Stackek · Feldolgozott képek";
 "Calibration library: darks, flats, and biases" = "Kalibrációs könyvtár: dark, flat és bias képek";
