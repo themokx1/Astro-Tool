@@ -87,6 +87,47 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(welcome.contains("chooseAnotherFolder: chooseAnotherLibrary"))
     }
 
+    // MARK: - 2026-09-02 first-run audit, fix C
+
+    @Test("The guided journey is owned by the shell, so the folder picker cannot restart it")
+    func journeyOutlivesTheSheetItIsRenderedIn() throws {
+        let view = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")
+        let root = try source("Sources/AstroUI/App/V2RootView.swift")
+        let firstSteps = try source("Sources/AstroUI/Help/FirstStepsView.swift")
+
+        // The coordinator must be injected, never `@State` inside the sheet
+        // -- closing the sheet for the picker destroys `@State`.
+        #expect(view.contains("coordinator: FirstSuccessOnboardingStore"))
+        #expect(!view.contains("State(initialValue: FirstSuccessOnboardingStore("))
+        #expect(root.contains("@State private var firstRunJourney = FirstSuccessOnboardingStore(mode: .firstRun)"))
+        #expect(root.contains("@State private var helpJourney = FirstSuccessOnboardingStore(mode: .help)"))
+        #expect(root.contains("coordinator: firstRunJourney"))
+        #expect(root.contains("coordinator: helpJourney"))
+        #expect(firstSteps.contains("coordinator: coordinator"))
+    }
+
+    @Test("Opening an existing library runs the same write-enabling completion as creating one")
+    func openExistingLibraryRunsLibraryReady() throws {
+        let view = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")
+        // Both of `LibraryWelcomeView`'s exits from the scan receipt must go
+        // through `libraryReady`, which is the single place writes are
+        // enabled and the import offer is entered.
+        #expect(view.contains("onContinue: libraryReady"))
+        #expect(view.contains("onPersonalize: libraryReady"))
+        #expect(view.contains("private func libraryReady() {\n        onEnableWrites()\n        coordinator.libraryBecameReady()"))
+    }
+
+    @Test("Only the deterministic UI-test picker route lands on the bare scan receipt")
+    func realUsersStayInsideTheFirstSuccessJourneyAfterThePicker() throws {
+        let root = try source("Sources/AstroUI/App/V2RootView.swift")
+        // Before this fix a real pick set `directLibraryWelcome: true`,
+        // which replaced the guided journey with a bare `LibraryWelcomeView`
+        // whose Continue completed onboarding outright -- skipping the
+        // import offer and never enabling writes.
+        #expect(root.contains("directLibraryWelcome: Self.uiTestLibraryPickerResult() != nil"))
+        #expect(!root.contains("presentOnboardingAfterDismissal(directLibraryWelcome: true, scanning: root)"))
+    }
+
     @Test("The native folder picker starts only after the presenting sheet has closed")
     func folderPickerDoesNotNestModalPresentation() throws {
         let root = try source("Sources/AstroUI/App/V2RootView.swift")

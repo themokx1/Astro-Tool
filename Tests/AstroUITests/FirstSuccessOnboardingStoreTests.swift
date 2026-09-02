@@ -66,6 +66,56 @@ struct FirstSuccessOnboardingStoreTests {
         #expect(!store.didCreateFirstProject)
     }
 
+    // MARK: - 2026-09-02 first-run audit, fix C: "I already have an
+    // AstroTool library" used to skip the rest of the guided flow. The
+    // picker round-trip destroyed this store, so the journey restarted as a
+    // bare scan receipt: `libraryBecameReady()` never ran, the import offer
+    // never appeared, and write operations were never enabled -- the
+    // toolbar's Import from Card later dead-ended on "Requires write
+    // access".
+
+    @Test("Opening an existing library reaches the same import offer as creating one")
+    func openExistingLibraryReachesTheImportOffer() {
+        let store = FirstSuccessOnboardingStore(mode: .firstRun)
+        store.chooseEntry(.openLibrary)
+        #expect(store.step == .openLibrary)
+
+        store.libraryBecameReady()
+
+        #expect(store.step == .importOffer)
+        #expect(store.hasOpenedLibrary)
+    }
+
+    @Test("Every path to a ready library requires write operations, not just the create path")
+    func aReadyLibraryRequiresWriteOperations() {
+        let created = FirstSuccessOnboardingStore(mode: .firstRun)
+        #expect(!created.requiresWriteOperations)
+        created.chooseEntry(.createLibrary)
+        created.libraryBecameReady()
+        #expect(created.requiresWriteOperations)
+
+        let opened = FirstSuccessOnboardingStore(mode: .firstRun)
+        opened.chooseEntry(.openLibrary)
+        opened.libraryBecameReady()
+        #expect(opened.requiresWriteOperations)
+    }
+
+    @Test("A picker round trip leaves the journey exactly where it was")
+    func thePickerRoundTripPreservesTheStep() {
+        // The store outlives the sheet now, so the step it was on when the
+        // sheet closed for the native picker is still the step it resumes on.
+        let store = FirstSuccessOnboardingStore(mode: .firstRun)
+        store.chooseEntry(.openLibrary)
+        #expect(store.step == .openLibrary)
+        #expect(!store.hasOpenedLibrary)
+
+        // ... sheet closes, NSOpenPanel runs, sheet reopens, scan lands ...
+        store.libraryBecameReady()
+
+        #expect(store.step == .importOffer)
+        #expect(store.requiresWriteOperations)
+    }
+
     @Test("Recoverable errors keep the current step")
     func recoverableError() {
         let store = FirstSuccessOnboardingStore(mode: .firstRun)

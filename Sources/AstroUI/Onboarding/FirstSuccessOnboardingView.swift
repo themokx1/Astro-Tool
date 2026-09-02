@@ -8,7 +8,13 @@ import UniformTypeIdentifiers
 /// copy-only verified import.
 @MainActor
 public struct FirstSuccessOnboardingView: View {
-    @State private var coordinator: FirstSuccessOnboardingStore
+    /// Owned by the SHELL, not by this view (2026-09-02 audit, fix C).
+    /// Asking for the native folder picker closes the sheet this view lives
+    /// in, which destroyed a `@State` coordinator -- so "I already have an
+    /// AstroTool library" restarted from scratch as a bare scan receipt
+    /// after the picker, never reaching `libraryReady()`, the import offer,
+    /// or the write-enabling the guided flow depends on.
+    @Bindable private var coordinator: FirstSuccessOnboardingStore
     @Bindable private var libraryStore: OnboardingStore
     @State private var libraryName = "Astro Photos"
     @State private var chosenParent: URL?
@@ -25,7 +31,7 @@ public struct FirstSuccessOnboardingView: View {
     private let requestLibraryPicker: (() -> Void)?
 
     public init(
-        mode: FirstSuccessOnboardingStore.Mode,
+        coordinator: FirstSuccessOnboardingStore,
         libraryStore: OnboardingStore,
         currentRootURL: URL?,
         indexedFolders: [String],
@@ -36,7 +42,7 @@ public struct FirstSuccessOnboardingView: View {
         dismiss: @escaping () -> Void,
         requestLibraryPicker: (() -> Void)? = nil
     ) {
-        _coordinator = State(initialValue: FirstSuccessOnboardingStore(mode: mode))
+        _coordinator = Bindable(coordinator)
         _libraryStore = Bindable(libraryStore)
         self.currentRootURL = currentRootURL
         self.indexedFolders = indexedFolders

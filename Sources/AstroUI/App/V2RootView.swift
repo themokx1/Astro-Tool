@@ -371,6 +371,13 @@ private struct V2Shell: View {
         case firstSteps
     }
     @State private var pendingLibraryPickerOrigin: LibraryPickerOrigin?
+    /// The two guided journeys, owned here rather than by the sheets that
+    /// render them: asking for the native folder picker closes the sheet,
+    /// and a `@State` coordinator inside it did not survive that (see
+    /// `FirstSuccessOnboardingView.coordinator`). One per mode, since the
+    /// first-run sheet and Help ▸ First Steps can each be mid-journey.
+    @State private var firstRunJourney = FirstSuccessOnboardingStore(mode: .firstRun)
+    @State private var helpJourney = FirstSuccessOnboardingStore(mode: .help)
     @State private var showsDirectLibraryWelcome = false
     @State private var didRunUITestLibraryPickerHandoff = false
     @State private var showsSearch = false
@@ -864,6 +871,7 @@ private struct V2Shell: View {
                 FolderStructureHelpView(dismiss: router.dismissPresentation)
             } else if presentation == .firstSteps {
                 FirstStepsView(
+                    coordinator: helpJourney,
                     libraryStore: onboardingStore,
                     currentRootURL: onboardingStore.selectedRoot ?? libraryRootFallback,
                     indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
@@ -904,7 +912,7 @@ private struct V2Shell: View {
                 )
             } else {
                 FirstSuccessOnboardingView(
-                    mode: .firstRun,
+                    coordinator: firstRunJourney,
                     libraryStore: onboardingStore,
                     currentRootURL: onboardingStore.selectedRoot,
                     indexedFolders: projectsStore.projects.map(ProjectsQuery.canonicalFolderName(for:)),
@@ -1030,7 +1038,12 @@ private struct V2Shell: View {
     }
 
     private func finishOnboardingDismissal() {
-        guard pendingLibraryPickerOrigin == .onboarding else { return }
+        guard pendingLibraryPickerOrigin == .onboarding else {
+            // A real dismissal, not a picker round trip -- the next time the
+            // sheet opens it should start from the three choices again.
+            firstRunJourney.returnToLanding()
+            return
+        }
         pendingLibraryPickerOrigin = nil
 
         guard let root = runLibraryPickerPanel() else {
@@ -1049,7 +1062,13 @@ private struct V2Shell: View {
     }
 
     private func finishPresentationDismissal() {
-        guard pendingLibraryPickerOrigin == .firstSteps else { return }
+        guard pendingLibraryPickerOrigin == .firstSteps else {
+            // Same rule as the first-run sheet: closing Help ▸ First Steps
+            // for real ends that journey. A no-op for every other
+            // presentation route's dismissal.
+            helpJourney.returnToLanding()
+            return
+        }
         pendingLibraryPickerOrigin = nil
         let root = runLibraryPickerPanel()
         // First Steps comes back either way: cancelling a picker must not

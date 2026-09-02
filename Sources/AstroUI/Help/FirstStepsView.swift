@@ -5,6 +5,10 @@ import SwiftUI
 /// This wrapper preserves the stable help route while guidance and actual
 /// operations remain one shared flow.
 public struct FirstStepsView: View {
+    /// Owned by the shell so the guide survives the folder-picker round trip
+    /// (2026-09-02 audit, fix C/H) -- see `FirstSuccessOnboardingView`'s own
+    /// `coordinator` doc comment.
+    let coordinator: FirstSuccessOnboardingStore
     let libraryStore: OnboardingStore
     let currentRootURL: URL?
     let indexedFolders: [String]
@@ -20,6 +24,7 @@ public struct FirstStepsView: View {
     let requestLibraryPicker: (() -> Void)?
 
     public init(
+        coordinator: FirstSuccessOnboardingStore,
         libraryStore: OnboardingStore,
         currentRootURL: URL?,
         indexedFolders: [String],
@@ -30,6 +35,7 @@ public struct FirstStepsView: View {
         dismiss: @escaping () -> Void,
         requestLibraryPicker: (() -> Void)? = nil
     ) {
+        self.coordinator = coordinator
         self.libraryStore = libraryStore
         self.currentRootURL = currentRootURL
         self.indexedFolders = indexedFolders
@@ -43,7 +49,7 @@ public struct FirstStepsView: View {
 
     public var body: some View {
         FirstSuccessOnboardingView(
-            mode: .help,
+            coordinator: coordinator,
             libraryStore: libraryStore,
             currentRootURL: currentRootURL,
             indexedFolders: indexedFolders,

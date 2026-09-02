@@ -43,8 +43,14 @@ struct HelpSurfaceTests {
 
         let firstSteps = try contents("Sources/AstroUI/Help/FirstStepsView.swift")
         #expect(firstSteps.contains("FirstSuccessOnboardingView("))
-        #expect(firstSteps.contains("mode: .help"))
         #expect(firstSteps.contains("v2.help.first-steps"))
+        // 2026-09-02 audit, fix C: the `.help`-mode journey is constructed by
+        // the shell (so it survives the folder-picker round trip) and handed
+        // in here, instead of `mode: .help` being passed at this call site.
+        #expect(firstSteps.contains("coordinator: coordinator"))
+        let root = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(root.contains("helpJourney = FirstSuccessOnboardingStore(mode: .help)"))
+        #expect(root.contains("coordinator: helpJourney"))
     }
 
     @Test("MetricInfoButton is wired onto Home, Planning, and Review")

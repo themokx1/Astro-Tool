@@ -33,6 +33,14 @@ public final class FirstSuccessOnboardingStore {
     public private(set) var hasOpenedLibrary = false
     public private(set) var didSkipImport = false
     public private(set) var didCreateFirstProject = false
+    /// 2026-09-02 audit, fix C: the guided first success cannot run
+    /// read-only -- the optional import step right after a ready library
+    /// copies files into it -- so every path to `libraryBecameReady()` has
+    /// to turn write operations on. The host owns the actual flag (an
+    /// `@AppStorage` this store cannot see), but the requirement is recorded
+    /// here so "the create path enables writes, the open-existing path
+    /// forgot to" is a testable fact rather than something only a view knew.
+    public private(set) var requiresWriteOperations = false
     public private(set) var errorMessage: String?
 
     public init(mode: Mode) {
@@ -59,6 +67,7 @@ public final class FirstSuccessOnboardingStore {
 
     public func libraryBecameReady() {
         hasOpenedLibrary = true
+        requiresWriteOperations = true
         errorMessage = nil
         step = .importOffer
     }
