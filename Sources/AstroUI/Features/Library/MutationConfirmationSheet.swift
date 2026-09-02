@@ -117,6 +117,18 @@ public struct MutationConfirmationSheet: View {
         _store = State(initialValue: store)
     }
 
+    /// Rendered in BOTH branches of `body` below. It used to live only in
+    /// the `receipt == nil` branch, so a failed `rollback()` -- which can
+    /// only happen once a receipt exists -- set `errorMessage` that nothing
+    /// on screen ever showed: Undo appeared to do nothing at all.
+    @ViewBuilder
+    private var errorLine: some View {
+        if let errorMessage = store.errorMessage {
+            Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.attention)
+                .accessibilityIdentifier("v2.mutation-confirmation.error")
+        }
+    }
+
     private var quarantineDestinationDirectory: String {
         guard let first = store.plan.entries.first else { return "—" }
         return first.destination.deletingLastPathComponent().lastPathComponent
@@ -159,6 +171,7 @@ public struct MutationConfirmationSheet: View {
                         .disabled(store.isRollingBack)
                         .accessibilityIdentifier("v2.mutation-confirmation.undo")
                 }
+                errorLine
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Type the confirmation token to enable Apply.")
@@ -173,9 +186,7 @@ public struct MutationConfirmationSheet: View {
                         Label("Requires write access. Enable write operations in Settings to apply this quarantine.", systemImage: "lock.shield")
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                    if let errorMessage = store.errorMessage {
-                        Text(errorMessage).font(.caption).foregroundStyle(AstroTokens.Color.attention)
-                    }
+                    errorLine
                     HStack {
                         Spacer()
                         Button("Apply") { Task { await store.apply() } }

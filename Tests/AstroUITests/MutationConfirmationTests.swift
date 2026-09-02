@@ -206,4 +206,61 @@ struct MutationConfirmationTests {
 
         #expect(changeCount == 0)
     }
+
+    @Test("A failed Undo records an error instead of silently leaving the files in quarantine")
+    func failedRollbackRecordsAnError() async throws {
+        let fixture = try MutationConfirmationFixture.make()
+        defer { fixture.remove() }
+        let plan = fixture.plan()
+        let store = MutationConfirmationStore(
+            plan: plan, rootURL: fixture.root, accessMode: .mutationEnabled,
+            commandFactory: fixture.commandFactory()
+        )
+        store.confirmationText = plan.confirmationToken
+        await store.apply()
+        #expect(store.receipt != nil)
+
+        // Removing the journal takes the receipt the rollback has to read
+        // with it -- a real failure, not a synthetic one.
+        try FileManager.default.removeItem(at: fixture.journal)
+
+        await store.rollback()
+
+        #expect(!store.isRolledBack)
+        #expect(store.errorMessage != nil, "a failed rollback must record why")
+        #expect(!fixture.exists(fixture.relativePath), "the file is still in quarantine")
+    }
+
+    /// The sheet used to render `store.errorMessage` only inside its
+    /// `receipt == nil` branch, so the one error a receipt can produce -- a
+    /// failed Undo (`rollback()`) -- had nowhere to appear: the button just
+    /// did nothing. Source-text checks (this repo's "surface test"
+    /// convention) that the error line is present on both sides.
+    @Test("The sheet renders the store's error in both the receipt and the pre-apply branch")
+    func errorIsRenderedInBothBranches() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Sources/AstroUI/Features/Library/MutationConfirmationSheet.swift"),
+            encoding: .utf8
+        )
+        let body = try #require(source.range(of: "if let receipt = store.receipt {"))
+        let tokenField = try #require(source.range(of: "TextField(\"Confirmation token\""))
+        var errorLines: [Range<String.Index>] = []
+        var searchFrom = body.upperBound
+        while let found = source.range(of: "errorLine", range: searchFrom..<source.endIndex) {
+            errorLines.append(found)
+            searchFrom = found.upperBound
+        }
+        #expect(
+            errorLines.contains { $0.upperBound < tokenField.lowerBound },
+            "the applied/receipt branch must be able to show a failed Undo's error"
+        )
+        #expect(
+            errorLines.contains { $0.lowerBound > tokenField.upperBound },
+            "the pre-apply branch keeps showing a failed apply's error"
+        )
+    }
 }

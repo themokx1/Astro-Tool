@@ -618,8 +618,22 @@ public struct ReviewWorkspace: View {
             .filter { decisionIDs.contains($0.id) }
             .map(\.relativePath)
         Task {
-            try? await store.setVerdict(relativePaths: paths, verdict: verdict)
-            selectedDecisionIDs.removeAll()
+            do {
+                try await store.setVerdict(relativePaths: paths, verdict: verdict)
+                selectedDecisionIDs.removeAll()
+            } catch {
+                // `ReviewStore.errorMessage` is only rendered in the
+                // `snapshot == nil` (whole-page load failed) branch, so a
+                // failed verdict write used to clear the selection and say
+                // nothing at all -- the frames simply stayed undecided with
+                // no explanation. Same posture as `ArchiveStore.acknowledge`:
+                // route the failure to `OperationHost`'s toast receipt, and
+                // KEEP the selection so the user can retry the same frames.
+                operationHost.notify(
+                    .failure,
+                    message: "\(OperationHost.localized("Could not save the frame verdict:")) \(error.localizedDescription)"
+                )
+            }
         }
     }
 

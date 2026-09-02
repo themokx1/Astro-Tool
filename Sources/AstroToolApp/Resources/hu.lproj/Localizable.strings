@@ -2481,6 +2481,14 @@
 "Saved." = "Mentve.";
 "Could not save this setting. Try again." = "Nem sikerült menteni ezt a beállítást. Próbáld újra.";
 
+/* `ReviewWorkspace.apply(_:decisionIDs:in:)`'s failure toast -- an
+   `OperationHost.localized(_:)` argument, hand-added for the same reason as
+   the save-result messages just above (the extraction script only sees
+   literal `Text(...)`/`Button(...)`-style arguments). The error's own
+   `localizedDescription` is interpolated AROUND this already-resolved
+   literal, never into the key. */
+"Could not save the frame verdict:" = "Nem sikerült menteni a képkocka döntését:";
+
 /* V3 pre-stack program section 5.5: `ClearSkyNotificationContent.build`
    (AstroApplication) -- the actual macOS notification's title/body. Hand-
    added for the same reason as the two save-result messages just above:

@@ -118,6 +118,29 @@ struct ReviewStoreTests {
         )
     }
 
+    @Test("A failed verdict write surfaces an error and never claims the frames were decided")
+    func setVerdictSurfacesWriteFailure() async throws {
+        let fixture = try await ReviewStoreFixture.make()
+        let store = ReviewStore(metadataFactory: { _ in fixture.metadata })
+        try await store.open(rootURL: fixture.root, projectID: fixture.project.id)
+        // `frame_decisions.relative_path` is globally UNIQUE and the 300s
+        // series already owns this path, so writing it under the 30s series
+        // is a REAL constraint violation rather than a synthetic one -- the
+        // same "force an actual write failure" approach
+        // `assignFilterSurfacesWriteFailure` above uses.
+        store.selectSeries(fixture.series[0].id)
+
+        await #expect(throws: (any Error).self) {
+            try await store.setVerdict(relativePaths: ["lights/SV220_001.fit"], verdict: .rejected)
+        }
+
+        #expect(store.errorMessage != nil, "a failed write must surface, not vanish")
+        #expect(
+            store.snapshot?.series.first { $0.id == fixture.series[2].id }?.rejectedCount == 0,
+            "a failed write must not leave the UI claiming the frames were rejected"
+        )
+    }
+
     @Test("Rating with no series selected notifies instead of crashing")
     func rateWithNoSeriesSelectedNoOps() async throws {
         let store = ReviewStore(
@@ -150,6 +173,45 @@ struct ReviewStoreTests {
 
 private enum ReviewStoreTestFailure: Error, Equatable {
     case shouldNotBeCalled
+}
+
+/// `ReviewWorkspace` is a view, so its own error handling can only be pinned
+/// by source text -- this repo's "surface test" convention (see
+/// `ArchiveStripLegendSurfaceTests`' header). What matters here is what the
+/// store test above proves is possible: `setVerdict` can fail, and the view
+/// used to swallow that failure with `try?` while clearing the selection.
+@Suite("Review workspace surfaces")
+struct ReviewWorkspaceSurfaceTests {
+    static func source() throws -> String {
+        try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Sources/AstroUI/Features/Review/ReviewWorkspace.swift"),
+            encoding: .utf8
+        )
+    }
+
+    @Test("A failed verdict write is reported through OperationHost and keeps the selection")
+    func verdictFailureIsReported() throws {
+        let source = try Self.source()
+        let apply = try #require(
+            source.components(separatedBy: "    private func apply(").dropFirst().first?
+                .components(separatedBy: "\n    private func ").first
+        )
+        #expect(
+            !apply.contains("try? await store.setVerdict"),
+            "ReviewStore.errorMessage only renders when snapshot == nil, so try? here is a silent failure"
+        )
+        #expect(apply.contains("operationHost.notify"), "the failure needs the same toast receipt every other V2 write gets")
+        let removeAll = try #require(apply.range(of: "selectedDecisionIDs.removeAll()"))
+        let catchClause = try #require(apply.range(of: "} catch {"))
+        #expect(
+            removeAll.upperBound < catchClause.lowerBound,
+            "the selection may only be cleared on success -- a failed write leaves the frames selected to retry"
+        )
+    }
 }
 
 // MARK: - Quality/rating fixture helpers
