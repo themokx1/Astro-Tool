@@ -11,8 +11,16 @@ public struct ImageMeta: Equatable, Sendable {
     public var cameraModel: String?
     /// Exif `DateTimeOriginal` (or TIFF `DateTime` as a fallback), verbatim
     /// as ImageIO reports it (Exif's `"yyyy:MM:dd HH:mm:ss"` form) — no
-    /// timezone handling or reformatting.
+    /// timezone handling or reformatting. This is CAMERA-LOCAL wall-clock
+    /// time, not UTC -- see `dateTakenOffset` and `ExifDateConversion`.
     public var dateTaken: String?
+    /// Exif `OffsetTimeOriginal` -- the UTC offset the camera was set to
+    /// when `dateTaken` was recorded, e.g. `"+02:00"`. Only a handful of
+    /// bodies write this tag at all (most DSLRs never did; some
+    /// mirrorless/phone cameras do), so it's usually `nil` -- callers that
+    /// need an absolute instant from `dateTaken` fall back to
+    /// `TimeZone.current` when this is `nil` (see `ExifDateConversion`).
+    public var dateTakenOffset: String?
     /// Exif `ExposureTime`, in seconds. DSLR (e.g. Canon CR3) lights have no
     /// FITS `EXPTIME` -- this is where their exposure length actually lives,
     /// and it's what lets them contribute to integration-time stats instead
@@ -31,6 +39,7 @@ public struct ImageMeta: Equatable, Sendable {
         focalLengthMM: Double? = nil,
         cameraModel: String? = nil,
         dateTaken: String? = nil,
+        dateTakenOffset: String? = nil,
         exposureSeconds: Double? = nil,
         iso: Int? = nil,
         apertureFNumber: Double? = nil
@@ -38,6 +47,7 @@ public struct ImageMeta: Equatable, Sendable {
         self.focalLengthMM = focalLengthMM
         self.cameraModel = cameraModel
         self.dateTaken = dateTaken
+        self.dateTakenOffset = dateTakenOffset
         self.exposureSeconds = exposureSeconds
         self.iso = iso
         self.apertureFNumber = apertureFNumber
@@ -70,6 +80,11 @@ public enum ImageMetaReader {
         let cameraModel = tiff?[kCGImagePropertyTIFFModel] as? String
         let dateTaken = (exif?[kCGImagePropertyExifDateTimeOriginal] as? String)
             ?? (tiff?[kCGImagePropertyTIFFDateTime] as? String)
+        // Only meaningful alongside `ExifDateTimeOriginal` -- there's no
+        // equivalent offset tag for the TIFF `DateTime` fallback above, so
+        // this stays nil whenever `dateTaken` itself came from TIFF instead
+        // of Exif.
+        let dateTakenOffset = exif?[kCGImagePropertyExifOffsetTimeOriginal] as? String
         let exposureSeconds = exif?[kCGImagePropertyExifExposureTime] as? Double
         // ISOSpeedRatings is Exif's array-valued tag (some cameras record
         // more than one rating) -- ImageIO surfaces it as an NSNumber array;
@@ -81,6 +96,7 @@ public enum ImageMetaReader {
             focalLengthMM: focalLength,
             cameraModel: cameraModel,
             dateTaken: dateTaken,
+            dateTakenOffset: dateTakenOffset,
             exposureSeconds: exposureSeconds,
             iso: iso,
             apertureFNumber: apertureFNumber

@@ -65,6 +65,59 @@ private func lightFile(
     #expect(buckets.nonFrameFileCount == 2)
 }
 
+// MARK: - Frame extension coverage (R11 fix: non-Canon RAW / XISF / .fts)
+
+/// Before this fix, `frameExtensions` was a second, hand-written list that
+/// only knew about `cr3`/`tif` -- every other camera vendor's RAW format
+/// (and PixInsight's own native format) silently fell through as a
+/// "non-frame file", undercounting a library's real usable integration
+/// time. `frameExtensions` is now DERIVED from `LibraryScanner`'s own sets,
+/// so this doubles as a consistency check between the two.
+@Test func frameExtensionsIsDerivedFromScannerExtensionSetsAndCoversNonCanonRAWAndXISF() {
+    #expect(FrameSet.frameExtensions == LibraryScanner.fitsExtensions
+        .union(LibraryScanner.rawExtensions)
+        .union(LibraryScanner.xisfExtensions)
+        .union(["tif", "tiff"]))
+    for ext in ["nef", "arw", "dng", "raf", "orf", "rw2", "pef", "srw", "cr2", "cr3", "xisf", "fts", "tiff"] {
+        #expect(FrameSet.frameExtensions.contains(ext), "expected \(ext) to be a recognized frame extension")
+    }
+}
+
+@Test func nonCanonRAWAndXISFLightsAreCountedAsUsableNotNonFrame() {
+    let files = [
+        lightFile("sessions/M31/2026-01-01/lights/nikon_0001.nef", id: 1, ext: "nef", inode: 1),
+        lightFile("sessions/M31/2026-01-01/lights/sony_0001.arw", id: 2, ext: "arw", inode: 2),
+        lightFile("sessions/M31/2026-01-01/lights/generic_0001.dng", id: 3, ext: "dng", inode: 3),
+        lightFile("sessions/M31/2026-01-01/lights/pixinsight_0001.xisf", id: 4, ext: "xisf", inode: 4),
+        lightFile("sessions/M31/2026-01-01/lights/fits_style.fts", id: 5, ext: "fts", inode: 5),
+    ]
+
+    let buckets = FrameSet.lightBuckets(files: files, meta: [:], config: AstroConfig())
+
+    #expect(Set(buckets.usable.map(\.id)) == Set([1, 2, 3, 4, 5]))
+    #expect(buckets.nonFrameFileCount == 0)
+}
+
+@Test func rawAndTiffCrossExtensionDuplicatesAreMergedForAnyRawExtensionNotJustCR3() {
+    let files = [
+        lightFile(
+            "sessions/M31/2026-01-01/lights/IMG_0001.nef", id: 1, ext: "nef",
+            inode: 1
+        ),
+        lightFile(
+            "sessions/M31/2026-01-01/lights/IMG_0001.tiff", id: 2, ext: "tiff",
+            inode: 2
+        ),
+    ]
+
+    let buckets = FrameSet.lightBuckets(files: files, meta: [:], config: AstroConfig())
+
+    // Same filename stem, same target/session -- the converted TIFF sibling
+    // collapses into the NEF, same as the original CR3+TIF case.
+    #expect(buckets.usable.map(\.id) == [1])
+    #expect(buckets.duplicateLinkCount == 1)
+}
+
 @Test func ordinaryFilenameStartingWithStackedWordButNoNumberIsNotMistakenForASIAirPrefix() {
     let files = [
         lightFile("sessions/M31/2026-01-01/lights/StackedField_001.fit", id: 1, ext: "fit", inode: 1),

@@ -230,8 +230,16 @@ public final class LibraryScanner {
         } else {
             scoped = tracked
         }
+        // Byte-wise (not `Set<String>`'s Unicode-canonical) membership check
+        // against `seen` -- see `PathNormalization`'s doc comment. Without
+        // this, a STALE differently-normalized row already in the DB (from
+        // before every relative path was normalized at scan time below)
+        // would compare as "still present" here even though its bytes never
+        // matched anything actually seen this scan, undercounting `missing`
+        // relative to what `db.markMissing` below actually retires.
+        let seenBytes = PathNormalization.byteSet(seen)
         summary.missing = scoped.reduce(into: 0) { count, record in
-            guard !seen.contains(record.path) else { return }
+            guard !PathNormalization.containsByteWise(record.path, in: seenBytes) else { return }
             guard !Self.isUnder(record.path, anyOf: summary.inaccessiblePaths) else { return }
             count += 1
             if let target = record.target { changedTargets.insert(target) }
@@ -301,14 +309,26 @@ public final class LibraryScanner {
         for entryURL in entries.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
             try Self.checkCancellation(shouldCancel)
             let name = entryURL.lastPathComponent
-            let relativePath = relPrefix.isEmpty ? name : relPrefix + "/" + name
+            // Normalized to NFC at the exact point a filesystem-derived
+            // relative path becomes part of this file's DB identity -- see
+            // `PathNormalization`'s doc comment for why (a library that's
+            // moved between HFS+/NFD and APFS-or-SMB/NFC naming would
+            // otherwise get a duplicate row per accented path).
+            let relativePath = PathNormalization.canonical(relPrefix.isEmpty ? name : relPrefix + "/" + name)
 
-            let values = try entryURL.resourceValues(forKeys: [
+            // A file can vanish between `contentsOfDirectory` above and this
+            // `resourceValues` call -- a capture session still writing to
+            // this directory, Siril temp files, an SMB share reconnecting
+            // mid-scan. That used to throw (NSFileReadNoSuchFileError) and
+            // fail the WHOLE scan over one file that simply isn't there
+            // anymore; skipping just this entry is consistent with how a
+            // deeper directory's own read failure is handled just above.
+            guard let values = try? entryURL.resourceValues(forKeys: [
                 .isDirectoryKey,
                 .isSymbolicLinkKey,
                 .fileSizeKey,
                 .contentModificationDateKey,
-            ])
+            ]) else { continue }
             // A Siril/processing work tree can leave dangling sequence
             // symlinks behind. They are references, not library frames;
             // indexing the link's own byte length makes the planner's DB
@@ -581,7 +601,7 @@ public final class LibraryScanner {
     /// introspect (jpg, png, xmp, ...) are a silent no-op.
     private func captureMeta(fileID: Int64, ext: String, url: URL, relativePath: String, info: PathInfo) throws {
         switch ext {
-        case "fit", "fits", "fz":
+        case _ where Self.fitsExtensions.contains(ext):
             // A corrupt/unreadable FITS header is swallowed by design here:
             // the file itself is still recorded in `files` above, just
             // without a `fits_meta` row. R11-T4's `CorruptFITSRule` (audit)
@@ -591,17 +611,31 @@ public final class LibraryScanner {
             // failure itself isn't surfaced anywhere else.
             guard let header = try? FITSReader.readHeader(url: url) else { return }
             try db.upsertFITSMeta(Self.fitsMetaRecord(fileID: fileID, header: header))
-        case "cr3", "tif":
+        case _ where Self.imageMetaExtensions.contains(ext):
             guard let meta = ImageMetaReader.read(url: url) else { return }
             // DSLR frames have no FITS EXPTIME/GAIN header -- their Exif
             // ExposureTime and ISOSpeedRatings are the equivalent values, so
             // they're stored in the same `exptime`/`gain` columns FITS
             // frames use. This is what lets StatsQueries' integration-time
             // and exposure-breakdown queries (which only ever look at
-            // `fits_meta.exptime`) count CR3/TIFF lights the same way as
-            // FITS lights, instead of all landing in the "unknown" bucket.
-            // ISO is unitless (not a real e-/ADU gain), but reusing the
-            // column keeps every frame kind on one schema.
+            // `fits_meta.exptime`) count CR3/RAW/TIFF/JPEG lights the same
+            // way as FITS lights, instead of all landing in the "unknown"
+            // bucket. ISO is unitless (not a real e-/ADU gain), but reusing
+            // the column keeps every frame kind on one schema.
+            //
+            // Exif `DateTimeOriginal` is camera-LOCAL wall-clock time, not
+            // UTC, but `date_obs` is read back everywhere (SessionTimeline,
+            // AstroBin export, ...) as a UTC instant -- so this converts
+            // using the frame's own `OffsetTimeOriginal` when the body wrote
+            // one, else the Mac's current time zone (documented assumption:
+            // the machine doing the scan usually sits where the camera was).
+            // The raw Exif string itself isn't retained anywhere for
+            // provenance -- `headerJSON` below is deliberately left nil for
+            // non-FITS frames (see `fitsMetaRecord`'s own doc comment: it's
+            // the ORIGINAL FITS header, never repurposed for Exif data).
+            let dateObs = meta.dateTaken.flatMap {
+                ExifDateConversion.utcDateObsString(dateTaken: $0, offsetTimeOriginal: meta.dateTakenOffset)
+            } ?? meta.dateTaken
             try db.upsertFITSMeta(
                 FITSMetaRecord(
                     fileID: fileID,
@@ -609,7 +643,7 @@ public final class LibraryScanner {
                     gain: meta.iso.map(Double.init),
                     instrume: meta.cameraModel,
                     focallen: meta.focalLengthMM,
-                    dateObs: meta.dateTaken
+                    dateObs: dateObs
                 )
             )
         case "txt":
@@ -667,7 +701,7 @@ public final class LibraryScanner {
         summary: inout ScanSummary
     ) throws {
         switch ext {
-        case "fit", "fits", "fz", "cr3", "tif":
+        case _ where Self.fitsExtensions.contains(ext) || Self.imageMetaExtensions.contains(ext):
             let existingMeta = try db.fitsMeta(fileID: fileID)
             let needsRefresh: Bool
             if existingMeta == nil {
@@ -697,7 +731,11 @@ public final class LibraryScanner {
         let headerJSON = (try? JSONEncoder().encode(header.allCards)).flatMap { String(data: $0, encoding: .utf8) }
         return FITSMetaRecord(
             fileID: fileID,
-            exptime: header.double("EXPTIME"),
+            // `EXPTIME` is the standard keyword, but some capture tools
+            // (e.g. certain PixInsight/SGP exports) only write `EXPOSURE`
+            // instead -- without this fallback, those frames' exposure time
+            // was silently lost even though it's right there in the header.
+            exptime: header.double("EXPTIME") ?? header.double("EXPOSURE"),
             gain: header.double("GAIN"),
             offset: header.double("OFFSET"),
             setTemp: header.double("SET-TEMP"),
@@ -705,7 +743,14 @@ public final class LibraryScanner {
             instrume: header.string("INSTRUME"),
             focallen: header.double("FOCALLEN"),
             filter: header.string("FILTER"),
-            dateObs: header.string("DATE-OBS"),
+            // `DATE-OBS` is the standard keyword; `DATE-LOC` (local-time
+            // variant some tools write instead/alongside) and plain `DATE`
+            // (the generic FITS "file written" keyword, used as a last
+            // resort when neither observation-specific keyword is present)
+            // are the two real-world fallbacks -- same "don't lose data a
+            // less-common but valid tool already wrote" reasoning as the
+            // EXPTIME/EXPOSURE fallback above.
+            dateObs: header.string("DATE-OBS") ?? header.string("DATE-LOC") ?? header.string("DATE"),
             imagetyp: header.string("IMAGETYP"),
             naxis1: header.int("NAXIS1"),
             naxis2: header.int("NAXIS2"),
@@ -749,23 +794,52 @@ public final class LibraryScanner {
     // MARK: - Kind bucket
 
     /// Extensions this scanner records as `kind == "fits"` -- FITS proper
-    /// plus its gzip'd `.fz` sibling. `public` (card-import wizard): the
+    /// (`.fit`/`.fits`/`.fts`, all in real-world use by different tools) plus
+    /// its gzip'd `.fz` sibling. `public` (card-import wizard): the
     /// source-card scan step needs the exact same "does this file count as
     /// a capture frame at all" list the library scanner already uses,
     /// rather than a second, hand-picked one that could silently drift from
     /// it (e.g. missing `.fz`, or adding an extension this scanner would
     /// never index).
-    public static let fitsExtensions: Set<String> = ["fit", "fits", "fz"]
-    /// Extensions this scanner records as `kind == "raw"` -- camera RAW
-    /// (Canon CR3 today). `public` for the same cross-module reuse reason
-    /// as `fitsExtensions` above.
-    public static let rawExtensions: Set<String> = ["cr3"]
+    public static let fitsExtensions: Set<String> = ["fit", "fits", "fts", "fz"]
+    /// Extensions this scanner records as `kind == "raw"` -- every camera
+    /// RAW format actually seen in a library, not just Canon's CR3: CR2
+    /// (older Canon), NEF (Nikon), ARW (Sony), DNG (Adobe/generic, also
+    /// what some phones and non-Canon bodies write directly), RAF (Fuji),
+    /// ORF (Olympus/OM System), RW2 (Panasonic), PEF (Pentax), SRW
+    /// (Samsung). Before this list only had `cr3`, so every other vendor's
+    /// DSLR/mirrorless lights silently fell through `FrameSet`'s
+    /// `frameExtensions` as "non-frame files" -- counted as zero usable
+    /// integration time. `public` for the same cross-module reuse reason as
+    /// `fitsExtensions` above.
+    public static let rawExtensions: Set<String> = [
+        "cr2", "cr3", "nef", "arw", "dng", "raf", "orf", "rw2", "pef", "srw",
+    ]
+    /// PixInsight's native format -- a common `lights/` frame for a
+    /// PixInsight-first workflow (WBPP output, or lights converted from FITS
+    /// early to keep 32-bit float precision). No reader exists anywhere in
+    /// this codebase for XISF's own binary structure (it isn't FITS), so
+    /// `captureMeta` never attempts one -- these frames are recorded and
+    /// counted like any other frame, just without a `fits_meta` row, exactly
+    /// like a CR3/RAW frame with no ImageIO-readable Exif. `public` for the
+    /// same cross-module reuse reason as `fitsExtensions` above.
+    public static let xisfExtensions: Set<String> = ["xisf"]
+    /// Extensions `ImageMetaReader` (ImageIO/Exif) can introspect: every
+    /// `rawExtensions` member (ImageIO's built-in RAW codecs handle NEF/ARW/
+    /// DNG/... the same way they already handled CR3) plus the non-RAW image
+    /// kinds a DSLR/phone/finished-export frame can show up as -- `tif`/
+    /// `tiff` (both spellings are common) and `jpg`/`jpeg`. Before this only
+    /// `cr3`/`tif` were introspected, so e.g. a NEF or JPEG light's Exif
+    /// ExposureTime/ISO/capture-date never made it into `fits_meta` even
+    /// though ImageIO can read all of these the same way.
+    private static let imageMetaExtensions: Set<String> = rawExtensions.union(["tif", "tiff", "jpg", "jpeg"])
 
     private static func kind(for ext: String) -> String {
         if fitsExtensions.contains(ext) { return "fits" }
         if rawExtensions.contains(ext) { return "raw" }
+        if xisfExtensions.contains(ext) { return "xisf" }
         switch ext {
-        case "tif", "png", "jpg", "jpeg":
+        case "tif", "tiff", "png", "jpg", "jpeg":
             return "image"
         case "xmp":
             return "sidecar"

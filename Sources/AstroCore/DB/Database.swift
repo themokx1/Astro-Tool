@@ -2058,9 +2058,18 @@ public final class Database: @unchecked Sendable {
             }
             sql += ";"
 
+            // Byte-wise, not `Set<String>.contains` (Unicode-canonical) --
+            // see `PathNormalization`'s doc comment. A row already in the DB
+            // under a STALE, differently-normalized spelling of a path that
+            // IS present in `present` (just under today's canonical form)
+            // must still be retired here: Swift's canonical string equality
+            // would otherwise treat the stale row as "the same" as the
+            // fresh one and never mark it missing, leaving both rows
+            // permanently "present" and double-counting the file.
+            let presentBytes = PathNormalization.byteSet(present)
             var toMark: [String] = []
             try db.query(sql, bind: bind) { row in
-                guard let path = row.string(0), !present.contains(path) else { return }
+                guard let path = row.string(0), !PathNormalization.containsByteWise(path, in: presentBytes) else { return }
                 guard !Self.isUnder(path, anyOf: excludingPrefixes) else { return }
                 toMark.append(path)
             }

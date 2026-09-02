@@ -564,6 +564,51 @@ private func findings(_ all: [Finding], category: String) -> [Finding] {
     #expect(!hits.contains { $0.path == cr3Path })
 }
 
+/// A PixInsight XISF light never gets a `fits_meta` row either -- there's no
+/// XISF reader anywhere in this codebase, XISF isn't FITS at all -- so this
+/// must never false-positive as "corrupt FITS" any more than a CR3 does.
+@Test func auditDoesNotFlagXISFLightAsCorruptFITS() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let xisfPath = "sessions/WideField_Target/2026-02-01/lights/light_0001.xisf"
+    let xisfURL = fixture.root.appendingPathComponent(xisfPath)
+    try FileManager.default.createDirectory(at: xisfURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "not a real XISF file, just fixture bytes\n".write(to: xisfURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "corrupt-fits")
+    #expect(!hits.contains { $0.path == xisfPath })
+}
+
+/// `.fts` is a real, if less common, FITS extension (`LibraryScanner
+/// .fitsExtensions` now includes it) -- a corrupt one must be flagged the
+/// same way a corrupt `.fit`/`.fits`/`.fz` already is.
+@Test func auditFlagsCorruptFtsFileAsCorruptFITS() throws {
+    let fixture = try AuditFixture.make()
+    defer { fixture.cleanup() }
+
+    let ftsPath = "sessions/M45_Pleiades/2026-01-10/lights/corrupt.fts"
+    let ftsURL = fixture.root.appendingPathComponent(ftsPath)
+    try "this is not a valid FITS header at all, just garbage bytes\n".write(
+        to: ftsURL, atomically: true, encoding: .utf8
+    )
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let engine = AuditEngine(config: fixture.config, db: fixture.db)
+    let (_, all) = try engine.run()
+
+    let hits = findings(all, category: "corrupt-fits")
+    #expect(hits.contains { $0.path == ftsPath })
+}
+
 @Test func auditFindingsArePersistedAndReadableFromDB() throws {
     let fixture = try AuditFixture.make()
     defer { fixture.cleanup() }

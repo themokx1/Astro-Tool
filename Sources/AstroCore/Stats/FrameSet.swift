@@ -42,8 +42,17 @@ public struct FrameBuckets: Sendable {
 public enum FrameSet {
     /// Extensions a real light frame can have. Anything else under
     /// `lights/` (`.xmp`, `.png`, `.txt`, `.html`, `.csv`, `.ssf`, `.json`,
-    /// ...) is tool noise, not a frame.
-    public static let frameExtensions: Set<String> = ["fit", "fits", "fz", "cr3", "tif"]
+    /// ...) is tool noise, not a frame. Deliberately DERIVED from
+    /// `LibraryScanner`'s own extension sets (fits + raw + XISF) plus the
+    /// two non-RAW image spellings (`tif`/`tiff`) rather than a second,
+    /// hand-written list -- that second list is exactly what let Nikon/
+    /// Sony/Fuji/older-Canon/DNG lights and PixInsight XISF lights silently
+    /// fall through as "non-frame files" before this fix, even once the
+    /// scanner itself already knew about them.
+    public static let frameExtensions: Set<String> = LibraryScanner.fitsExtensions
+        .union(LibraryScanner.rawExtensions)
+        .union(LibraryScanner.xisfExtensions)
+        .union(["tif", "tiff"])
 
     /// Filename substrings (checked case-insensitively against just the
     /// last path component) that mark a processed DERIVATIVE of a real
@@ -185,44 +194,52 @@ public enum FrameSet {
         return comps[comps.count - 2].lowercased() == "lights"
     }
 
-    // MARK: - Cross-extension (CR3 + TIF) merge
+    // MARK: - Cross-extension (RAW + TIF/TIFF) merge
 
+    /// A `.nef`/`.arw`/`.dng`/... and a `.tif`/`.tiff` with a matching
+    /// normalized `DATE-OBS` (or filename stem) are the same DSLR frame
+    /// captured twice, same as the original CR3+TIF case this generalizes --
+    /// every `rawExtensions` member, not just CR3, gets a converted-TIFF
+    /// sibling from some workflows.
     private static func mergeCrossExtension(
         _ files: [FileRecord],
         meta: [Int64: FITSMetaRecord]
     ) -> (merged: [FileRecord], duplicates: Int) {
-        var cr3s: [FileRecord] = []
+        var raws: [FileRecord] = []
         var tifs: [(offset: Int, file: FileRecord)] = []
         var others: [FileRecord] = []
 
         for file in files {
-            switch file.ext.lowercased() {
-            case "cr3": cr3s.append(file)
-            case "tif": tifs.append((tifs.count, file))
-            default: others.append(file)
+            let ext = file.ext.lowercased()
+            if LibraryScanner.rawExtensions.contains(ext) {
+                raws.append(file)
+            } else if ext == "tif" || ext == "tiff" {
+                tifs.append((tifs.count, file))
+            } else {
+                others.append(file)
             }
         }
 
-        guard !cr3s.isEmpty, !tifs.isEmpty else { return (files, 0) }
+        guard !raws.isEmpty, !tifs.isEmpty else { return (files, 0) }
 
         var matchedTifOffsets = Set<Int>()
         var duplicates = 0
 
-        for cr3 in cr3s {
-            let cr3Meta = cr3.id.flatMap { meta[$0] }
-            let cr3DateObs = cr3Meta?.dateObs.map(normalizeDateObs)
-            let cr3Stem = stem(of: cr3.path)
+        for raw in raws {
+            let rawMeta = raw.id.flatMap { meta[$0] }
+            let rawDateObs = rawMeta?.dateObs.map(normalizeDateObs)
+            let rawStem = stem(of: raw.path)
 
             if let match = tifs.first(where: { entry in
                 guard !matchedTifOffsets.contains(entry.offset) else { return false }
-                guard entry.file.target == cr3.target, entry.file.sessionDate == cr3.sessionDate else { return false }
-                if let cr3DateObs, !cr3DateObs.isEmpty {
+                guard entry.file.target == raw.target, entry.file.sessionDate == raw.sessionDate else { return false }
+                if let rawDateObs, !rawDateObs.isEmpty {
                     let tifMeta = entry.file.id.flatMap { meta[$0] }
-                    if let tifDateObs = tifMeta?.dateObs.map(normalizeDateObs), tifDateObs == cr3DateObs {
+                    if let tifDateObs = tifMeta?.dateObs.map(normalizeDateObs), tifDateObs == rawDateObs {
                         return true
                     }
                 }
-                return stem(of: entry.file.path) == cr3Stem
+                return stem(of: entry.file.path) == rawStem
             }) {
                 matchedTifOffsets.insert(match.offset)
                 duplicates += 1
@@ -230,7 +247,7 @@ public enum FrameSet {
         }
 
         let remainingTifs = tifs.filter { !matchedTifOffsets.contains($0.offset) }.map(\.file)
-        return (others + cr3s + remainingTifs, duplicates)
+        return (others + raws + remainingTifs, duplicates)
     }
 
     private static func stem(of path: String) -> String {

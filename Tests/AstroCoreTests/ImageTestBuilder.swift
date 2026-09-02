@@ -15,9 +15,60 @@ func writeTestTIFF(
     focalLengthMM: Double = 50.0,
     cameraModel: String = "Canon EOS R6",
     dateTimeOriginal: String = "2026:01:15 20:30:00",
+    offsetTimeOriginal: String? = nil,
     exposureSeconds: Double? = nil,
     iso: Int? = nil,
     apertureFNumber: Double? = nil
+) throws {
+    try writeTestImage(
+        to: url,
+        utType: UTType.tiff,
+        focalLengthMM: focalLengthMM,
+        cameraModel: cameraModel,
+        dateTimeOriginal: dateTimeOriginal,
+        offsetTimeOriginal: offsetTimeOriginal,
+        exposureSeconds: exposureSeconds,
+        iso: iso,
+        apertureFNumber: apertureFNumber
+    )
+}
+
+/// Same round-trip as `writeTestTIFF`, through the JPEG codec instead --
+/// used by `ScannerTests` to confirm `LibraryScanner.captureMeta` now
+/// introspects `.jpg`/`.jpeg` the same way it already did `.tif`.
+func writeTestJPEG(
+    to url: URL,
+    focalLengthMM: Double = 50.0,
+    cameraModel: String = "Canon EOS R6",
+    dateTimeOriginal: String = "2026:01:15 20:30:00",
+    offsetTimeOriginal: String? = nil,
+    exposureSeconds: Double? = nil,
+    iso: Int? = nil,
+    apertureFNumber: Double? = nil
+) throws {
+    try writeTestImage(
+        to: url,
+        utType: UTType.jpeg,
+        focalLengthMM: focalLengthMM,
+        cameraModel: cameraModel,
+        dateTimeOriginal: dateTimeOriginal,
+        offsetTimeOriginal: offsetTimeOriginal,
+        exposureSeconds: exposureSeconds,
+        iso: iso,
+        apertureFNumber: apertureFNumber
+    )
+}
+
+private func writeTestImage(
+    to url: URL,
+    utType: UTType,
+    focalLengthMM: Double,
+    cameraModel: String,
+    dateTimeOriginal: String,
+    offsetTimeOriginal: String?,
+    exposureSeconds: Double?,
+    iso: Int?,
+    apertureFNumber: Double?
 ) throws {
     let width = 2
     let height = 2
@@ -31,16 +82,16 @@ func writeTestTIFF(
         space: colorSpace,
         bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
     ) else {
-        Issue.record("failed to create CGContext for test TIFF")
+        Issue.record("failed to create CGContext for test image")
         return
     }
     context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
     context.fill(CGRect(x: 0, y: 0, width: width, height: height))
     guard let image = context.makeImage() else {
-        Issue.record("failed to create CGImage for test TIFF")
+        Issue.record("failed to create CGImage for test image")
         return
     }
-    guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.tiff.identifier as CFString, 1, nil) else {
+    guard let destination = CGImageDestinationCreateWithURL(url as CFURL, utType.identifier as CFString, 1, nil) else {
         Issue.record("failed to create CGImageDestination")
         return
     }
@@ -49,6 +100,9 @@ func writeTestTIFF(
         kCGImagePropertyExifFocalLength: focalLengthMM,
         kCGImagePropertyExifDateTimeOriginal: dateTimeOriginal,
     ]
+    if let offsetTimeOriginal {
+        exifDict[kCGImagePropertyExifOffsetTimeOriginal] = offsetTimeOriginal
+    }
     if let exposureSeconds {
         exifDict[kCGImagePropertyExifExposureTime] = exposureSeconds
     }

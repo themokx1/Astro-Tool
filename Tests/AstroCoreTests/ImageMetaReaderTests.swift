@@ -55,6 +55,26 @@ private func makeTempDir() throws -> URL {
     #expect(meta?.iso == nil)
 }
 
+@Test func readReturnsOffsetTimeOriginalWhenCameraWroteOne() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("test-offset.tif")
+    try writeTestTIFF(to: url, offsetTimeOriginal: "+02:00")
+
+    let meta = ImageMetaReader.read(url: url)
+    #expect(meta?.dateTakenOffset == "+02:00")
+}
+
+@Test func readReturnsNilOffsetTimeOriginalWhenCameraDidNotWriteOne() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("test-no-offset.tif")
+    try writeTestTIFF(to: url)
+
+    let meta = ImageMetaReader.read(url: url)
+    #expect(meta?.dateTakenOffset == nil)
+}
+
 @Test func readReturnsNilForNonexistentFile() throws {
     let missingURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("does-not-exist-\(UUID().uuidString).tif")

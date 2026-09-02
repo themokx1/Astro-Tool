@@ -601,6 +601,220 @@ private struct ScanFixture {
     #expect(meta?.gain == 800.0)
 }
 
+// MARK: - Extension coverage (R11 fix: non-Canon RAW / XISF / .fts / JPEG)
+
+@Test func scanRecordsNikonSonyDNGAndXISFFilesWithTheirOwnKindBuckets() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let cases: [(path: String, expectedKind: String)] = [
+        ("sessions/M45_Pleiades/2026-01-10/lights/nikon_0001.nef", "raw"),
+        ("sessions/M45_Pleiades/2026-01-10/lights/sony_0001.arw", "raw"),
+        ("sessions/M45_Pleiades/2026-01-10/lights/generic_0001.dng", "raw"),
+        ("sessions/M45_Pleiades/2026-01-10/lights/pixinsight_0001.xisf", "xisf"),
+        ("sessions/M45_Pleiades/2026-01-10/lights/fits_style.fts", "fits"),
+    ]
+    for (path, _) in cases {
+        let fileURL = fixture.root.appendingPathComponent(path)
+        try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try "not real capture bytes, just fixture content\n".write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    for (path, expectedKind) in cases {
+        let record = try fixture.db.file(path: path)
+        #expect(record?.kind == expectedKind, "\(path) expected kind \(expectedKind), got \(record?.kind ?? "<nil>")")
+    }
+}
+
+@Test func scanExtensionMatchingForRawAndXISFKindsIsCaseInsensitive() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let path = "sessions/M45_Pleiades/2026-01-10/lights/UPPERCASE_0001.NEF"
+    let fileURL = fixture.root.appendingPathComponent(path)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "not real capture bytes\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try fixture.db.file(path: path)
+    #expect(record?.kind == "raw")
+    #expect(record?.ext == "nef")
+}
+
+@Test func scanCapturesExposureAndISOForJPEGFile() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/generated_dslr.jpg"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try writeTestJPEG(to: fileURL, exposureSeconds: 15.0, iso: 1600)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    let meta = try fixture.db.fitsMeta(fileID: fileID)
+    #expect(meta?.exptime == 15.0)
+    #expect(meta?.gain == 1600.0)
+}
+
+/// R11 fix: `dateObs` stored for a DSLR/mirrorless frame is now a UTC
+/// instant (converted using the frame's own Exif `OffsetTimeOriginal` when
+/// present), not the raw camera-local Exif string -- `SessionTimeline`
+/// reads every `date_obs` value as UTC, so leaving it camera-local silently
+/// shifted the frame's recorded instant by the observer's UTC offset.
+@Test func scanConvertsExifDateTakenToUTCUsingOffsetTimeOriginal() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/generated_dslr_utc.tif"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    // 04:36:24 local at UTC+2 is 02:36:24 UTC.
+    try writeTestTIFF(to: fileURL, dateTimeOriginal: "2026:01:10 04:36:24", offsetTimeOriginal: "+02:00")
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    let meta = try fixture.db.fitsMeta(fileID: fileID)
+    #expect(meta?.dateObs == "2026-01-10T02:36:24")
+}
+
+// MARK: - FITS keyword aliases (R11 fix: EXPOSURE / DATE-LOC / DATE)
+
+@Test func scanFallsBackToExposureKeywordWhenExptimeIsAbsent() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let relativePath = "sessions/M45_Pleiades/2026-01-10/lights/exposure_alias.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    let headerData = buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "EXPOSURE=                240.0",
+        "END",
+    ])
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try headerData.write(to: fileURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let record = try fixture.db.file(path: relativePath)
+    let fileID = try #require(record?.id)
+    let meta = try fixture.db.fitsMeta(fileID: fileID)
+    #expect(meta?.exptime == 240.0)
+}
+
+@Test func scanFallsBackToDateLocThenDateWhenDateObsIsAbsent() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let relativeDateLoc = "sessions/M45_Pleiades/2026-01-10/lights/date_loc_alias.fit"
+    let dateLocURL = fixture.root.appendingPathComponent(relativeDateLoc)
+    try FileManager.default.createDirectory(at: dateLocURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "DATE-LOC= '2026-01-10T04:36:24'",
+        "END",
+    ]).write(to: dateLocURL)
+
+    let relativeDate = "sessions/M45_Pleiades/2026-01-10/lights/date_alias.fit"
+    let dateURL = fixture.root.appendingPathComponent(relativeDate)
+    try buildHeaderData([
+        "SIMPLE  =                    T",
+        "BITPIX  =                   16",
+        "NAXIS   =                    2",
+        "DATE    = '2026-01-10T05:00:00'",
+        "END",
+    ]).write(to: dateURL)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let dateLocFileID = try #require(try fixture.db.file(path: relativeDateLoc)?.id)
+    #expect(try fixture.db.fitsMeta(fileID: dateLocFileID)?.dateObs == "2026-01-10T04:36:24")
+
+    let dateFileID = try #require(try fixture.db.file(path: relativeDate)?.id)
+    #expect(try fixture.db.fitsMeta(fileID: dateFileID)?.dateObs == "2026-01-10T05:00:00")
+}
+
+// MARK: - NFC/NFD path normalization (R11 fix)
+
+/// Simulates a library that moved from an old HFS+ (NFD-named) volume onto
+/// APFS/SMB (NFC-named): a stale NFD row already sits in the DB from before
+/// the rename, and a fresh scan of the NOW-NFC tree must retire that stale
+/// row (not leave it permanently "present" alongside a new NFC row for the
+/// same file) -- see `PathNormalization`'s doc comment for why this needs a
+/// byte-wise staleness check rather than Swift's own canonical `Set<String>`
+/// comparison.
+@Test func rescanAfterNFDToNFCRenameRetiresStaleRowAndLeavesExactlyOnePresentRow() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let nfd = "Café Target".decomposedStringWithCanonicalMapping
+    let nfc = "Café Target".precomposedStringWithCanonicalMapping
+    #expect(Array(nfd.utf8) != Array(nfc.utf8), "fixture precondition: NFD and NFC byte forms must actually differ")
+
+    // Insert a stale row directly, exactly as if an earlier scan (before
+    // path normalization existed) had recorded this file's NFD-composed
+    // name.
+    let staleRecord = FileRecord(
+        id: nil, path: "sessions/\(nfd)/2026-01-10/lights/light_0001.fit",
+        size: 10, mtime: 1, ext: "fit", kind: "fits", area: .sessions,
+        target: nfd, sessionDate: "2026-01-10", role: .light, scannedAt: 1,
+        inode: nil, nlink: nil
+    )
+    _ = try fixture.db.upsertFile(staleRecord)
+
+    // The tree on disk is NFC (today's APFS/SMB reality) -- write a real
+    // file there and scan it.
+    let relativePath = "sessions/\(nfc)/2026-01-10/lights/light_0001.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "fixture content\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let allFiles = try fixture.db.allFiles(includeMissing: true)
+    let matchingRows = allFiles.filter { $0.path.precomposedStringWithCanonicalMapping == "sessions/\(nfc)/2026-01-10/lights/light_0001.fit" }
+    let present = matchingRows.filter { !$0.missing }
+    #expect(present.count == 1, "expected exactly one non-missing row after the NFD->NFC rescan, got \(present.count)")
+}
+
+@Test func scannedRelativePathIsStoredInPrecomposedNFCForm() throws {
+    let fixture = try ScanFixture.makeEmpty()
+    defer { fixture.cleanup() }
+
+    let nfd = "Café Target".decomposedStringWithCanonicalMapping
+    let nfc = "Café Target".precomposedStringWithCanonicalMapping
+    #expect(Array(nfd.utf8) != Array(nfc.utf8), "fixture precondition: NFD and NFC byte forms must actually differ")
+
+    let relativePath = "sessions/\(nfd)/2026-01-10/lights/light_0001.fit"
+    let fileURL = fixture.root.appendingPathComponent(relativePath)
+    try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "fixture content\n".write(to: fileURL, atomically: true, encoding: .utf8)
+
+    let scanner = LibraryScanner(config: fixture.config, db: fixture.db)
+    _ = try scanner.scan()
+
+    let allFiles = try fixture.db.allFiles(includeMissing: false)
+    #expect(allFiles.contains { Array($0.path.utf8) == Array("sessions/\(nfc)/2026-01-10/lights/light_0001.fit".utf8) })
+}
+
 @Test func metaPersistsAcrossUnchangedRescan() throws {
     let fixture = try ScanFixture.make()
     defer { fixture.cleanup() }

@@ -1082,7 +1082,12 @@ public struct MixedSetupInTargetRule: AuditRule {
 public struct CorruptFITSRule: AuditRule {
     public let id = "corrupt-fits"
 
-    private static let checkedExtensions: Set<String> = ["fit", "fits", "fz"]
+    /// Deliberately `LibraryScanner.fitsExtensions` itself, not a second
+    /// hand-picked list -- a FITS-kind extension the scanner learns about
+    /// (e.g. `.fts`) must be checked here too without a second edit, and a
+    /// RAW/XISF extension must never be, since neither ever gets a
+    /// `fits_meta` row by design (see this type's own doc comment above).
+    private static let checkedExtensions: Set<String> = LibraryScanner.fitsExtensions
     private static let checkedRoles: Set<FrameRole> = [.light, .flat, .dark, .bias, .master]
 
     public init() {}
