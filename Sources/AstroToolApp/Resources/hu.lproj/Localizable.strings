@@ -2850,3 +2850,4 @@
 "Nothing was changed in the folder that was scanned." = "A vizsgált mappában semmi nem változott.";
 "Choose a Different Folder…" = "Másik mappa választása…";
 "Continue anyway" = "Folytatás így is";
+"Choose an image library first. Both importing from a card and starting a new night create folders inside a library." = "Először válassz képkönyvtárat. A kártyáról importálás és az új éjszaka indítása is a könyvtáron belül hoz létre mappákat.";

@@ -20,6 +20,32 @@ struct V2HonestSurfacesTests {
         try String(contentsOf: repositoryRoot.appendingPathComponent(relativePath), encoding: .utf8)
     }
 
+    // MARK: 0. Toolbar workflows that need a library must redirect, not lie.
+    //
+    // 2026-09-02 first-run audit, fix F: "Import from Card…" and "New
+    // Night…" are permanent toolbar controls, so both are reachable with no
+    // library open. Their sheet branches both required a root, so with none
+    // the if-chain fell through to `V2PresentationPlaceholder` and claimed
+    // the workflow "will become available as V2 reaches feature parity" --
+    // untrue for two shipped, fully working features.
+
+    @Test("Import from Card and New Night with no library open redirect to opening one")
+    func libraryRequiringPresentationsRedirectInsteadOfClaimingUnfinishedParity() throws {
+        let source = try contents("Sources/AstroUI/App/V2RootView.swift")
+        #expect(
+            source.contains("} else if presentation == .newNight || presentation == .importCapture {"),
+            "both library-requiring routes need an explicit no-library branch before the placeholder"
+        )
+        #expect(source.contains("struct NoLibraryOpenSheet"))
+        #expect(source.contains("No library open"))
+        #expect(source.contains("v2.presentation.no-library.choose-library"))
+        // The redirect must come BEFORE the fall-through placeholder,
+        // otherwise the untrue "feature parity" sentence still wins.
+        let redirect = try #require(source.range(of: "} else if presentation == .newNight || presentation == .importCapture {"))
+        let placeholder = try #require(source.range(of: "V2PresentationPlaceholder(route: presentation)"))
+        #expect(redirect.lowerBound < placeholder.lowerBound)
+    }
+
     // MARK: 1. Planning's "Reference" card must show the user's own baseline.
 
     @Test("PlanningView's Reference card renders the live PlanningStore baseline, not a hardcoded 10 h/APS-C/f5/mu22")

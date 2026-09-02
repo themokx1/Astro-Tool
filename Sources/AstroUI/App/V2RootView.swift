@@ -833,6 +833,21 @@ private struct V2Shell: View {
                     dismiss: router.dismissPresentation,
                     runScan: performRescan
                 )
+            } else if presentation == .newNight || presentation == .importCapture {
+                // 2026-09-02 first-run audit, fix F: both branches above
+                // need a library root, and both controls live permanently in
+                // the toolbar -- so with no library open this used to fall
+                // through to `V2PresentationPlaceholder` and claim two
+                // shipped workflows "will become available as V2 reaches
+                // feature parity". Redirect to the one action that unblocks
+                // them instead.
+                NoLibraryOpenSheet(
+                    chooseLibrary: {
+                        router.dismissPresentation()
+                        presentOnboarding()
+                    },
+                    dismiss: router.dismissPresentation
+                )
             } else if case .glossary(let anchor) = presentation {
                 GlossaryView(anchor: anchor, dismiss: router.dismissPresentation)
             } else if presentation == .folderStructure {
@@ -2357,6 +2372,35 @@ private struct LibraryAccessProblemBanner: View {
     }
 }
 
+/// The "you need a library first" sheet for the two toolbar workflows that
+/// write into one (`New Night…`, `Import from Card…`). Deliberately the same
+/// wording and the same single action as `HomeView.emptyLibrary`, so the
+/// answer to "why is nothing happening" reads identically wherever the user
+/// meets it.
+private struct NoLibraryOpenSheet: View {
+    let chooseLibrary: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("No library open", systemImage: "sparkles.rectangle.stack")
+        } description: {
+            Text("Choose an image library first. Both importing from a card and starting a new night create folders inside a library.")
+        } actions: {
+            Button("Choose Image Library…", action: chooseLibrary)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v2.presentation.no-library.choose-library")
+            Button("Close", action: dismiss)
+                .keyboardShortcut(.cancelAction)
+        }
+        .frame(minWidth: 420, minHeight: 260)
+        .accessibilityIdentifier("v2.presentation.no-library")
+    }
+}
+
+/// Only ever reached for routes that genuinely have no V2 surface yet --
+/// `.newNight`/`.importCapture` are handled above (real sheet with a
+/// library, `NoLibraryOpenSheet` without one) and can no longer land here.
 private struct V2PresentationPlaceholder: View {
     let route: PresentationRoute
     let dismiss: () -> Void
