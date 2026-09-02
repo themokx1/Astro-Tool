@@ -2839,3 +2839,7 @@
 "The reviewed changes were not applied." = "Az ellenőrzött módosítások nem kerültek alkalmazásra.";
 "The connection timed out." = "A kapcsolat időtúllépés miatt megszakadt.";
 "Sync was cancelled." = "A szinkronizálást megszakítottuk.";
+
+/* 2026-09-02 first-run flow fixes */
+"This library could not be prepared" = "Ezt a könyvtárat nem sikerült előkészíteni";
+"The scan finished, but Projects and Nights could not be built for this folder. Try again, or open a different library." = "A vizsgálat lefutott, de a projektek és éjszakák nem épültek fel ehhez a mappához. Próbáld újra, vagy nyiss meg másik könyvtárat.";

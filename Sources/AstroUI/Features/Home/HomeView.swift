@@ -16,6 +16,12 @@ public struct HomeView: View {
     /// just not open yet" from the genuine "nothing configured at all" case
     /// `emptyLibrary` below still owns.
     private let isLibraryLoading: Bool
+    /// 2026-09-02 first-run audit, fix B: preparing the configured library
+    /// failed and stopped. Nothing is in flight any more, so the spinner
+    /// above would lie forever -- this renders the dead end with its own two
+    /// ways out instead.
+    private let libraryPreparationFailed: Bool
+    private let retryLibraryPreparation: () -> Void
     private let chooseLibrary: () -> Void
     private let openProject: (ProjectRecord) -> Void
     private let openProjectID: (UUID) -> Void
@@ -67,6 +73,8 @@ public struct HomeView: View {
         store: HomeStore,
         rootURL: URL? = nil,
         isLibraryLoading: Bool = false,
+        libraryPreparationFailed: Bool = false,
+        retryLibraryPreparation: @escaping () -> Void = {},
         chooseLibrary: @escaping () -> Void,
         openProject: @escaping (ProjectRecord) -> Void,
         openProjectID: @escaping (UUID) -> Void = { _ in },
@@ -79,6 +87,8 @@ public struct HomeView: View {
         _store = Bindable(store)
         self.rootURL = rootURL
         self.isLibraryLoading = isLibraryLoading
+        self.libraryPreparationFailed = libraryPreparationFailed
+        self.retryLibraryPreparation = retryLibraryPreparation
         self.chooseLibrary = chooseLibrary
         self.openProject = openProject
         self.openProjectID = openProjectID
@@ -110,7 +120,9 @@ public struct HomeView: View {
                 )
                 briefingCard
                 if store.snapshot.libraryName == nil {
-                    if isLibraryLoading {
+                    if libraryPreparationFailed {
+                        preparationFailedLibrary
+                    } else if isLibraryLoading {
                         openingLibrary
                     } else {
                         emptyLibrary
@@ -872,6 +884,27 @@ public struct HomeView: View {
         ProgressView("Opening the library…")
             .frame(maxWidth: .infinity, minHeight: 250)
             .accessibilityIdentifier("v2.home.opening-library")
+    }
+
+    /// 2026-09-02 first-run audit, fix B: preparing the library failed and
+    /// the user dismissed the alert. This used to keep showing
+    /// `openingLibrary` forever -- a spinner for work that had already
+    /// stopped, with no way forward. Two honest actions instead: run the
+    /// same preparation again, or pick a different library.
+    private var preparationFailedLibrary: some View {
+        ContentUnavailableView {
+            Label("This library could not be prepared", systemImage: "exclamationmark.triangle")
+        } description: {
+            Text("The scan finished, but Projects and Nights could not be built for this folder. Try again, or open a different library.")
+        } actions: {
+            Button("Retry", action: retryLibraryPreparation)
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("v2.home.preparation-failed.retry")
+            Button("Choose Another Library…", action: chooseLibrary)
+                .accessibilityIdentifier("v2.home.preparation-failed.choose-another-library")
+        }
+        .frame(maxWidth: .infinity, minHeight: 250)
+        .accessibilityIdentifier("v2.home.preparation-failed")
     }
 }
 

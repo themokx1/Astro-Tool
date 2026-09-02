@@ -78,6 +78,11 @@ public struct V2RootView: View {
     @State private var libraryHealthStore = LibraryHealthStore()
     @State private var isOnboardingPresented: Bool
     @State private var libraryPreparationError: String?
+    /// 2026-09-02 fix B: outlives `libraryPreparationError`, which the
+    /// alert's Cancel clears. Home needs to know that preparing this
+    /// library FAILED and stopped -- otherwise dismissing the alert left it
+    /// spinning "Opening the library…" with no way out.
+    @State private var libraryPreparationDidFail = false
     @State private var didRestoreWindowState = false
     @State private var operationHost = OperationHost(center: OperationCenter())
     /// Wave 4 (post-20014) fix: owned here (once per window, same lifetime
@@ -139,6 +144,7 @@ public struct V2RootView: View {
             uiTestCaches: uiTestFixture?.caches,
             isOnboardingPresented: $isOnboardingPresented,
             libraryPreparationError: $libraryPreparationError,
+            libraryPreparationDidFail: libraryPreparationDidFail,
             retryLibraryPreparation: retryLibraryPreparation
         )
             .overlay(alignment: .topTrailing) {
@@ -233,6 +239,7 @@ public struct V2RootView: View {
         let nightsStore = self.nightsStore
         let homeStore = self.homeStore
         let uiTestFixture = self.uiTestFixture
+        libraryPreparationDidFail = false
         let id = await operationHost.run(
             kind: kind,
             title: "\(OperationHost.localized("Preparing")) \(root.lastPathComponent)",
@@ -263,9 +270,11 @@ public struct V2RootView: View {
         case .succeeded:
             appModel.libraryDidOpen(rootURL: root, metadataStore: projectsStore.metadataStore)
             libraryPreparationError = nil
+            libraryPreparationDidFail = false
         case .failed:
             libraryPreparationError = await operationHost.errorMessage(for: id)
                 ?? "AstroTool could not prepare Projects and Nights for this library."
+            libraryPreparationDidFail = true
         case .cancelled, .running:
             break
         }
@@ -349,6 +358,7 @@ private struct V2Shell: View {
     let uiTestCaches: URL?
     @Binding var isOnboardingPresented: Bool
     @Binding var libraryPreparationError: String?
+    let libraryPreparationDidFail: Bool
     let retryLibraryPreparation: () -> Void
     @State private var pendingLibraryPicker = false
     @State private var showsDirectLibraryWelcome = false
@@ -506,6 +516,8 @@ private struct V2Shell: View {
                 uiTestCaches: uiTestCaches,
                 mobileSnapshotProvider: mobileSnapshotProvider,
                 chooseLibrary: presentOnboarding,
+                hasLibraryPreparationFailure: libraryPreparationDidFail,
+                retryLibraryPreparation: retryLibraryPreparation,
                 createPlannedProject: { designation in
                     newProjectInitialQuery = designation
                     router.present(.newProject)
@@ -1481,14 +1493,50 @@ private struct V2Sidebar: View {
 /// bookmarks). `internal`, not `private`, so `HomeLibraryLoadingTests` can
 /// reach it through `@testable import AstroUI`.
 enum HomeLibraryLoading {
+    /// What Home must render for the currently configured library.
+    ///
+    /// 2026-09-02 first-run audit, fix B: `preparationFailed` is new. Before
+    /// it, a `prepareLibrary` failure whose alert the user dismissed with
+    /// Cancel left `selectedRoot` set and `homeLibraryName` `nil` with no
+    /// access problem -- indistinguishable from "still opening", so Home
+    /// spun "Opening the library…" forever with no way out. A finished
+    /// failure is a state of its own, with its own actions.
+    enum State: Equatable, Sendable {
+        case noLibrary
+        case loading
+        case preparationFailed
+        case ready
+    }
+
+    /// A root is selected (assigned synchronously at the very start of
+    /// `OnboardingStore.openAndScan`, before any slow disk I/O) but
+    /// `HomeStore.configure(...)` has not landed yet, and nothing has
+    /// already failed for that root -> `.loading`. An access problem falls
+    /// back to `.noLibrary`, whose "choose a library" prompt is the honest
+    /// next action once opening this one has failed outright.
+    static func state(
+        selectedRoot: URL?,
+        homeLibraryName: String?,
+        hasAccessProblem: Bool,
+        hasPreparationFailure: Bool
+    ) -> State {
+        guard selectedRoot != nil else { return .noLibrary }
+        if homeLibraryName != nil { return .ready }
+        if hasPreparationFailure { return .preparationFailed }
+        if hasAccessProblem { return .noLibrary }
+        return .loading
+    }
+
     /// `true` exactly during the window Home must show a loading state
     /// rather than either its ordinary library overview or its "no library
-    /// configured" empty state: a root is already selected (assigned
-    /// synchronously at the very start of `OnboardingStore.openAndScan`,
-    /// before any slow disk I/O) but `HomeStore.configure(...)` has not
-    /// landed yet, and nothing has already failed for that root.
+    /// configured" empty state.
     static func isLoading(selectedRoot: URL?, homeLibraryName: String?, hasAccessProblem: Bool) -> Bool {
-        selectedRoot != nil && homeLibraryName == nil && !hasAccessProblem
+        state(
+            selectedRoot: selectedRoot,
+            homeLibraryName: homeLibraryName,
+            hasAccessProblem: hasAccessProblem,
+            hasPreparationFailure: false
+        ) == .loading
     }
 }
 
@@ -1528,6 +1576,11 @@ private struct DetailHost: View {
     let uiTestCaches: URL?
     let mobileSnapshotProvider: MobileSyncStore.SnapshotProvider
     let chooseLibrary: () -> Void
+    /// 2026-09-02 fix B: `prepareLibrary` failed and the user dismissed the
+    /// alert -- Home must show that dead end with its own way out instead of
+    /// an endless "Opening the library…" spinner.
+    let hasLibraryPreparationFailure: Bool
+    let retryLibraryPreparation: () -> Void
     let createPlannedProject: (String) -> Void
     /// W3-10: opens the shared "New Session" sheet -- `nil` prefill for the
     /// Nights page's own unprefilled toolbar action, a resolved prefill for
@@ -1741,13 +1794,16 @@ private struct DetailHost: View {
     /// state (the failure itself already surfaces elsewhere, via
     /// `libraryPreparationError`/the access-problem banner) rather than
     /// showing a permanent spinner.
-    private var isLibraryLoading: Bool {
-        HomeLibraryLoading.isLoading(
+    private var homeLibraryState: HomeLibraryLoading.State {
+        HomeLibraryLoading.state(
             selectedRoot: onboardingStore.selectedRoot,
             homeLibraryName: homeStore.snapshot.libraryName,
-            hasAccessProblem: onboardingStore.phase.accessProblem != nil
+            hasAccessProblem: onboardingStore.phase.accessProblem != nil,
+            hasPreparationFailure: hasLibraryPreparationFailure
         )
     }
+
+    private var isLibraryLoading: Bool { homeLibraryState == .loading }
 
     @ViewBuilder
     private func destination(for route: ContentRoute) -> some View {
@@ -1757,6 +1813,8 @@ private struct DetailHost: View {
                 store: homeStore,
                 rootURL: onboardingStore.selectedRoot,
                 isLibraryLoading: isLibraryLoading,
+                libraryPreparationFailed: homeLibraryState == .preparationFailed,
+                retryLibraryPreparation: retryLibraryPreparation,
                 chooseLibrary: chooseLibrary,
                 // W5-2 finding 6 (owner click-through): "Open Project" on the
                 // "Continue where it matters" card used to `router.navigate(to:

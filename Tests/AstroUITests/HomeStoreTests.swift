@@ -1033,4 +1033,69 @@ struct HomeLibraryLoadingTests {
     func accessProblemIsNotLoading() {
         #expect(!HomeLibraryLoading.isLoading(selectedRoot: root, homeLibraryName: nil, hasAccessProblem: true))
     }
+
+    // MARK: - 2026-09-02 first-run audit, fix B: a failed library
+    // preparation the user dismissed used to leave Home spinning
+    // "Opening the library…" forever, because nothing distinguished
+    // "still preparing" from "preparation failed and stopped".
+
+    @Test("Nothing selected is the no-library state")
+    func noRootIsTheNoLibraryState() {
+        #expect(
+            HomeLibraryLoading.state(
+                selectedRoot: nil,
+                homeLibraryName: nil,
+                hasAccessProblem: false,
+                hasPreparationFailure: false
+            ) == .noLibrary
+        )
+    }
+
+    @Test("A selected root with no name yet and nothing failed is loading")
+    func selectedRootWithoutNameIsLoading() {
+        #expect(
+            HomeLibraryLoading.state(
+                selectedRoot: root,
+                homeLibraryName: nil,
+                hasAccessProblem: false,
+                hasPreparationFailure: false
+            ) == .loading
+        )
+    }
+
+    @Test("A failed library preparation is a dead-end state, never a spinner")
+    func preparationFailureIsNotLoading() {
+        let state = HomeLibraryLoading.state(
+            selectedRoot: root,
+            homeLibraryName: nil,
+            hasAccessProblem: false,
+            hasPreparationFailure: true
+        )
+        #expect(state == .preparationFailed)
+        #expect(state != .loading)
+    }
+
+    @Test("A library that finished opening is ready even if an earlier preparation failed")
+    func configuredHomeWinsOverAStalePreparationFailure() {
+        #expect(
+            HomeLibraryLoading.state(
+                selectedRoot: root,
+                homeLibraryName: "Astro",
+                hasAccessProblem: false,
+                hasPreparationFailure: true
+            ) == .ready
+        )
+    }
+
+    @Test("An access problem falls back to the no-library state, not a spinner")
+    func accessProblemIsTheNoLibraryState() {
+        #expect(
+            HomeLibraryLoading.state(
+                selectedRoot: root,
+                homeLibraryName: nil,
+                hasAccessProblem: true,
+                hasPreparationFailure: false
+            ) == .noLibrary
+        )
+    }
 }
