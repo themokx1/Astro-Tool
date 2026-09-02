@@ -2214,3 +2214,29 @@ private func sessionFile(
     #expect(try database.countTrackedFiles(pathPrefix: "sessions/M%2") == 1)
     #expect(try database.countHashedFiles(pathPrefix: "sessions/M%2") == 1)
 }
+
+/// A database stamped with a schema version newer than this build supports
+/// (e.g. opened once by a future AstroTool, then reopened by this older
+/// binary) must fail loudly instead of silently running the migration
+/// ladder from an unrecognized starting point and corrupting data later.
+@Test func openingADatabaseWithANewerSchemaVersionThrowsInsteadOfProceeding() throws {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("astro-migrate-future-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let path = dir.appendingPathComponent("future.sqlite").path
+
+    do {
+        let raw = try SQLiteDB(path: path)
+        try raw.exec(Database.schemaSQLv1)
+        try raw.exec("CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);")
+        try raw.run(
+            "INSERT INTO schema_version(version) VALUES (?);",
+            bind: [.int(Int64(Database.currentSchemaVersion) + 1)]
+        )
+    }
+
+    #expect(throws: AstroError.self) {
+        _ = try Database(path: path)
+    }
+}

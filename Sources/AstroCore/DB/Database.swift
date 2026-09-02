@@ -840,6 +840,16 @@ public final class Database: @unchecked Sendable {
             version = 0
         }
 
+        // A version newer than this build knows about means the database was
+        // last opened by a newer AstroTool -- proceeding would run the
+        // migration ladder from an unrecognized starting point and silently
+        // corrupt data instead of failing where the mistake is obvious.
+        guard version <= Self.currentSchemaVersion else {
+            throw AstroError.databaseError(
+                "This library index was created by a newer AstroTool (schema \(version), this build supports \(Self.currentSchemaVersion)). Update AstroTool to open it."
+            )
+        }
+
         if version < 1 {
             try db.exec(Self.schemaSQLv1)
             try db.run("INSERT INTO schema_version(version) VALUES (?);", bind: [.int(1)])
