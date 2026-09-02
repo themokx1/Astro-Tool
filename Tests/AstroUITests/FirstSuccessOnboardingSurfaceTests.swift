@@ -197,6 +197,32 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(root.contains("panel.message = String(localized:"))
     }
 
+    // MARK: - v5 flow review, M8: the storage-inside-library dialog and the
+    // zero-result scan summary carried two different English labels for the
+    // very same action, and both had been translated to the identical
+    // Hungarian string.
+
+    @Test("Both ways back to the folder picker share one label instead of two keys with one translation")
+    func rechooseFolderLabelIsUnified() throws {
+        let welcome = try source("Sources/AstroUI/Onboarding/LibraryWelcomeView.swift")
+        let summary = try source("Sources/AstroUI/Onboarding/FirstScanSummaryView.swift")
+        #expect(welcome.contains(#"Button("Choose a Different Folder…")"#))
+        #expect(!welcome.contains("Choose Another Folder…"))
+        #expect(summary.contains("Choose a Different Folder…"))
+
+        let strings = try source("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        #expect(strings.contains(#""Choose a Different Folder…" = "#))
+        #expect(!strings.contains(#""Choose Another Folder…" = "#), "the orphaned duplicate hu entry is still there")
+    }
+
+    @Test("The rating-in-progress notice for a scope reads as a selection, not a round")
+    func frameRatingScopeNoticeIsTranslatedForASelection() throws {
+        let strings = try source("Sources/AstroToolApp/Resources/hu.lproj/Localizable.strings")
+        #expect(strings.contains(#""Frame rating is already running for this scope." = "A képkocka-értékelés már fut ehhez a kijelöléshez.";"#))
+        // "kör" reads as a lap/round in Hungarian -- never what a scope is.
+        #expect(!strings.contains("már fut erre a körre"))
+    }
+
     // MARK: - v5 flow fixes, item 7: "Not chosen yet" had no hu.lproj entry.
 
     @Test("The create-library location placeholder has a Hungarian translation")

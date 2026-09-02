@@ -1074,7 +1074,7 @@
 "Scanning" = "Beolvasás";
 "Rescanning" = "Újrabeolvasás";
 "Frame rating is already running for this night." = "A képkocka-értékelés már fut erre az éjszakára.";
-"Frame rating is already running for this scope." = "A képkocka-értékelés már fut erre a körre.";
+"Frame rating is already running for this scope." = "A képkocka-értékelés már fut ehhez a kijelöléshez.";
 "No frames to rate for this night." = "Nincs értékelhető képkocka ehhez az éjszakához.";
 "Night notes saved." = "Az éjszakai jegyzetek elmentve.";
 "Saving night notes failed." = "Az éjszakai jegyzetek mentése sikertelen.";
@@ -2894,7 +2894,6 @@
 "This library could not be prepared" = "Ezt a könyvtárat nem sikerült előkészíteni";
 "The scan finished, but Projects and Nights could not be built for this folder. Try again, or open a different library." = "A vizsgálat lefutott, de a projektek és éjszakák nem épültek fel ehhez a mappához. Próbáld újra, vagy nyiss meg másik könyvtárat.";
 "This folder contains AstroTool’s own data folder. Choose a folder that only holds your photos, for example inside Pictures." = "Ez a mappa az AstroTool saját adatmappáját is tartalmazza. Válassz olyan mappát, amelyben csak a fotóid vannak — például a Képek mappán belül.";
-"Choose Another Folder…" = "Másik mappa választása…";
 "No astrophotos found in %@" = "Nem találtunk asztrofotót itt: %@";
 "AstroTool looked for sessions, stacks, and processed folders, and for image files it recognises, and found none. This is usually the wrong folder — pick the one that holds your captures." = "Az AstroTool sessions, stacks és processed mappákat, valamint ismert képfájlokat keresett, de egyet sem talált. Ilyenkor általában nem ez a jó mappa — válaszd azt, amelyben a felvételeid vannak.";
 "Nothing was changed in the folder that was scanned." = "A vizsgált mappában semmi nem változott.";

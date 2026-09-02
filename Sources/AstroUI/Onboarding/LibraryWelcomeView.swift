@@ -872,10 +872,15 @@ public struct LibraryWelcomeView: View {
     /// "Choose a Different Library…") both mean the same thing here, and
     /// the honest instruction is narrower: pick a folder that only holds
     /// photos.
+    ///
+    /// The label is deliberately the same key `FirstScanSummaryView`'s
+    /// zero-result action uses: it asks for exactly the same thing (pick a
+    /// different library folder), and two separate English strings for one
+    /// action only produced two identical Hungarian translations.
     @ViewBuilder
     private func recoveryButtons(for problem: LibraryAccessProblem) -> some View {
         if problem == .storageInsideLibrary {
-            Button("Choose Another Folder…") { chooseAnotherLibrary() }
+            Button("Choose a Different Folder…") { chooseAnotherLibrary() }
                 .buttonStyle(.borderedProminent)
         } else {
             recoveryButtons(for: problem.recovery)
