@@ -78,13 +78,18 @@ public enum ImageMetaReader {
 
         let focalLength = exif?[kCGImagePropertyExifFocalLength] as? Double
         let cameraModel = tiff?[kCGImagePropertyTIFFModel] as? String
-        let dateTaken = (exif?[kCGImagePropertyExifDateTimeOriginal] as? String)
-            ?? (tiff?[kCGImagePropertyTIFFDateTime] as? String)
+        let exifDateTaken = exif?[kCGImagePropertyExifDateTimeOriginal] as? String
+        let dateTaken = exifDateTaken ?? (tiff?[kCGImagePropertyTIFFDateTime] as? String)
         // Only meaningful alongside `ExifDateTimeOriginal` -- there's no
         // equivalent offset tag for the TIFF `DateTime` fallback above, so
         // this stays nil whenever `dateTaken` itself came from TIFF instead
-        // of Exif.
-        let dateTakenOffset = exif?[kCGImagePropertyExifOffsetTimeOriginal] as? String
+        // of Exif. Gated on that branch explicitly: an offset read
+        // unconditionally would be attached to a TIFF-sourced timestamp it
+        // says nothing about, and `ExifDateConversion` would then treat that
+        // wall-clock time as being in a timezone nothing measured.
+        let dateTakenOffset = exifDateTaken == nil
+            ? nil
+            : exif?[kCGImagePropertyExifOffsetTimeOriginal] as? String
         let exposureSeconds = exif?[kCGImagePropertyExifExposureTime] as? Double
         // ISOSpeedRatings is Exif's array-valued tag (some cameras record
         // more than one rating) -- ImageIO surfaces it as an NSNumber array;

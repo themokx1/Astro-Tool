@@ -75,6 +75,27 @@ private func makeTempDir() throws -> URL {
     #expect(meta?.dateTakenOffset == nil)
 }
 
+/// `dateTakenOffset`'s contract: it is the offset FOR `ExifDateTimeOriginal`,
+/// and there is no equivalent tag for the TIFF `DateTime` fallback. Read
+/// unconditionally, a stray Exif offset would be attached to a TIFF-sourced
+/// wall-clock time it says nothing about, and `ExifDateConversion` would
+/// convert that instant using a timezone nothing measured.
+@Test func readIgnoresOffsetTimeOriginalWhenTheDateCameFromTIFFNotExif() throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let url = dir.appendingPathComponent("test-tiff-date-only.tif")
+    try writeTestTIFF(
+        to: url,
+        dateTimeOriginal: nil,
+        tiffDateTime: "2026:01:15 20:30:00",
+        offsetTimeOriginal: "+02:00"
+    )
+
+    let meta = ImageMetaReader.read(url: url)
+    #expect(meta?.dateTaken == "2026:01:15 20:30:00")
+    #expect(meta?.dateTakenOffset == nil)
+}
+
 @Test func readReturnsNilForNonexistentFile() throws {
     let missingURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("does-not-exist-\(UUID().uuidString).tif")

@@ -14,7 +14,8 @@ func writeTestTIFF(
     to url: URL,
     focalLengthMM: Double = 50.0,
     cameraModel: String = "Canon EOS R6",
-    dateTimeOriginal: String = "2026:01:15 20:30:00",
+    dateTimeOriginal: String? = "2026:01:15 20:30:00",
+    tiffDateTime: String? = nil,
     offsetTimeOriginal: String? = nil,
     exposureSeconds: Double? = nil,
     iso: Int? = nil,
@@ -26,6 +27,7 @@ func writeTestTIFF(
         focalLengthMM: focalLengthMM,
         cameraModel: cameraModel,
         dateTimeOriginal: dateTimeOriginal,
+        tiffDateTime: tiffDateTime,
         offsetTimeOriginal: offsetTimeOriginal,
         exposureSeconds: exposureSeconds,
         iso: iso,
@@ -40,7 +42,8 @@ func writeTestJPEG(
     to url: URL,
     focalLengthMM: Double = 50.0,
     cameraModel: String = "Canon EOS R6",
-    dateTimeOriginal: String = "2026:01:15 20:30:00",
+    dateTimeOriginal: String? = "2026:01:15 20:30:00",
+    tiffDateTime: String? = nil,
     offsetTimeOriginal: String? = nil,
     exposureSeconds: Double? = nil,
     iso: Int? = nil,
@@ -52,6 +55,7 @@ func writeTestJPEG(
         focalLengthMM: focalLengthMM,
         cameraModel: cameraModel,
         dateTimeOriginal: dateTimeOriginal,
+        tiffDateTime: tiffDateTime,
         offsetTimeOriginal: offsetTimeOriginal,
         exposureSeconds: exposureSeconds,
         iso: iso,
@@ -64,7 +68,8 @@ private func writeTestImage(
     utType: UTType,
     focalLengthMM: Double,
     cameraModel: String,
-    dateTimeOriginal: String,
+    dateTimeOriginal: String?,
+    tiffDateTime: String?,
     offsetTimeOriginal: String?,
     exposureSeconds: Double?,
     iso: Int?,
@@ -98,8 +103,10 @@ private func writeTestImage(
 
     var exifDict: [CFString: Any] = [
         kCGImagePropertyExifFocalLength: focalLengthMM,
-        kCGImagePropertyExifDateTimeOriginal: dateTimeOriginal,
     ]
+    if let dateTimeOriginal {
+        exifDict[kCGImagePropertyExifDateTimeOriginal] = dateTimeOriginal
+    }
     if let offsetTimeOriginal {
         exifDict[kCGImagePropertyExifOffsetTimeOriginal] = offsetTimeOriginal
     }
@@ -112,9 +119,12 @@ private func writeTestImage(
     if let apertureFNumber {
         exifDict[kCGImagePropertyExifFNumber] = apertureFNumber
     }
-    let tiffDict: [CFString: Any] = [
+    var tiffDict: [CFString: Any] = [
         kCGImagePropertyTIFFModel: cameraModel,
     ]
+    if let tiffDateTime {
+        tiffDict[kCGImagePropertyTIFFDateTime] = tiffDateTime
+    }
     let properties: [CFString: Any] = [
         kCGImagePropertyExifDictionary: exifDict,
         kCGImagePropertyTIFFDictionary: tiffDict,
