@@ -35,6 +35,29 @@ struct FirstSuccessOnboardingSurfaceTests {
         #expect(!view.contains("Delete source"))
     }
 
+    // MARK: - v5 flow fixes, item 4: the create-library step used to show
+    // three static sentences no matter what name/location were typed, and
+    // its button said only "Create Library" even though clicking it also
+    // enables writing to the library right away.
+
+    @Test("The create-library disclosure renders the real, computed preview instead of static sentences")
+    func createLibraryDisclosureRendersRealPreview() throws {
+        let view = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")
+        #expect(view.contains("@State private var libraryPreview: LibraryCreationPreview?"))
+        #expect(view.contains("libraryPreview.missingRelativePaths"))
+        #expect(view.contains("libraryPreview.existingRelativePaths"))
+        #expect(view.contains("libraryPreview = try? LibraryCreationCommand(root: root, accessMode: .readOnly).preview()"))
+        #expect(view.contains(".onChange(of: chosenParent)"))
+        #expect(view.contains(".onChange(of: libraryName)"))
+    }
+
+    @Test("The Create Library button states plainly that it also enables writing")
+    func createLibraryButtonStatesItEnablesWriting() throws {
+        let view = try source("Sources/AstroUI/Onboarding/FirstSuccessOnboardingView.swift")
+        #expect(view.contains(#"Button("Create Library and Allow Writing")"#))
+        #expect(view.contains("AstroTool will create the folders above now and allow writing to this library."))
+    }
+
     @Test("The visual map explains the hierarchy without requiring paths")
     func libraryMap() throws {
         let map = try source("Sources/AstroUI/Onboarding/LibraryMapView.swift")

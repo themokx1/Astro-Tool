@@ -2629,7 +2629,11 @@
 "Projects and nights · Stacks · Processed images" = "Projektek és éjszakák · Stackek · Feldolgozott képek";
 "Calibration library: darks, flats, and biases" = "Kalibrációs könyvtár: dark, flat és bias képek";
 "AstroTool’s small private index area" = "Az AstroTool kis saját indexterülete";
-"Create Library" = "Könyvtár létrehozása";
+/* v5 flow fixes, item 4: the disclosure now lists the REAL LibraryCreationCommand.preview() result instead of three static sentences, once a name/location is chosen. */
+"Will be created:" = "Létrejön:";
+"Already there:" = "Már megvan:";
+"AstroTool will create the folders above now and allow writing to this library." = "Az AstroTool most létrehozza a fenti mappákat, és engedélyezi az írást ebbe a könyvtárba.";
+"Create Library and Allow Writing" = "Könyvtár létrehozása és írás engedélyezése";
 "Your source files stay unchanged" = "A forrásaid változatlanok maradnak";
 "AstroTool only creates verified copies in your library. It never overwrites a file and offers no standalone delete action." = "Az AstroTool csak ellenőrzött másolatokat készít a könyvtáradban. Soha nem ír felül fájlt, és nem kínál önálló törlési műveletet.";
 "Would you like to copy in your first photos now?" = "Szeretnéd most bemásolni az első fotóidat?";

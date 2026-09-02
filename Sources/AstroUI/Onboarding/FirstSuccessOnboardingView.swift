@@ -20,6 +20,14 @@ public struct FirstSuccessOnboardingView: View {
     @State private var chosenParent: URL?
     @State private var isChoosingParent = false
     @State private var isCreatingLibrary = false
+    /// W-fix (item 4): the real, computed preview of what `makeLibrary()`'s
+    /// own `LibraryCreationCommand.create()` will do at the CURRENT
+    /// name/location -- `LibraryCreationCommand.preview()` is read-only
+    /// (same "never touches the filesystem beyond `fileExists`" contract
+    /// every other V2 preview follows), so recomputing it on every field
+    /// edit costs nothing and never writes anything itself. `nil` only
+    /// before a location is chosen at all.
+    @State private var libraryPreview: LibraryCreationPreview?
 
     private let currentRootURL: URL?
     private let indexedFolders: [String]
@@ -190,20 +198,42 @@ public struct FirstSuccessOnboardingView: View {
                     }
                 }
             }
+            // W-fix (item 4): this used to be three static sentences no
+            // matter what name/location were typed -- `libraryPreview` is
+            // the exact same read-only `LibraryCreationCommand.preview()`
+            // call `makeLibrary()`'s own `create()` reuses, so this list
+            // and what `create()` actually does can never disagree.
             DisclosureGroup("What will be created on my Mac?") {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("Projects and nights · Stacks · Processed images")
-                    Text("Calibration library: darks, flats, and biases")
-                    Text("AstroTool’s small private index area")
+                    if let libraryPreview {
+                        if !libraryPreview.missingRelativePaths.isEmpty {
+                            Text("Will be created:").font(.callout.weight(.semibold))
+                            ForEach(libraryPreview.missingRelativePaths, id: \.self) { path in
+                                Text(verbatim: "• \(path)")
+                            }
+                        }
+                        if !libraryPreview.existingRelativePaths.isEmpty {
+                            Text("Already there:").font(.callout.weight(.semibold))
+                            ForEach(libraryPreview.existingRelativePaths, id: \.self) { path in
+                                Text(verbatim: "• \(path)")
+                            }
+                        }
+                    } else {
+                        Text("Projects and nights · Stacks · Processed images")
+                        Text("Calibration library: darks, flats, and biases")
+                        Text("AstroTool’s small private index area")
+                    }
                 }
                 .font(.callout).foregroundStyle(.secondary).padding(.top, 6)
             }
+            Text("AstroTool will create the folders above now and allow writing to this library.")
+                .font(.caption).foregroundStyle(.secondary)
             safetyStrip
             HStack {
                 Button("Back") { coordinator.returnToLanding() }
                 Spacer()
                 if isCreatingLibrary { ProgressView().controlSize(.small) }
-                Button("Create Library") { makeLibrary() }
+                Button("Create Library and Allow Writing") { makeLibrary() }
                     .buttonStyle(.borderedProminent)
                     .disabled(chosenParent == nil || trimmedLibraryName.isEmpty || isCreatingLibrary)
             }
@@ -216,6 +246,21 @@ public struct FirstSuccessOnboardingView: View {
         ) { result in
             if case .success(let urls) = result { chosenParent = urls.first }
         }
+        .onChange(of: chosenParent) { _, _ in refreshLibraryPreview() }
+        .onChange(of: libraryName) { _, _ in refreshLibraryPreview() }
+    }
+
+    /// Recomputes `libraryPreview` from the current name/location --
+    /// read-only, same as every other V2 preview (`LibraryCreationCommand
+    /// .preview()` never writes; only `create()` does). `nil` before a
+    /// location is chosen, matching the disclosure's own fallback branch.
+    private func refreshLibraryPreview() {
+        guard let chosenParent, !trimmedLibraryName.isEmpty else {
+            libraryPreview = nil
+            return
+        }
+        let root = chosenParent.appendingPathComponent(trimmedLibraryName, isDirectory: true)
+        libraryPreview = try? LibraryCreationCommand(root: root, accessMode: .readOnly).preview()
     }
 
     private var openLibrary: some View {
