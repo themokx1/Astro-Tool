@@ -1357,6 +1357,8 @@
 "AstroTool could not create this session." = "Az AstroTool nem tudta létrehozni ezt a session-t.";
 /* v5 flow fixes, item 2: the capture-import wizard's own inline rendering of NewSessionStore.createErrorMessage, next to previewErrorKey. */
 "AstroTool could not create the structure: %@" = "Az AstroTool nem tudta létrehozni a struktúrát: %@";
+/* v5 library-switch fixes, item 4: the New Session sheet's own inline rendering of NewSessionStore.createErrorMessage -- the OperationHost toast renders behind this sheet. */
+"AstroTool could not create this session: %@" = "Az AstroTool nem tudta létrehozni ezt a session-t: %@";
 "Requires write access. Enable write operations in Settings to create this session." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban ennek a session-nek a létrehozásához.";
 "Requires write access. Enable write operations in Settings to undo this." = "Írási hozzáférést igényel. Engedélyezd az írási műveleteket a Beállításokban ennek a visszavonásához.";
 "The folder is no longer empty — it was not removed." = "A mappa már nem üres — nem lett eltávolítva.";

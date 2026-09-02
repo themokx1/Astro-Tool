@@ -398,6 +398,21 @@ public struct NewSessionView: View {
                             .font(.caption).foregroundStyle(AstroTokens.Color.attention)
                             .accessibilityIdentifier("v2.new-session.disabled-reason")
                     }
+                    // v5 library-switch fixes (item 4): `createErrorMessage`
+                    // was added for the capture-import wizard, but THIS
+                    // sheet still relied on the `OperationHost` toast alone
+                    // -- and that overlay is mounted on the window behind
+                    // this sheet, so a failed Create looked like a no-op
+                    // here too. Rendered right where every other validation
+                    // message for these fields already appears.
+                    if let createErrorMessage = store.createErrorMessage {
+                        Label(
+                            "AstroTool could not create this session: \(createErrorMessage)",
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.caption).foregroundStyle(AstroTokens.Color.critical)
+                        .accessibilityIdentifier("v2.new-session.create-error")
+                    }
                     footer
                 } else {
                     receiptSection

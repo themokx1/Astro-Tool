@@ -233,4 +233,30 @@ struct NewSessionStoreTests {
         store.refreshPreview()
         #expect(store.createErrorMessage == nil)
     }
+
+    // MARK: - v5 library-switch fixes, item 4: `createErrorMessage` was
+    // added for the capture-import wizard, but `NewSessionView`'s OWN sheet
+    // still relied on the `OperationHost` toast -- which renders on a layer
+    // mounted BEHIND this sheet, so a failed "Create Session" looked like a
+    // no-op there too. This repo has no SwiftUI rendering harness (see
+    // `V2HonestSurfacesTests`' doc comment), so the view half is pinned the
+    // established way: a literal source-text assertion.
+
+    @Test("NewSessionView's own sheet renders createErrorMessage inline, next to its other validation messages")
+    func newSessionViewRendersCreateErrorMessageInline() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // NewSessionStoreTests.swift -> AstroUITests/
+            .deletingLastPathComponent() // AstroUITests -> Tests/
+            .deletingLastPathComponent() // Tests -> repository root
+        let source = try String(
+            contentsOf: repositoryRoot.appendingPathComponent("Sources/AstroUI/Features/Library/NewSessionView.swift"),
+            encoding: .utf8
+        )
+        // Only the VIEW half: the store half declares and assigns the
+        // property and always would match a naive whole-file grep.
+        let split = try #require(source.range(of: "public struct NewSessionView"))
+        let viewSource = source[split.lowerBound...]
+        #expect(viewSource.contains("store.createErrorMessage"))
+        #expect(viewSource.contains(#"accessibilityIdentifier("v2.new-session.create-error")"#))
+    }
 }
