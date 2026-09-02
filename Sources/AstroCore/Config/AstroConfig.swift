@@ -261,10 +261,29 @@ public struct StatsRule: Codable, Equatable, Sendable {
         case excludeLabels, gapThresholdSeconds, collectingThresholdSeconds
     }
 
+    /// What the DECODER falls back to when a config file that already exists
+    /// has no `excludeLabels` key -- deliberately the legacy single label,
+    /// NOT `init()`'s wider default. That config was written when only
+    /// `_hibas` excluded a night, and every total the user has seen since
+    /// counted their `_bad`/`_reject`/`_schlecht` nights IN; adopting the
+    /// wide list behind their back on the next launch would silently drop
+    /// those nights from integration totals they never asked to exclude.
+    /// A brand-new library (no config file, so a plain `StatsRule()`) gets
+    /// the wide default instead -- there is no history to change there.
+    static let legacyDecodedExcludeLabels = ["hibas"]
+
+    /// The whole rule as an EXISTING config file with no `stats` block at
+    /// all should decode -- same reasoning as
+    /// `legacyDecodedExcludeLabels`, which it carries.
+    static var legacyDecoded: StatsRule {
+        StatsRule(excludeLabels: legacyDecodedExcludeLabels)
+    }
+
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = StatsRule()
-        self.excludeLabels = try container.decodeIfPresent([String].self, forKey: .excludeLabels) ?? defaults.excludeLabels
+        self.excludeLabels = try container.decodeIfPresent([String].self, forKey: .excludeLabels)
+            ?? Self.legacyDecodedExcludeLabels
         self.gapThresholdSeconds = try container.decodeIfPresent(Double.self, forKey: .gapThresholdSeconds) ?? defaults.gapThresholdSeconds
         self.collectingThresholdSeconds = try container.decodeIfPresent(Double.self, forKey: .collectingThresholdSeconds) ?? defaults.collectingThresholdSeconds
     }
@@ -778,7 +797,10 @@ public struct AstroConfig: Codable, Equatable, Sendable {
         self.wideField = try container.decodeIfPresent(WideFieldRule.self, forKey: .wideField) ?? defaults.wideField
         self.calib = try container.decodeIfPresent(CalibRule.self, forKey: .calib) ?? defaults.calib
         self.rating = try container.decodeIfPresent(RatingRule.self, forKey: .rating) ?? defaults.rating
-        self.stats = try container.decodeIfPresent(StatsRule.self, forKey: .stats) ?? defaults.stats
+        // `StatsRule.legacyDecoded`, not `defaults.stats`: an existing
+        // config file with no `stats` block must not silently adopt the
+        // widened `excludeLabels` default -- see that property's own doc.
+        self.stats = try container.decodeIfPresent(StatsRule.self, forKey: .stats) ?? StatsRule.legacyDecoded
         self.site = try container.decodeIfPresent(SiteRule.self, forKey: .site) ?? defaults.site
         // R11-T15/F16: see `sites`'s own doc comment for the full backward-
         // compatibility rationale -- an explicit `"sites"` key always wins

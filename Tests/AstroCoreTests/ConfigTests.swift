@@ -563,7 +563,10 @@ import Testing
     #expect(config.intentional == IntentionalPatterns())
     #expect(config.wideField == WideFieldRule())
     #expect(config.calib == CalibRule())
-    #expect(config.stats == StatsRule())
+    // Not `StatsRule()`: an existing config file with no `stats` block
+    // deliberately keeps the legacy `excludeLabels` -- see
+    // `anExistingConfigWithoutExcludeLabelsKeepsTheLegacySingleLabel`.
+    #expect(config.stats == StatsRule.legacyDecoded)
     #expect(config.site == SiteRule())
     #expect(config.weather == WeatherRule())
     #expect(config.notification == NotificationRule())
@@ -578,7 +581,13 @@ import Testing
 @Test func decodingEmptyJSONObjectYieldsAllDefaults() throws {
     let data = Data("{}".utf8)
     let config = try JSONDecoder().decode(AstroConfig.self, from: data)
-    #expect(config == AstroConfig())
+    var expected = AstroConfig()
+    // The one deliberate exception to "a decoded empty object equals a fresh
+    // config": a config file that EXISTS keeps the legacy `excludeLabels`
+    // instead of silently adopting the widened default -- see
+    // `anExistingConfigWithoutExcludeLabelsKeepsTheLegacySingleLabel`.
+    expected.stats = StatsRule.legacyDecoded
+    #expect(config == expected)
 }
 
 @Test func decodingUnknownKeysIsNotAnError() throws {
@@ -593,6 +602,41 @@ import Testing
     let config = try JSONDecoder().decode(AstroConfig.self, from: data)
     #expect(config.wideField.extensions == ["cr3"])
     #expect(config.wideField.maxFocalLengthMM == 135)
+}
+
+/// The widened `excludeLabels` default ("bad"/"reject"/"rejected"/
+/// "schlecht" on top of "hibas") may only apply to a BRAND-NEW config. An
+/// existing library's config file that never mentioned the key was written
+/// when only `_hibas` excluded a night; adopting the wide list on the next
+/// launch would silently drop the user's `_bad`/`_reject` nights out of
+/// totals they have always been counted in. So the DECODER falls back to
+/// the legacy single label, whether the key or the whole `stats` block is
+/// missing -- while a fresh `AstroConfig()`/`StatsRule()` keeps the wide
+/// default.
+@Test func anExistingConfigWithoutExcludeLabelsKeepsTheLegacySingleLabel() throws {
+    let withoutKey = try JSONDecoder().decode(
+        AstroConfig.self,
+        from: Data(#"{ "stats": { "gapThresholdSeconds": 0 } }"#.utf8)
+    )
+    #expect(withoutKey.stats.excludeLabels == ["hibas"])
+
+    let withoutStatsBlock = try JSONDecoder().decode(
+        AstroConfig.self,
+        from: Data(#"{ "rootPath": "/tmp/lib" }"#.utf8)
+    )
+    #expect(withoutStatsBlock.stats.excludeLabels == ["hibas"])
+
+    let bareRule = try JSONDecoder().decode(StatsRule.self, from: Data("{}".utf8))
+    #expect(bareRule.excludeLabels == ["hibas"])
+
+    // A new library (no config file at all) still gets the wide default.
+    #expect(AstroConfig().stats.excludeLabels == ["hibas", "bad", "reject", "rejected", "schlecht"])
+    // An explicit key is always honored verbatim.
+    let explicit = try JSONDecoder().decode(
+        AstroConfig.self,
+        from: Data(#"{ "stats": { "excludeLabels": ["clouds"] } }"#.utf8)
+    )
+    #expect(explicit.stats.excludeLabels == ["clouds"])
 }
 
 @Test func decodingPartialStatsRuleFillsMissingKeyWithDefault() throws {
