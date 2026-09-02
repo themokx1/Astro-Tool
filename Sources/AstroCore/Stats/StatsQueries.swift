@@ -202,11 +202,18 @@ public enum StatsQueries {
             }
         }
 
-        // Gross: the OLD (pre-R4-1) behavior, exactly -- every session
-        // light-role file, no dedup, no exclusions. Kept so callers can show
-        // "you have X raw, only Y is real".
+        // Gross: the OLD (pre-R4-1) behavior -- every session light-role
+        // file, no dedup, no exclusions. Kept so callers can show "you have
+        // X raw, only Y is real".
+        //
+        // Filtered to `FrameSet.frameExtensions` all the same: this is the
+        // only exposure sum in the codebase taken over raw light-role rows
+        // instead of `FrameSet`'s buckets, and the scanner now captures Exif
+        // from jpg/jpeg as well -- so a JPEG preview (or any other
+        // meta-bearing non-frame file) sitting next to the real frames would
+        // otherwise be added to the total as if it were another exposure.
         var grossSeconds: Double = 0
-        for file in sessionLights {
+        for file in sessionLights where FrameSet.frameExtensions.contains(file.ext.lowercased()) {
             if let exptime = (file.id.flatMap { metaByFileID[$0] })?.exptime {
                 grossSeconds += exptime
             }

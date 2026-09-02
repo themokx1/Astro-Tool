@@ -282,6 +282,36 @@ private struct StatsFixture {
     #expect(stats.grossIntegrationSeconds == 600.0)
 }
 
+/// `grossIntegrationSeconds` is the only exposure sum taken over raw
+/// light-role rows rather than `FrameSet`'s frame buckets, so it had no
+/// extension filter at all. Now that the scanner reads Exif from jpg/jpeg
+/// too, a JPEG preview exported next to the frames gets a real `exptime`
+/// row -- and used to be added to the gross total as if it were another
+/// exposure.
+@Test func grossIntegrationIgnoresAJPEGPreviewSittingNextToTheRealFrames() throws {
+    let fixture = try StatsFixture.make()
+    defer { fixture.cleanup() }
+
+    try fixture.writeFITSLight(
+        "sessions/T1/2026-01-10/lights/l1.fit", exptime: 300.0, instrume: "Cam", filter: "L"
+    )
+    try fixture.writePlainTextFile("sessions/T1/2026-01-10/lights/l1_preview.jpg")
+    try fixture.writePlainTextFile("sessions/T1/2026-01-10/lights/notes.txt")
+
+    try fixture.scan()
+
+    // ImageIO cannot read the dummy file, so the Exif row the real scanner
+    // would have written for a genuine JPEG is inserted directly here.
+    let previewID = try #require(
+        try fixture.db.file(path: "sessions/T1/2026-01-10/lights/l1_preview.jpg")?.id
+    )
+    try fixture.db.upsertFITSMeta(FITSMetaRecord(fileID: previewID, exptime: 300.0))
+
+    let stats = try #require(try StatsQueries.target("T1", db: fixture.db, config: fixture.config))
+    #expect(stats.grossIntegrationSeconds == 300.0)
+    #expect(stats.totalIntegrationSeconds == 300.0)
+}
+
 @Test func statsDedupesCR3AndTIFPairCountingItOnce() throws {
     let fixture = try StatsFixture.make()
     defer { fixture.cleanup() }
