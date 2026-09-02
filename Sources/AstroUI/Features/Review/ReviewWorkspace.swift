@@ -19,6 +19,20 @@ public struct ReviewWorkspace: View {
     /// evaluation would be the exact "heavy query in a computed getter" shape
     /// that has crashed this app before.
     @State private var lowAltitudeInsight: LowAltitudeQC?
+    /// The frame table's rows, recomputed from `.onChange` of every input
+    /// that feeds them (selected series, measured quality, capture-group
+    /// filter, sort order) -- never re-derived in `body`. `body` used to
+    /// call `qualityRows(for:)` directly, which mapped EVERY decision of
+    /// the series against `store.qualityByPath`, filtered it and SORTED it
+    /// on every single body pass (~2800 frames in the owner's own
+    /// library). Same fix, same reason as `NightsStore.visibleNights` and
+    /// `PlanningStore.filteredRecommendations`.
+    @State private var frameRows: [ReviewFrameRow] = []
+    /// The capture-group filter menu's own contents -- built by the same
+    /// recompute, for the same reason: `body` called `captureSlugs(in:)`
+    /// twice per pass, each call re-reading and re-sorting a `Set` over
+    /// every decision.
+    @State private var availableCaptureSlugs: [String] = []
     @Environment(OperationHost.self) private var operationHost
     @Environment(WorkspaceActionCenter.self) private var workspaceActionCenter
     /// Wave 4 (post-20014) fix: see `ProjectWorkspaceView.actionOwner`'s own
@@ -107,18 +121,29 @@ public struct ReviewWorkspace: View {
         )
         .onChange(of: store.selectedSeriesID) { _, _ in
             selectedDecisionIDs.removeAll()
+            recomputeFrameRows()
             refreshLowAltitudeInsight()
         }
+        .onChange(of: store.snapshot) { _, _ in recomputeFrameRows() }
+        // Reads through the pure `rows(in:captureSlug:)` helper rather than
+        // the `frameRows` state the recompute above just wrote: within one
+        // update pass the ordering of two `.onChange` handlers is not
+        // something to depend on.
         .onChange(of: store.snapshot) { _, _ in
             guard let blinkReviewStore, let selected = store.selectedSeries else { return }
-            blinkReviewStore.refresh(decisions: qualityRows(for: selected).map(\.decision))
+            blinkReviewStore.refresh(
+                decisions: rows(in: selected, captureSlug: selectedCaptureSlug).map(\.decision)
+            )
         }
         .onChange(of: store.snapshot) { _, _ in refreshLowAltitudeInsight() }
+        .onChange(of: selectedCaptureSlug) { _, _ in recomputeFrameRows() }
+        .onChange(of: sortOrder) { _, _ in recomputeFrameRows() }
         // `qualityByPath` (unlike `snapshot`) updates a beat later, once
         // `ReviewStore.refreshQuality()`'s own await settles -- scores are
         // exactly what this insight ranks frames by, so it needs its own
         // trigger rather than piggy-backing on the `snapshot` change above,
         // which fires before scores are actually in hand on first load.
+        .onChange(of: store.qualityByPath) { _, _ in recomputeFrameRows() }
         .onChange(of: store.qualityByPath) { _, _ in refreshLowAltitudeInsight() }
         .sheet(isPresented: Binding(
             get: { blinkReviewStore != nil },
@@ -146,7 +171,10 @@ public struct ReviewWorkspace: View {
         // (below) derives from `operationHost.activeOperations`, which
         // changes independently of series selection whenever a rating run
         // starts or finishes.
-        .onAppear { publishWorkspaceActions() }
+        .onAppear {
+            publishWorkspaceActions()
+            recomputeFrameRows()
+        }
         .onChange(of: store.selectedSeries) { _, _ in publishWorkspaceActions() }
         .onChange(of: operationHost.activeOperations) { _, _ in publishWorkspaceActions() }
         .onDisappear { workspaceActionCenter.clear(owner: actionOwner) }
@@ -187,13 +215,14 @@ public struct ReviewWorkspace: View {
     }
 
     /// Opens the blink-review sheet on `selected`'s frames, in EXACTLY the
-    /// order/filter the frame table is currently showing (`qualityRows`
-    /// already applies `selectedCaptureSlug` + `sortOrder`) -- mirrors V1
+    /// order/filter the frame table is currently showing (`frameRows` is
+    /// literally the table's own data, already narrowed by
+    /// `selectedCaptureSlug` and sorted by `sortOrder`) -- mirrors V1
     /// `FrameReviewSheet`'s own "never re-sorts or re-filters" contract.
     /// Starts on the single selected row when there is one, otherwise the
     /// first frame.
     private func openBlinkReview(_ selected: ReviewSeriesSnapshot) {
-        let rows = qualityRows(for: selected)
+        let rows = frameRows
         guard !rows.isEmpty else { return }
         let initialPath = selectedDecisionIDs.count == 1
             ? rows.first(where: { selectedDecisionIDs.contains($0.decision.id) })?.decision.relativePath
@@ -309,7 +338,8 @@ public struct ReviewWorkspace: View {
     @ViewBuilder
     private var frameReview: some View {
         if let selected = store.selectedSeries {
-            let rows = qualityRows(for: selected)
+            // Read, never derived: see `frameRows`' own doc comment.
+            let rows = frameRows
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -325,13 +355,13 @@ public struct ReviewWorkspace: View {
                 .padding(AstroTokens.Spacing.standard)
                 Divider()
                 HStack(spacing: 10) {
-                    if !captureSlugs(in: selected).isEmpty {
+                    if !availableCaptureSlugs.isEmpty {
                         // Same `String?` verbatim leak as the night filter
                         // `Menu` above -- see its own comment.
                         Menu {
                             Button("All capture groups") { selectedCaptureSlug = nil }
                             Divider()
-                            ForEach(captureSlugs(in: selected), id: \.self) { slug in
+                            ForEach(availableCaptureSlugs, id: \.self) { slug in
                                 Button(slug) { selectedCaptureSlug = slug }
                             }
                         } label: {
@@ -479,10 +509,10 @@ public struct ReviewWorkspace: View {
 
     /// The Morning Triage Digest for whichever rows the table is currently
     /// showing -- built straight from `rows` (already joined against
-    /// `store.qualityByPath` by `qualityRows(for:)` above), never a second
+    /// `store.qualityByPath` by `recomputeFrameRows()`), never a second
     /// read of quality data. Pure/cheap (in-memory grouping over frames
     /// already in hand, no DB access), so calling it directly from `body`
-    /// alongside `qualityRows(for:)` carries none of the "heavy query in a
+    /// alongside the already-computed `frameRows` carries none of the "heavy query in a
     /// computed getter" risk a DB-backed call would.
     private func triageDigest(for rows: [ReviewFrameRow]) -> TriageDigestQuery {
         TriageDigestQuery(frames: rows.map {
@@ -492,7 +522,7 @@ public struct ReviewWorkspace: View {
 
     /// Ideation #10: re-derives `lowAltitudeInsight` for whichever series is
     /// currently selected, over EVERY decision in that series (not narrowed
-    /// by `selectedCaptureSlug` the way `qualityRows(for:)`/`triageDigest(for:)`
+    /// by `selectedCaptureSlug` the way `frameRows`/`triageDigest(for:)`
     /// are) -- this is a whole-session sky-geometry signal, not a per-capture-
     /// group one. Best-effort, matching `ReviewStore.refreshQuality()`'s own
     /// stance: a query failure (no index DB yet, e.g.) simply clears the
@@ -509,14 +539,36 @@ public struct ReviewWorkspace: View {
         lowAltitudeInsight = (try? query.lowAltitudeQC(frames: inputs)) ?? nil
     }
 
+    /// Rebuilds `frameRows`/`availableCaptureSlugs` for whatever the store
+    /// and the two filter/sort controls currently say. Called only from
+    /// `.onAppear`/`.onChange` -- every input has its own trigger above --
+    /// so the render path just reads the arrays.
+    private func recomputeFrameRows() {
+        guard let selected = store.selectedSeries else {
+            frameRows = []
+            availableCaptureSlugs = []
+            return
+        }
+        let slugs = captureSlugs(in: selected)
+        availableCaptureSlugs = slugs
+        // A capture-group filter the newly loaded data no longer offers
+        // would otherwise hide every row with no visible way back.
+        let slug = selectedCaptureSlug.flatMap { slugs.contains($0) ? $0 : nil }
+        if slug != selectedCaptureSlug { selectedCaptureSlug = slug }
+        frameRows = rows(in: selected, captureSlug: slug)
+    }
+
     /// Every frame decision of `selected`, joined with its measured quality
-    /// (`store.qualityByPath`, keyed by `relativePath`) and narrowed by
-    /// `selectedCaptureSlug` when one is chosen -- the Table's own data
-    /// source, so sorting/filtering only ever touches this one array.
-    private func qualityRows(for selected: ReviewSeriesSnapshot) -> [ReviewFrameRow] {
+    /// (`store.qualityByPath`, keyed by `relativePath`), narrowed by
+    /// `captureSlug` when one is given and sorted by the table's current
+    /// `sortOrder`. Pure over already-loaded state, and deliberately takes
+    /// the capture slug as a PARAMETER rather than reading the `@State`
+    /// directly, so a caller mid-update need not depend on when that state
+    /// write becomes visible.
+    private func rows(in selected: ReviewSeriesSnapshot, captureSlug: String?) -> [ReviewFrameRow] {
         selected.decisions
             .map { ReviewFrameRow(decision: $0, quality: store.quality(for: $0.relativePath)) }
-            .filter { selectedCaptureSlug == nil || $0.captureSlug == selectedCaptureSlug }
+            .filter { captureSlug == nil || $0.captureSlug == captureSlug }
             .sorted(using: sortOrder)
     }
 

@@ -222,6 +222,52 @@ struct ReviewWorkspaceSurfaceTests {
         )
     }
 
+    @Test("The frame table reads stored rows, never re-derives them in body")
+    func frameRowsAreRecomputedOutsideBody() throws {
+        let source = try Self.source()
+        // `qualityRows(for:)` mapped, filtered and SORTED every decision of
+        // the series (~2800 frames in the owner's own library) on every
+        // body pass, from two separate call sites; `captureSlugs(in:)`
+        // rebuilt and re-sorted a `Set` twice more. The function is gone.
+        #expect(
+            !source.contains("private func qualityRows"),
+            "the body-path row derivation must stay deleted, not come back under its old name"
+        )
+        let frameReview = try #require(
+            source.components(separatedBy: "private var frameReview: some View {").dropFirst().first?
+                .components(separatedBy: "\n    /// The Morning Triage Digest").first
+        )
+        #expect(frameReview.contains("let rows = frameRows"))
+        #expect(frameReview.contains("availableCaptureSlugs"))
+        #expect(
+            !frameReview.contains("captureSlugs(in:"),
+            "the capture-group menu reads the stored slugs, it does not rebuild them per pass"
+        )
+        #expect(!frameReview.contains(".sorted(using:"), "sorting belongs to the recompute, not the render path")
+
+        // Every input that changes what the table shows has to drive the
+        // recompute, or the stored rows go stale.
+        for trigger in [
+            "onChange(of: store.selectedSeriesID)",
+            "onChange(of: store.snapshot) { _, _ in recomputeFrameRows() }",
+            "onChange(of: store.qualityByPath) { _, _ in recomputeFrameRows() }",
+            "onChange(of: selectedCaptureSlug) { _, _ in recomputeFrameRows() }",
+            "onChange(of: sortOrder) { _, _ in recomputeFrameRows() }",
+        ] {
+            #expect(source.contains(trigger), "missing recompute trigger: \(trigger)")
+        }
+        let selectionChange = try #require(
+            source.components(separatedBy: "onChange(of: store.selectedSeriesID)").dropFirst().first?
+                .components(separatedBy: "\n        }").first
+        )
+        #expect(selectionChange.contains("recomputeFrameRows()"))
+        let onAppear = try #require(
+            source.components(separatedBy: ".onAppear {").dropFirst().first?
+                .components(separatedBy: "\n        }").first
+        )
+        #expect(onAppear.contains("recomputeFrameRows()"), "the initial load needs one too")
+    }
+
     @Test("A failed verdict write is reported through OperationHost and keeps the selection")
     func verdictFailureIsReported() throws {
         let source = try Self.source()
