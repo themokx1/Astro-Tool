@@ -625,13 +625,16 @@ public struct AstroBinRule: Codable, Equatable, Sendable {
 public struct AstroConfig: Codable, Equatable, Sendable {
     public var rootPath: String
     /// Bare directory names (no `/`) excluded from scanning, matched
-    /// case-insensitively, but ONLY at the library root -- a target,
-    /// capture, or filter folder several levels down that happens to share
-    /// the name (e.g. a target literally called "Tools") is never affected.
-    /// An entry that itself contains `/` is instead matched against the
-    /// full root-relative path at any depth, the same way `excludedPaths`
-    /// works, for a user who wants to hide one specific deeper folder by
-    /// name. See `ExclusionRules.isExcludedDir`.
+    /// case-insensitively. The SHIPPED default (`"tools"`) matches ONLY at
+    /// the library root -- a target, capture, or filter folder several
+    /// levels down that happens to share the name (e.g. a target literally
+    /// called "Tools") is never affected. A name the user ADDS matches at
+    /// any depth, which is what makes an entry like `"Siril_work"` or
+    /// `"tmp"` do the job it is written for. An entry that itself contains
+    /// `/` is instead matched against the full root-relative path at any
+    /// depth, the same way `excludedPaths` works, for hiding one specific
+    /// deeper folder without hiding its name everywhere. See
+    /// `ExclusionRules.isExcludedDir`.
     public var excludedDirNames: [String]
     /// Root-relative paths to exclude from scanning, beyond `excludedDirNames`.
     public var excludedPaths: [String]

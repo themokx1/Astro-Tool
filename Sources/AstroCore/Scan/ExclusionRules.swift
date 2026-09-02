@@ -19,25 +19,45 @@ struct ExclusionRules {
         return isExcludedPath(relativePath)
     }
 
-    // A bare name (no "/") in `excludedDirNames` only hides a directory at
-    // the library root -- matching it at every depth would make a
-    // target/capture/filter folder that happens to share the name (e.g. a
-    // target literally called "Tools") vanish silently from every session,
-    // not just the root housekeeping folder the default ("tools") is meant
-    // to hide. An entry that contains "/" is a path, honored at any depth by
+    // A bare name (no "/") that the tool SHIPS with -- see
+    // `shippedDefaultDirNames` -- only hides a directory at the library
+    // root: matching "tools" at every depth would make a target/capture/
+    // filter folder that happens to share the name (e.g. a target literally
+    // called "Tools") vanish silently from every session, and the default
+    // exists purely to hide the one root housekeeping folder.
+    //
+    // A bare name the USER added keeps matching at ANY depth. They typed
+    // "Siril_work"/"tmp" exactly because those folders sit deep inside their
+    // sessions, and that is how such an entry always behaved -- narrowing it
+    // to the root would silently start indexing everything underneath on
+    // their next scan.
+    //
+    // An entry that contains "/" is a path, honored at any depth by
     // comparing it against the directory's own full relative path -- the
-    // escape hatch for a user who really does want one specific deeper
-    // folder hidden by name.
+    // way to hide one specific deeper folder without hiding its name
+    // everywhere.
     private func isExcludedDirName(name: String, relativePath: String) -> Bool {
         let isTopLevel = !relativePath.contains("/")
         for excluded in config.excludedDirNames {
             if excluded.contains("/") {
                 if relativePath.caseInsensitiveCompare(excluded) == .orderedSame { return true }
-            } else if isTopLevel, excluded.caseInsensitiveCompare(name) == .orderedSame {
-                return true
+                continue
             }
+            guard excluded.caseInsensitiveCompare(name) == .orderedSame else { continue }
+            if isTopLevel || !Self.isShippedDefaultDirName(excluded) { return true }
         }
         return false
+    }
+
+    /// The bare `excludedDirNames` entries the tool ships with, and so the
+    /// only ones limited to the library root. Read off `AstroConfig()`'s own
+    /// default so the two can never drift apart.
+    private static let shippedDefaultDirNames: Set<String> = Set(
+        AstroConfig().excludedDirNames.map { $0.lowercased() }
+    )
+
+    private static func isShippedDefaultDirName(_ name: String) -> Bool {
+        shippedDefaultDirNames.contains(name.lowercased())
     }
 
     func isExcludedPath(_ relativePath: String) -> Bool {
