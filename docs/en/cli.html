@@ -51,6 +51,16 @@
   <div class="panels">
 
     <div class="panel">
+      <h2><span class="dot" aria-hidden="true"></span>Language (<code>ASTROTOOL_LANG</code>)</h2>
+      <div class="cmdgroup">
+        <div class="cmd">
+          <div class="desc"><code>--json</code> output is always English, snake_case. Human-readable (non-<code>--json</code>) output picks its language from <code>ASTROTOOL_LANG</code> (<code>en</code> or <code>hu</code>) if set; otherwise from <code>LC_ALL</code>/<code>LC_MESSAGES</code>/<code>LANG</code> (a locale starting with <code>hu</code> selects Hungarian); otherwise from the system's own language setting; English is the default.</div>
+          <pre class="code">ASTROTOOL_LANG=en astrotool config show</pre>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
       <h2><span class="dot" aria-hidden="true"></span>Exit codes</h2>
       <div class="table-scroll">
       <table>

@@ -182,6 +182,28 @@ struct PublicWebsiteSurfaceTests {
         #expect(support.contains("Beállítások"))
     }
 
+    @Test("CLI reference documents every top-level command and the language override")
+    func cliReferenceDocumentsEveryCommand() throws {
+        // R11+: docs/cli.html used to cover only ~13 of astrotool's 34
+        // top-level commands -- this pins a representative sample of the
+        // ones that were previously undocumented, plus the exit-code list
+        // and the ASTROTOOL_LANG note added alongside CLI localization.
+        let hungarian = try source("docs/cli.html")
+        for text in [
+            "verify", "cleanup", "ack", "nights", "trends", "goal", "note",
+            "sensor", "ingest-dss", "expose", "health", "night-info",
+            "projects", "panels", "stacks", "target-report", "search",
+            "ASTROTOOL_LANG", "Kilépési kódok",
+        ] {
+            #expect(hungarian.contains(text), Comment(rawValue: text))
+        }
+
+        let english = try source("docs/en/cli.html")
+        for text in ["ASTROTOOL_LANG", "Exit codes"] {
+            #expect(english.contains(text), Comment(rawValue: text))
+        }
+    }
+
     @Test("Install guides describe the signed Universal stable release")
     func accurateInstallGuides() throws {
         for path in ["docs/install.html", "docs/en/install.html"] {

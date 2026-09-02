@@ -78,7 +78,15 @@ private final class OutputBox: @unchecked Sendable {
 /// Suspending instead of blocking costs nothing here (this file runs in
 /// about the same wall time either way -- subprocess spawn dominates) and
 /// hands those ten threads back to the rest of the run.
-private func runCLI(_ args: [String]) async throws -> CLIResult {
+/// `env` merges into (and overrides) the subprocess's inherited environment.
+/// `ASTROTOOL_LANG` always defaults to `"hu"` here -- independent of
+/// whatever `LANG`/`LC_ALL`/`Locale.current` happen to be on the machine
+/// actually running the test suite -- so every pre-existing Hungarian-text
+/// assertion in this file stays valid regardless of the developer's own
+/// locale. Pass `env: ["ASTROTOOL_LANG": "en"]` (or `"LANG": "hu_HU.UTF-8"`
+/// with no `ASTROTOOL_LANG`, to test the locale-fallback path itself) to
+/// override it for one call.
+private func runCLI(_ args: [String], env: [String: String] = [:]) async throws -> CLIResult {
     // The throttle is not optional. Blocking used to cap this file at ~10
     // subprocesses in flight (one per cooperative thread) purely as a side
     // effect of the bug above; suspending removes that accidental cap, and
@@ -88,7 +96,7 @@ private func runCLI(_ args: [String]) async throws -> CLIResult {
     // this file always had, and it is not competing with anything now.
     await CLISubprocessLimiter.shared.acquire()
     do {
-        let result = try await runCLIOffTheCooperativePool(args)
+        let result = try await runCLIOffTheCooperativePool(args, env: env)
         await CLISubprocessLimiter.shared.release()
         return result
     } catch {
@@ -140,11 +148,11 @@ private actor CLISubprocessLimiter {
 /// `astrotool` processes actually alive). The sequence below is byte-for-byte
 /// the one that has always worked; the only thing that changed is which
 /// thread pool it blocks.
-private func runCLIOffTheCooperativePool(_ args: [String]) async throws -> CLIResult {
+private func runCLIOffTheCooperativePool(_ args: [String], env: [String: String]) async throws -> CLIResult {
     try await withCheckedThrowingContinuation { continuation in
         DispatchQueue.global(qos: .utility).async {
             do {
-                continuation.resume(returning: try runCLIBlocking(args))
+                continuation.resume(returning: try runCLIBlocking(args, env: env))
             } catch {
                 continuation.resume(throwing: error)
             }
@@ -155,10 +163,23 @@ private func runCLIOffTheCooperativePool(_ args: [String]) async throws -> CLIRe
 /// Reads stderr on a second background queue concurrently with the
 /// synchronous stdout read, so a command that writes a lot to one stream
 /// while the other pipe's buffer fills can never deadlock this helper.
-private func runCLIBlocking(_ args: [String]) throws -> CLIResult {
+private func runCLIBlocking(_ args: [String], env: [String: String]) throws -> CLIResult {
     let process = Process()
     process.executableURL = astrotoolBinary()
     process.arguments = args
+    var environment = ProcessInfo.processInfo.environment
+    environment["ASTROTOOL_LANG"] = "hu"
+    for (key, value) in env {
+        // An empty override value means "unset this" -- e.g. a test of the
+        // LANG-only locale-fallback path needs ASTROTOOL_LANG absent
+        // entirely, not merely overridden to some other explicit value.
+        if value.isEmpty {
+            environment.removeValue(forKey: key)
+        } else {
+            environment[key] = value
+        }
+    }
+    process.environment = environment
 
     let outPipe = Pipe()
     let errPipe = Pipe()
@@ -257,6 +278,43 @@ private func makeTempRoot(_ label: String) throws -> URL {
     ])
     #expect(refused.exitCode == 1)
     #expect(refused.stderr.contains("--plan and --yes are required"))
+}
+
+/// `SessionConversionExecutor.apply`'s stale-preview `AstroError.invalidInput`
+/// (Sources/AstroCore/Capture/SessionConversionExecutor.swift) used to be a
+/// Hungarian-only sentence -- the one safety check standing between "apply"
+/// and moving files out from under a session that changed after the preview
+/// was taken, unreadable to a non-Hungarian user. It's plain English now
+/// (unconditionally -- `AstroCore` has no `CLILanguage` of its own), so this
+/// asserts on the English wording regardless of `ASTROTOOL_LANG`.
+@Test func sessionConvertApplyWithStalePreviewExitsWithEnglishError() async throws {
+    let root = try makeTempRoot("convert-stale-preview")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let sessionDir = root.appendingPathComponent("sessions/IC_1396/2026-08-08/lights_osc", isDirectory: true)
+    let light = sessionDir.appendingPathComponent("light_001.fit")
+    try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+    try Data("not-a-real-fits-but-indexable".utf8).write(to: light)
+    #expect(try await runCLI(["scan", "--root", root.path]).exitCode == 0)
+
+    let planURL = root.appendingPathComponent("preview-plan.json")
+    let preview = try await runCLI([
+        "session-convert", "plan", "--root", root.path, "--target", "IC_1396",
+        "--date", "2026-08-08", "--out", planURL.path, "--json"
+    ])
+    #expect(preview.exitCode == 0, "stderr: \(preview.stderr)")
+
+    // Changes the session's on-disk fingerprint after the preview was taken
+    // (a new file the plan never saw) -- exactly the "external program, new
+    // scan, or file operation" scenario the check exists to catch.
+    try Data("not-a-real-fits-but-indexable-2".utf8).write(to: sessionDir.appendingPathComponent("light_002.fit"))
+
+    let applied = try await runCLI([
+        "session-convert", "apply", "--root", root.path, "--plan", planURL.path, "--yes"
+    ])
+    #expect(applied.exitCode == 1, "stdout: \(applied.stdout), stderr: \(applied.stderr)")
+    #expect(applied.stderr.contains("changed since the preview"))
+    #expect(applied.stderr.contains("Refresh the conversion preview"))
+    #expect(!applied.stderr.contains("megváltoztak az előnézet"))
 }
 
 // MARK: - R11-T14/F9 verify fixture helpers
@@ -2556,6 +2614,55 @@ private func writeTrendLightFITS(
     #expect(!result.stdout.contains("{"))
 }
 
+@Test func configShowHumanReadableWithEnglishLangPrintsEnglishSectionHeaders() async throws {
+    let root = try makeTempRoot("config-show-human-en")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try await runCLI(["config", "show", "--root", root.path], env: ["ASTROTOOL_LANG": "en"])
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("rootPath: \(root.path)"))
+    #expect(result.stdout.contains("Calibration (calib)"))
+    #expect(result.stdout.contains("Root"))
+    #expect(!result.stdout.contains("Kalibráció"))
+    #expect(!result.stdout.contains("Gyökér"))
+}
+
+/// `ASTROTOOL_LANG` is an explicit override and must win over the
+/// locale-derived fallback (R1/Task 1's resolution order) -- a Hungarian
+/// `LANG` in the environment must not leak Hungarian output back in once the
+/// user has explicitly asked for English.
+@Test func explicitEnglishLangOverridesHungarianLocaleEnvironment() async throws {
+    let root = try makeTempRoot("config-show-lang-override")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try await runCLI(
+        ["config", "show", "--root", root.path],
+        env: ["ASTROTOOL_LANG": "en", "LANG": "hu_HU.UTF-8", "LC_ALL": "hu_HU.UTF-8"]
+    )
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Calibration (calib)"))
+    #expect(!result.stdout.contains("Kalibráció"))
+}
+
+/// With no `ASTROTOOL_LANG` at all, a Hungarian `LANG` alone must still
+/// select Hungarian output (the locale-fallback tier of Task 1's resolution
+/// order) -- this is what makes the CLI's default behavior for Hungarian
+/// users unaffected by adding English support.
+@Test func hungarianLangEnvironmentAloneSelectsHungarianOutputWithNoOverride() async throws {
+    let root = try makeTempRoot("config-show-lang-fallback")
+    defer { try? FileManager.default.removeItem(at: root) }
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+
+    let result = try await runCLI(
+        ["config", "show", "--root", root.path],
+        env: ["ASTROTOOL_LANG": "", "LANG": "hu_HU.UTF-8", "LC_ALL": "hu_HU.UTF-8"]
+    )
+    #expect(result.exitCode == 0, "stderr: \(result.stderr)")
+    #expect(result.stdout.contains("Kalibráció"))
+}
+
 @Test func configShowJSONFlagStillPrintsFullStructure() async throws {
     let root = try makeTempRoot("config-show-json")
     defer { try? FileManager.default.removeItem(at: root) }
@@ -2781,6 +2888,25 @@ private func writeTrendLightFITS(
     let result = try await runCLI(["scan", "--root", root.path])
     #expect(result.exitCode == 2, "stdout: \(result.stdout), stderr: \(result.stderr)")
     #expect(result.stderr.contains("Teljes lemezhozzáférés"))
+}
+
+/// Same TCC-guidance path as `scanOnReadOnlyRootExitsWithTCCGuidance`, but
+/// with `ASTROTOOL_LANG=en` -- a first-time non-Hungarian user hitting the
+/// exact place they'd otherwise be stuck reading Hungarian permission
+/// instructions they can't act on.
+@Test func scanOnReadOnlyRootWithEnglishLangExitsWithEnglishTCCGuidance() async throws {
+    let root = try makeTempRoot("scan-readonly-root-en")
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root.path)
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: root.path)
+
+    let result = try await runCLI(["scan", "--root", root.path], env: ["ASTROTOOL_LANG": "en"])
+    #expect(result.exitCode == 2, "stdout: \(result.stdout), stderr: \(result.stderr)")
+    #expect(result.stderr.contains("Full Disk Access"))
+    #expect(!result.stderr.contains("Teljes lemezhozzáférés"))
 }
 
 // MARK: - link-calib
